@@ -1,0 +1,810 @@
+#!/usr/bin/env python3
+"""Characterize TerminalBench trajectory JSON files.
+
+Outputs:
+- terminal_bench_trajectory_work/analysis/trajectory_summary.csv
+- terminal_bench_trajectory_work/analysis/trajectory_summary.jsonl
+- terminal_bench_trajectory_work/analysis/corpus_stats.json
+- terminal_bench_trajectory_work/analysis/command_patterns.csv
+- terminal_bench_trajectory_work/analysis/representative_snippets.jsonl
+- terminal_bench_trajectory_work/analysis/trajectory_corpus_characterization_draft.md
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import re
+import shlex
+from collections import Counter, defaultdict
+from pathlib import Path
+from statistics import mean, median
+from typing import Any
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+WORK_DIR = SCRIPT_DIR.parent
+ROOT_DEFAULT = WORK_DIR / "trajectories_balanced_12"
+OUT_DEFAULT = SCRIPT_DIR
+LEADERBOARD_DEFAULT = WORK_DIR / "leaderboard_v2.json"
+
+BASH_FENCE_RE = re.compile(r"```(?:bash|sh|shell)?\s*\n(.*?)```", re.IGNORECASE | re.DOTALL)
+COMPLETE_RE = re.compile(r"\bCOMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\b")
+
+
+PURPOSE_PATTERNS: list[tuple[str, list[re.Pattern[str]]]] = [
+    ("environment_inspection", [
+        re.compile(r"^(ls|pwd|tree|find\b.*(?:-maxdepth|/app|\.)|du\b|df\b|whoami|env\b|printenv\b|uname\b)", re.I),
+        re.compile(r"\b(ls -|pwd|tree|find\s+\.)\b", re.I),
+    ]),
+    ("file_content_search", [
+        re.compile(r"^(rg|grep|ack|ag)\b", re.I),
+        re.compile(r"\b(rg|grep|ack|ag)\b", re.I),
+    ]),
+    ("reading_files", [
+        re.compile(r"^(cat|sed\s+-n|nl\b|head\b|tail\b|less\b|more\b|jq\b)", re.I),
+        re.compile(r"\b(cat|sed\s+-n|nl\s+-ba|head|tail|jq)\b", re.I),
+    ]),
+    ("editing_writing_files", [
+        re.compile(r"\b(cat\s+<<.*>|apply_patch|python\s+- <<|python3\s+- <<|perl\s+-pi|sed\s+-i|tee\b|echo\b.*>|printf\b.*>|touch\b|mkdir\b|mv\b|cp\b|rm\b)", re.I),
+        re.compile(r"\b(vim|nano|ed)\b", re.I),
+    ]),
+    ("dependency_setup", [
+        re.compile(r"\b(pip|pip3|uv|poetry|npm|pnpm|yarn|apt-get|apt|apk|cargo\s+(add|fetch|install)|go\s+mod|bundle\s+install|gem\s+install|conda|mamba)\b", re.I),
+    ]),
+    ("running_scripts_tests", [
+        re.compile(r"\b(pytest|unittest|go\s+test|cargo\s+test|npm\s+test|pnpm\s+test|yarn\s+test|make\s+test|bats|rspec|mvn\s+test|gradle\s+test)\b", re.I),
+        re.compile(r"^(python|python3|node|ruby|perl|bash|sh|Rscript|julia)\b", re.I),
+        re.compile(r"\b(rustc|g\+\+|gcc|javac|java|tsc|mypy|ruff|eslint)\b", re.I),
+    ]),
+    ("debugging_diagnostics", [
+        re.compile(r"\b(strace|gdb|lldb|pdb|ipdb|valgrind|lsof|ps\b|top\b|kill\b|curl\b|wget\b|diff\b|git\s+diff|git\s+status|git\s+log)\b", re.I),
+        re.compile(r"\b(print|debug|trace|diagnos|repro|inspect)\b", re.I),
+    ]),
+    ("final_verification", [
+        COMPLETE_RE,
+        re.compile(r"\b(final|verify|verification|validate|all tests|submit)\b", re.I),
+    ]),
+]
+
+
+def load_json(path: Path) -> Any:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def scalar_value(data: Any, names: set[str], max_depth: int = 4) -> Any:
+    """Find the first scalar value for a key in a nested JSON-like object."""
+    def walk(obj: Any, depth: int) -> Any:
+        if depth > max_depth:
+            return None
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k in names and not isinstance(v, (dict, list)):
+                    return v
+            for v in obj.values():
+                found = walk(v, depth + 1)
+                if found is not None:
+                    return found
+        elif isinstance(obj, list):
+            for v in obj:
+                found = walk(v, depth + 1)
+                if found is not None:
+                    return found
+        return None
+    return walk(data, 0)
+
+
+def collect_key_paths(data: Any, prefix: str = "", max_depth: int = 4, limit: int = 5000) -> list[str]:
+    out: list[str] = []
+
+    def walk(obj: Any, path: str, depth: int) -> None:
+        if len(out) >= limit or depth > max_depth:
+            return
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                p = f"{path}.{k}" if path else k
+                out.append(p)
+                walk(v, p, depth + 1)
+        elif isinstance(obj, list):
+            if obj:
+                walk(obj[0], f"{path}[]", depth + 1)
+
+    walk(data, prefix, 0)
+    return out
+
+
+def textish(value: Any, max_len: int = 20000) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value[:max_len]
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False)[:max_len]
+    except TypeError:
+        return str(value)[:max_len]
+
+
+def extract_observation_text(step: dict[str, Any]) -> str:
+    chunks: list[str] = []
+    obs = step.get("observation")
+    if obs is None:
+        return ""
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k in {"content", "output", "stdout", "stderr", "message", "text"} and not isinstance(v, (dict, list)):
+                    chunks.append(textish(v, 5000))
+                else:
+                    walk(v)
+        elif isinstance(obj, list):
+            for v in obj[:10]:
+                walk(v)
+        elif isinstance(obj, str):
+            chunks.append(obj[:5000])
+
+    walk(obs)
+    return "\n".join(c for c in chunks if c)
+
+
+def extract_commands_from_text(text: str) -> list[str]:
+    commands: list[str] = []
+    for match in BASH_FENCE_RE.finditer(text or ""):
+        block = match.group(1).strip()
+        if block:
+            commands.append(block)
+    return commands
+
+
+def extract_tool_calls(step: dict[str, Any]) -> list[dict[str, str]]:
+    calls: list[dict[str, str]] = []
+    raw_calls = step.get("tool_calls") or []
+    if not isinstance(raw_calls, list):
+        raw_calls = [raw_calls]
+    for call in raw_calls:
+        if not isinstance(call, dict):
+            calls.append({"tool": "", "command": textish(call, 1000), "raw": textish(call, 2000)})
+            continue
+        tool = textish(call.get("name") or call.get("tool_name") or call.get("function_name") or call.get("type") or "", 200)
+        args = call.get("arguments") or call.get("args") or call.get("input")
+        fn = call.get("function")
+        if isinstance(fn, dict):
+            tool = tool or textish(fn.get("name") or "", 200)
+            args = args if args is not None else fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                parsed = json.loads(args)
+                args = parsed
+            except json.JSONDecodeError:
+                pass
+        command = ""
+        if isinstance(args, dict):
+            for key in ("command", "cmd", "action", "input", "code"):
+                if key in args:
+                    command = textish(args[key], 5000)
+                    break
+        if not command:
+            for key in ("command", "cmd", "action", "input", "code"):
+                if key in call:
+                    command = textish(call[key], 5000)
+                    break
+        calls.append({"tool": tool, "command": command, "raw": textish(call, 5000)})
+    return calls
+
+
+def shell_head(command: str) -> str:
+    first_line = (command or "").strip().splitlines()[0] if (command or "").strip() else ""
+    first_segment = re.split(r"\s*(?:&&|\|\||;|\|)\s*", first_line)[0]
+    try:
+        parts = shlex.split(first_segment, posix=True)
+    except ValueError:
+        parts = first_segment.split()
+    if not parts:
+        return ""
+    if parts[0] in {"sudo", "env", "timeout", "xvfb-run"} and len(parts) > 1:
+        return parts[1]
+    return parts[0]
+
+
+def classify_command(command: str, step_index: int, step_count: int) -> str:
+    text = (command or "").strip()
+    if not text:
+        return "unknown"
+    if COMPLETE_RE.search(text):
+        return "final_verification"
+    if step_count and step_index >= max(1, math.floor(step_count * 0.8)):
+        if re.search(r"\b(pytest|test|check|verify|validate|rustc|g\+\+|gcc|make|npm\s+test|go\s+test|cargo\s+test)\b", text, re.I):
+            return "final_verification"
+    for label, patterns in PURPOSE_PATTERNS:
+        if label == "editing_writing_files" and any(p.search(text) for p in patterns):
+            return label
+    for label, patterns in PURPOSE_PATTERNS:
+        if label in {"final_verification", "editing_writing_files"}:
+            continue
+        if any(p.search(text) for p in patterns):
+            return label
+    return "other"
+
+
+def percentile(values: list[float], p: float) -> float | None:
+    if not values:
+        return None
+    values = sorted(values)
+    k = (len(values) - 1) * p
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return values[int(k)]
+    return values[f] * (c - k) + values[c] * (k - f)
+
+
+def summarize_numeric(values: list[float]) -> dict[str, Any]:
+    if not values:
+        return {"count": 0}
+    return {
+        "count": len(values),
+        "min": min(values),
+        "p25": percentile(values, 0.25),
+        "median": median(values),
+        "mean": mean(values),
+        "p75": percentile(values, 0.75),
+        "p90": percentile(values, 0.90),
+        "p95": percentile(values, 0.95),
+        "max": max(values),
+    }
+
+
+def outcome_label(data: dict[str, Any]) -> str:
+    containers = [data]
+    if isinstance(data.get("final_metrics"), dict):
+        containers.append(data["final_metrics"])
+    for obj in containers:
+        for key in ("success", "passed", "pass", "resolved", "is_success", "is_correct"):
+            if key not in obj:
+                continue
+            val = obj.get(key)
+            if isinstance(val, bool):
+                return "pass" if val else "fail"
+            if isinstance(val, (int, float)) and val in {0, 1}:
+                return "pass" if val == 1 else "fail"
+        for key in ("score", "reward"):
+            if key in obj and isinstance(obj.get(key), (int, float)):
+                score = obj.get(key)
+                if score == 1:
+                    return "pass"
+                if score == 0:
+                    return "fail"
+                return f"score_{score}"
+        for key in ("result", "status", "outcome"):
+            if key not in obj or not isinstance(obj.get(key), str):
+                continue
+            result = obj.get(key)
+            low = result.lower()
+            if low in {"pass", "passed", "success", "succeeded", "resolved", "correct"}:
+                return "pass"
+            if low in {"fail", "failed", "failure", "unresolved", "incorrect", "error"}:
+                return "fail"
+            return low[:80]
+    return "missing"
+
+
+def duration_seconds(steps: list[dict[str, Any]]) -> float | None:
+    from datetime import datetime
+
+    times = []
+    for step in steps:
+        ts = step.get("timestamp")
+        if not isinstance(ts, str):
+            continue
+        try:
+            times.append(datetime.fromisoformat(ts.replace("Z", "+00:00")))
+        except ValueError:
+            pass
+    if len(times) >= 2:
+        return (max(times) - min(times)).total_seconds()
+    return None
+
+
+def quote_snippet(text: str, limit: int = 480) -> str:
+    clean = re.sub(r"\s+", " ", (text or "").strip())
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 3] + "..."
+
+
+def phase_candidates(step: dict[str, Any], command: str, purpose: str, idx: int, n: int) -> list[str]:
+    text = f"{step.get('message','')}\n{step.get('reasoning_content','')}\n{command}"
+    low = text.lower()
+    phases: list[str] = []
+    if idx <= 2 and ("please solve" in low or "need to" in low or "understand" in low):
+        phases.append("task_understanding")
+    if purpose == "environment_inspection":
+        phases.append("environment_exploration")
+    if purpose in {"file_content_search", "reading_files"} and idx < max(3, n * 0.55):
+        phases.append("problem_localization")
+    if re.search(r"\b(plan|approach|steps|i will|need to)\b", low):
+        phases.append("planning")
+    if purpose == "editing_writing_files":
+        phases.append("implementation_intervention")
+    if purpose == "running_scripts_tests":
+        phases.append("execution_testing")
+    obs = extract_observation_text(step).lower()
+    if any(s in obs for s in ("error", "failed", "traceback", "assert", "exception", "warning")):
+        phases.append("feedback_interpretation")
+    if idx > 2 and purpose in {"editing_writing_files", "running_scripts_tests"} and any(s in low for s in ("fix", "again", "retry", "failed", "error")):
+        phases.append("iterative_repair")
+    if purpose == "final_verification" or idx >= max(1, math.floor(n * 0.8)) and purpose in {"running_scripts_tests", "reading_files"}:
+        phases.append("verification_finalization")
+    if any(s in low for s in ("complete_task_and_submit_final_output", "submit", "bookkeeping", "format")):
+        phases.append("orchestration_bookkeeping")
+    return phases
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", type=Path, default=ROOT_DEFAULT)
+    ap.add_argument("--out", type=Path, default=OUT_DEFAULT)
+    ap.add_argument("--leaderboard", type=Path, default=LEADERBOARD_DEFAULT)
+    args = ap.parse_args()
+
+    root = args.root
+    out = args.out
+    out.mkdir(parents=True, exist_ok=True)
+
+    paths = sorted(root.rglob("*.json"))
+    leaderboard_by_checksum: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    leaderboard_task_names: dict[str, str] = {}
+    if args.leaderboard.exists():
+        try:
+            leaderboard = load_json(args.leaderboard)
+            if isinstance(leaderboard, list):
+                for entry in leaderboard:
+                    if not isinstance(entry, dict):
+                        continue
+                    for task in entry.get("tasks", []):
+                        if not isinstance(task, dict):
+                            continue
+                        checksum = task.get("taskChecksum")
+                        if not checksum:
+                            continue
+                        merged = {
+                            "scaffold": entry.get("scaffold", ""),
+                            "scaffold_version": entry.get("scaffold_version", ""),
+                            "leaderboard_model": entry.get("model", ""),
+                            "provider": entry.get("provider", ""),
+                            "taskName": task.get("taskName", ""),
+                            "taskChecksum": checksum,
+                            "nTrials": task.get("nTrials", ""),
+                            "avgResolutionRate": task.get("avgResolutionRate", ""),
+                            "successCount": task.get("successCount", ""),
+                            "trialUrl": task.get("trialUrl", ""),
+                        }
+                        leaderboard_by_checksum[str(checksum)].append(merged)
+                        if task.get("taskName"):
+                            leaderboard_task_names[str(checksum)] = str(task.get("taskName"))
+        except Exception:
+            leaderboard_by_checksum = defaultdict(list)
+    leaderboard_cells = [item for items in leaderboard_by_checksum.values() for item in items]
+    leaderboard_success_total = sum(int(item.get("successCount") or 0) for item in leaderboard_cells)
+    leaderboard_trial_total = sum(int(item.get("nTrials") or 0) for item in leaderboard_cells)
+    rows: list[dict[str, Any]] = []
+    all_key_paths = Counter()
+    top_keys = Counter()
+    agent_names = Counter()
+    model_names = Counter()
+    scaffolds = Counter()
+    scaffold_models = Counter()
+    original_formats = Counter()
+    outcomes = Counter()
+    task_ids = Counter()
+    command_counter = Counter()
+    command_head_counter = Counter()
+    purpose_counter = Counter()
+    purpose_by_scaffold = defaultdict(Counter)
+    missing = Counter()
+    command_records: list[dict[str, Any]] = []
+    snippets_by_phase: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    ambiguous: list[dict[str, Any]] = []
+    schema_examples: dict[str, str] = {}
+
+    for path in paths:
+        try:
+            data = load_json(path)
+        except Exception as exc:
+            rows.append({"path": str(path), "parse_error": str(exc)})
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        rel = path.relative_to(root)
+        parts = rel.parts
+        scaffold = parts[0] if len(parts) >= 1 else ""
+        model_dir = parts[1] if len(parts) >= 2 else ""
+        filename = path.stem
+        file_task_id = filename.split("_", 1)[0] if "_" in filename else filename
+        file_run_id = filename.split("_", 1)[1] if "_" in filename else ""
+        agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
+        agent_name = textish(agent.get("name") or scaffold, 200)
+        model_name = textish(agent.get("model_name") or model_dir, 300)
+        version = textish(agent.get("version") or "", 100)
+        extra = agent.get("extra") if isinstance(agent.get("extra"), dict) else {}
+        original_format = textish(extra.get("original_format") or "", 200)
+        steps = data.get("steps") if isinstance(data.get("steps"), list) else []
+        task_id = textish(scalar_value(data, {"task_id", "task_name", "taskName", "instance_id"}, max_depth=5) or file_task_id, 300)
+        task_name = leaderboard_task_names.get(file_task_id, "")
+        leaderboard_matches = [
+            m for m in leaderboard_by_checksum.get(file_task_id, [])
+            if str(m.get("scaffold", "")).lower() == scaffold.lower()
+        ]
+        if model_dir:
+            model_low = model_dir.lower().replace("_", "-")
+            exactish = [
+                m for m in leaderboard_matches
+                if str(m.get("leaderboard_model", "")).lower().replace("_", "-") in model_low
+                or model_low in str(m.get("leaderboard_model", "")).lower().replace("_", "-")
+            ]
+            if exactish:
+                leaderboard_matches = exactish
+        leaderboard_meta = leaderboard_matches[0] if leaderboard_matches else {}
+        outcome = outcome_label(data)
+        dur = duration_seconds([s for s in steps if isinstance(s, dict)])
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        cost_usd = 0.0
+        metric_steps = 0
+        message_chars = 0
+        reasoning_chars = 0
+        obs_chars = 0
+        tool_call_count = 0
+        command_count = 0
+        source_counts = Counter()
+        final_message = ""
+        has_final_marker = False
+        file_command_heads = Counter()
+
+        if not steps:
+            missing["steps"] += 1
+        for key in data.keys():
+            top_keys[key] += 1
+        for kp in collect_key_paths(data, max_depth=4):
+            all_key_paths[kp] += 1
+
+        for idx, raw_step in enumerate(steps, start=1):
+            if not isinstance(raw_step, dict):
+                continue
+            source_counts[textish(raw_step.get("source") or "", 50)] += 1
+            msg = textish(raw_step.get("message"), 20000)
+            reasoning = textish(raw_step.get("reasoning_content"), 20000)
+            obs_text = extract_observation_text(raw_step)
+            message_chars += len(msg)
+            reasoning_chars += len(reasoning)
+            obs_chars += len(obs_text)
+            if msg:
+                final_message = msg
+            if COMPLETE_RE.search(msg) or COMPLETE_RE.search(obs_text):
+                has_final_marker = True
+
+            metrics = raw_step.get("metrics") if isinstance(raw_step.get("metrics"), dict) else {}
+            if metrics:
+                metric_steps += 1
+                prompt_tokens += int(metrics.get("prompt_tokens") or 0)
+                completion_tokens += int(metrics.get("completion_tokens") or 0)
+                try:
+                    cost_usd += float(metrics.get("cost_usd") or 0.0)
+                except (TypeError, ValueError):
+                    pass
+
+            calls = extract_tool_calls(raw_step)
+            tool_call_count += len([c for c in calls if c.get("raw")])
+            step_commands: list[tuple[str, str]] = []
+            for call in calls:
+                cmd = call.get("command", "")
+                if cmd:
+                    step_commands.append((call.get("tool", ""), cmd))
+            if not step_commands and raw_step.get("source") == "agent":
+                for cmd in extract_commands_from_text(msg):
+                    step_commands.append(("fenced_bash", cmd))
+
+            for tool, cmd in step_commands:
+                command_count += 1
+                purpose = classify_command(cmd, idx, len(steps))
+                head = shell_head(cmd)
+                cmd_lines = cmd.strip().splitlines()
+                command_counter[(cmd_lines[0] if cmd_lines else "<blank>")[:240]] += 1
+                command_head_counter[head] += 1
+                if head:
+                    file_command_heads[head] += 1
+                purpose_counter[purpose] += 1
+                purpose_by_scaffold[scaffold][purpose] += 1
+                command_records.append({
+                    "path": str(path),
+                    "rel_path": str(rel),
+                    "scaffold": scaffold,
+                    "model_dir": model_dir,
+                    "agent_name": agent_name,
+                    "model_name": model_name,
+                    "task_id": task_id,
+                    "outcome": outcome,
+                    "step_id": raw_step.get("step_id", idx),
+                    "step_index": idx,
+                    "source": raw_step.get("source", ""),
+                    "tool": tool,
+                    "command_head": head,
+                    "purpose_candidate": purpose,
+                    "command": cmd[:2000],
+                    "message_snippet": quote_snippet(reasoning or msg, 360),
+                    "observation_snippet": quote_snippet(obs_text, 360),
+                })
+                for phase in phase_candidates(raw_step, cmd, purpose, idx, len(steps)):
+                    if len(snippets_by_phase[phase]) < 8:
+                        snippets_by_phase[phase].append(command_records[-1])
+
+            # Ambiguity probes.
+            if step_commands:
+                cmd_text = "\n".join(cmd for _, cmd in step_commands)
+                msg_low = (msg + "\n" + reasoning).lower()
+                obs_low = obs_text.lower()
+                purpose = classify_command(cmd_text, idx, len(steps))
+                if purpose in {"reading_files", "running_scripts_tests"} and idx >= max(1, math.floor(len(steps) * 0.75)):
+                    ambiguous.append({
+                        "type": "late_read_or_test_could_be_verification_or_diagnosis",
+                        "rel_path": str(rel),
+                        "step_index": idx,
+                        "command": cmd_text[:1000],
+                        "message_snippet": quote_snippet(reasoning or msg, 360),
+                        "observation_snippet": quote_snippet(obs_text, 360),
+                    })
+                if purpose == "dependency_setup" and ("error" in msg_low or "failed" in msg_low or "not found" in obs_low):
+                    ambiguous.append({
+                        "type": "dependency_install_setup_or_repair",
+                        "rel_path": str(rel),
+                        "step_index": idx,
+                        "command": cmd_text[:1000],
+                        "message_snippet": quote_snippet(reasoning or msg, 360),
+                        "observation_snippet": quote_snippet(obs_text, 360),
+                    })
+
+        repeated_heads = [head for head, count in file_command_heads.items() if count >= 4 and head]
+        if repeated_heads:
+            ambiguous.append({
+                "type": "repeated_command_head_confirmation_or_blind_retry",
+                "rel_path": str(rel),
+                "step_index": "",
+                "command": ", ".join(repeated_heads[:8]),
+                "message_snippet": "",
+                "observation_snippet": "",
+            })
+
+        row = {
+            "path": str(path),
+            "rel_path": str(rel),
+            "file_size_bytes": path.stat().st_size,
+            "schema_version": data.get("schema_version", ""),
+            "session_id": data.get("session_id", ""),
+            "scaffold": scaffold,
+            "model_dir": model_dir,
+            "agent_name": agent_name,
+            "agent_version": version,
+            "model_name": model_name,
+            "original_format": original_format,
+            "task_id": task_id,
+            "task_name": task_name,
+            "file_task_id": file_task_id,
+            "file_run_id": file_run_id,
+            "outcome": outcome,
+            "leaderboard_avg_resolution_rate": leaderboard_meta.get("avgResolutionRate", ""),
+            "leaderboard_success_count": leaderboard_meta.get("successCount", ""),
+            "leaderboard_n_trials": leaderboard_meta.get("nTrials", ""),
+            "leaderboard_task_name": leaderboard_meta.get("taskName", ""),
+            "leaderboard_model": leaderboard_meta.get("leaderboard_model", ""),
+            "step_count": len(steps),
+            "agent_step_count": source_counts.get("agent", 0),
+            "user_step_count": source_counts.get("user", 0),
+            "system_step_count": source_counts.get("system", 0),
+            "tool_call_count": tool_call_count,
+            "command_count": command_count,
+            "message_chars": message_chars,
+            "reasoning_chars": reasoning_chars,
+            "observation_chars": obs_chars,
+            "metric_step_count": metric_steps,
+            "prompt_tokens": prompt_tokens if metric_steps else "",
+            "completion_tokens": completion_tokens if metric_steps else "",
+            "total_tokens": prompt_tokens + completion_tokens if metric_steps else "",
+            "cost_usd": round(cost_usd, 8) if metric_steps else "",
+            "duration_seconds_from_timestamps": dur if dur is not None else "",
+            "has_final_marker": has_final_marker,
+            "final_message_snippet": quote_snippet(final_message, 500),
+            "top_level_keys": ",".join(data.keys()),
+        }
+        final_metrics = data.get("final_metrics") if isinstance(data.get("final_metrics"), dict) else {}
+        if final_metrics:
+            row["prompt_tokens"] = final_metrics.get("total_prompt_tokens", row["prompt_tokens"])
+            row["completion_tokens"] = final_metrics.get("total_completion_tokens", row["completion_tokens"])
+            if row["prompt_tokens"] != "" and row["completion_tokens"] != "":
+                row["total_tokens"] = int(row["prompt_tokens"] or 0) + int(row["completion_tokens"] or 0)
+            if "total_cost_usd" in final_metrics:
+                row["cost_usd"] = final_metrics.get("total_cost_usd", row["cost_usd"])
+        rows.append(row)
+        agent_names[agent_name] += 1
+        model_names[model_name] += 1
+        scaffolds[scaffold] += 1
+        scaffold_models[f"{scaffold}/{model_dir}"] += 1
+        original_formats[original_format] += 1
+        outcomes[outcome] += 1
+        task_ids[task_id] += 1
+        if original_format and original_format not in schema_examples:
+            schema_examples[original_format] = str(rel)
+
+    csv_fields = [
+        "rel_path", "path", "file_size_bytes", "schema_version", "session_id", "scaffold", "model_dir",
+        "agent_name", "agent_version", "model_name", "original_format", "task_id", "file_task_id",
+        "task_name", "file_run_id", "outcome", "leaderboard_avg_resolution_rate", "leaderboard_success_count",
+        "leaderboard_n_trials", "leaderboard_task_name", "leaderboard_model", "step_count", "agent_step_count", "user_step_count", "system_step_count",
+        "tool_call_count", "command_count", "message_chars", "reasoning_chars", "observation_chars",
+        "metric_step_count", "prompt_tokens", "completion_tokens", "total_tokens", "cost_usd",
+        "duration_seconds_from_timestamps", "has_final_marker", "final_message_snippet", "top_level_keys",
+    ]
+    with (out / "trajectory_summary.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    with (out / "trajectory_summary.jsonl").open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    with (out / "command_patterns.csv").open("w", newline="", encoding="utf-8") as f:
+        fields = ["rank", "count", "command_head", "purpose_candidate", "example_command"]
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        rank = 1
+        for example, count in command_counter.most_common(300):
+            purpose = classify_command(example, 0, 0)
+            writer.writerow({
+                "rank": rank,
+                "count": count,
+                "command_head": shell_head(example),
+                "purpose_candidate": purpose,
+                "example_command": example,
+            })
+            rank += 1
+
+    selected_snippets: list[dict[str, Any]] = []
+    for phase, examples in snippets_by_phase.items():
+        for ex in examples[:3]:
+            item = dict(ex)
+            item["phase_candidate"] = phase
+            selected_snippets.append(item)
+    for item in ambiguous[:30]:
+        selected_snippets.append({"phase_candidate": "ambiguous_case", **item})
+    with (out / "representative_snippets.jsonl").open("w", encoding="utf-8") as f:
+        for item in selected_snippets:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+    step_counts = [int(r["step_count"]) for r in rows if r.get("step_count") != ""]
+    command_counts = [int(r["command_count"]) for r in rows if r.get("command_count") != ""]
+    tool_counts = [int(r["tool_call_count"]) for r in rows if r.get("tool_call_count") != ""]
+    costs = [float(r["cost_usd"]) for r in rows if r.get("cost_usd") not in {"", None}]
+    tokens = [float(r["total_tokens"]) for r in rows if r.get("total_tokens") not in {"", None}]
+    durations = [float(r["duration_seconds_from_timestamps"]) for r in rows if r.get("duration_seconds_from_timestamps") not in {"", None}]
+    leaderboard_rates = [float(r["leaderboard_avg_resolution_rate"]) for r in rows if r.get("leaderboard_avg_resolution_rate") not in {"", None}]
+
+    # Coarse task-family hints from task ids and user prompt text.
+    family_patterns = {
+        "polyglot/compiler": re.compile(r"\b(polyglot|rustc|g\+\+|gcc|compiler|compile)\b", re.I),
+        "python/data": re.compile(r"\b(python|pandas|numpy|csv|json|parquet|dataframe)\b", re.I),
+        "web/api": re.compile(r"\b(http|api|server|flask|fastapi|express|request|curl)\b", re.I),
+        "shell/filesystem": re.compile(r"\b(bash|shell|file|directory|path|chmod|tar|grep|sed|awk)\b", re.I),
+        "ml/math": re.compile(r"\b(model|tensor|torch|sklearn|matrix|fibonacci|algorithm|numeric)\b", re.I),
+        "database": re.compile(r"\b(sql|sqlite|postgres|database|query)\b", re.I),
+        "build/test": re.compile(r"\b(make|cmake|pytest|test|package|dependency|install)\b", re.I),
+        "security/crypto": re.compile(r"\b(crypto|hash|password|rsa|aes|decrypt|encrypt|vulnerab)\b", re.I),
+    }
+    family_counts = Counter()
+    for row in rows:
+        text = f"{row.get('task_id','')} {row.get('final_message_snippet','')}"
+        matched = False
+        for fam, pat in family_patterns.items():
+            if pat.search(text):
+                family_counts[fam] += 1
+                matched = True
+        if not matched:
+            family_counts["unclassified_from_available_text"] += 1
+
+    stats = {
+        "root": str(root),
+        "leaderboard": str(args.leaderboard) if args.leaderboard.exists() else "",
+        "leaderboard_task_checksum_count": len(leaderboard_by_checksum),
+        "leaderboard_scaffold_model_task_cells": len(leaderboard_cells),
+        "leaderboard_aggregate_success_count": leaderboard_success_total,
+        "leaderboard_aggregate_trial_count": leaderboard_trial_total,
+        "leaderboard_aggregate_resolution_rate": (leaderboard_success_total / leaderboard_trial_total) if leaderboard_trial_total else None,
+        "trajectory_count": len(rows),
+        "unique_task_count": len(task_ids),
+        "top_level_keys": top_keys.most_common(),
+        "common_key_paths": all_key_paths.most_common(120),
+        "scaffolds": scaffolds.most_common(),
+        "scaffold_models": scaffold_models.most_common(),
+        "agent_names": agent_names.most_common(),
+        "model_names": model_names.most_common(),
+        "original_formats": original_formats.most_common(),
+        "schema_examples_by_original_format": schema_examples,
+        "outcomes": outcomes.most_common(),
+        "step_count_distribution": summarize_numeric(step_counts),
+        "command_count_distribution": summarize_numeric(command_counts),
+        "tool_call_count_distribution": summarize_numeric(tool_counts),
+        "cost_usd_distribution": summarize_numeric(costs),
+        "total_token_distribution": summarize_numeric(tokens),
+        "duration_seconds_distribution": summarize_numeric(durations),
+        "leaderboard_avg_resolution_rate_distribution_for_matched_rows": summarize_numeric(leaderboard_rates),
+        "metric_presence_count": len(costs),
+        "missing_or_inconsistent": missing.most_common(),
+        "command_head_counts": command_head_counter.most_common(100),
+        "purpose_counts": purpose_counter.most_common(),
+        "purpose_by_scaffold": {k: v.most_common() for k, v in purpose_by_scaffold.items()},
+        "task_family_hints": family_counts.most_common(),
+        "ambiguous_case_count": len(ambiguous),
+        "ambiguous_case_examples": ambiguous[:20],
+        "artifacts": {
+            "trajectory_summary_csv": str(out / "trajectory_summary.csv"),
+            "trajectory_summary_jsonl": str(out / "trajectory_summary.jsonl"),
+            "command_patterns_csv": str(out / "command_patterns.csv"),
+            "representative_snippets_jsonl": str(out / "representative_snippets.jsonl"),
+        },
+    }
+    with (out / "corpus_stats.json").open("w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=2, ensure_ascii=False)
+
+    draft = [
+        "# TerminalBench Trajectory Corpus Characterization Draft",
+        "",
+        f"Root inspected: `{root}`",
+        f"Trajectory JSON files: {len(rows)}",
+        f"Unique task ids inferred: {len(task_ids)}",
+        "",
+        "## Reproduce",
+        "",
+        "```powershell",
+        "python terminal_bench_trajectory_work/analysis/characterize_trajectories.py",
+        "```",
+        "",
+        "## Main Counts",
+        "",
+        f"- Scaffolds: {scaffolds.most_common()}",
+        f"- Models: {model_names.most_common()}",
+        f"- Outcomes: {outcomes.most_common()}",
+        f"- Step counts: {summarize_numeric(step_counts)}",
+        f"- Command counts: {summarize_numeric(command_counts)}",
+        f"- Tool-call counts: {summarize_numeric(tool_counts)}",
+        f"- Cost presence: {len(costs)} trajectories",
+        f"- Token presence: {len(tokens)} trajectories",
+        "",
+        "## Common Command Heads",
+        "",
+    ]
+    for head, count in command_head_counter.most_common(30):
+        draft.append(f"- `{head}`: {count}")
+    draft.extend([
+        "",
+        "## Candidate Purposes",
+        "",
+    ])
+    for purpose, count in purpose_counter.most_common():
+        draft.append(f"- `{purpose}`: {count}")
+    draft.extend([
+        "",
+        "See `terminal_bench_trajectory_work/analysis/corpus_stats.json`,",
+        "`terminal_bench_trajectory_work/analysis/trajectory_summary.csv`,",
+        "`terminal_bench_trajectory_work/analysis/command_patterns.csv`, and",
+        "`terminal_bench_trajectory_work/analysis/representative_snippets.jsonl` for details.",
+    ])
+    (out / "trajectory_corpus_characterization_draft.md").write_text("\n".join(draft), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()
