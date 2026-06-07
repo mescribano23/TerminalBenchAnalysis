@@ -1,6 +1,6 @@
 # Superficial Terminal-Bench Leaderboard Analysis
 
-This report uses `data/processed/leaderboard_submission_summary.csv` and stays at submission-row level. Accuracy and +/- use scraped official leaderboard fields; task-rate variance remains a computed diagnostic from per-task resolution rates. Passed trajectories are represented by computed passed task-trials (`computed_submission_success_count`) because the local trajectory JSON files do not expose per-run pass/fail labels.
+This report uses `data/processed/leaderboard_submission_summary.csv` and stays at submission-row level. Accuracy and +/- use scraped official leaderboard fields; task-rate variance remains a computed diagnostic from per-task resolution rates. Passed task-trials are represented by computed aggregate counts (`computed_submission_success_count`). Trajectory-level pass/fail analysis now lives in the trajectory characterization outputs via the validated reward index.
 
 ## Overall Submission-Level Picture
 

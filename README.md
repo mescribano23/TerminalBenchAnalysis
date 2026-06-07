@@ -20,6 +20,8 @@ leaderboard submissions and trajectory traces.
 |   |   `-- balanced_12/                     # Downloaded trajectory JSON files
 |   `-- processed/
 |       |-- trajectory_summary.csv           # One row per local trajectory
+|       |-- trajectory_outcome_by_scaffold_model.csv
+|       |-- trajectory_features_by_outcome.csv
 |       |-- leaderboard_submission_summary.csv
 |       |-- leaderboard_scaffold_variance.csv
 |       |-- leaderboard_model_variance.csv
@@ -130,8 +132,13 @@ python scripts\analyze_leaderboard_superficial.py
 ## Main Outputs
 
 - `data/processed/trajectory_summary.csv`: one row per local trajectory with
-  scaffold/model/task metadata, step counts, command counts, token/cost fields,
-  and joined leaderboard metadata.
+  scaffold/model/task metadata, reward-backed pass/fail labels, step counts,
+  command counts, token/cost fields, and joined leaderboard metadata.
+- `data/processed/trajectory_outcome_by_scaffold_model.csv`: trajectory-level
+  pass/fail counts and success rates by local scaffold/model directory.
+- `data/processed/trajectory_features_by_outcome.csv`: passed-vs-failed
+  trajectory summaries for length, commands, tool calls, tokens, cost, and
+  duration.
 - `data/processed/leaderboard_submission_summary.csv`: one row per leaderboard
   submission with official scraped accuracy/error fields and separate computed
   task-level metrics.
@@ -168,6 +175,12 @@ print(df.groupby("scaffold")["reward"].agg(["count", "mean"]).round(2))
   including per-task `taskName`, `taskChecksum`, `nTrials`,
   `avgResolutionRate`, and `successCount`.
 - Local trajectory JSON files do not consistently expose per-run pass/fail
-  labels; use the index and leaderboard metadata when joining outcomes.
+  labels, but `data/indexes/trajectory_index_balanced_12.json` now provides
+  reliable per-run `reward` labels for the local balanced sample. In that index,
+  `reward == 1.0` is treated as pass and `reward == 0.0` as fail.
+- Reward was validated against leaderboard task aggregates: complete local
+  `(task, scaffold, model)` groups match `avgResolutionRate` exactly; only
+  partial groups differ because fewer than all leaderboard trials were
+  downloaded.
 - Generated analysis files use repo-relative paths where possible. These paths
   are metadata only and are not required to load the repository data.

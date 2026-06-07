@@ -28,7 +28,7 @@ A nearby metadata file exists:
 data/raw/leaderboard_v2.json
 ```
 
-This leaderboard file provides aggregate task/scaffold/model fields such as `taskName`, `taskChecksum`, `nTrials`, `avgResolutionRate`, and `successCount`. The trajectory JSON files themselves do not expose per-run pass/fail fields.
+This leaderboard file provides aggregate task/scaffold/model fields such as `taskName`, `taskChecksum`, `nTrials`, `avgResolutionRate`, and `successCount`. The trajectory JSON files themselves do not expose per-run pass/fail fields, but the companion index `data/indexes/trajectory_index_balanced_12.json` provides validated per-run `reward` labels for the local balanced sample.
 
 Reproduction command:
 
@@ -40,6 +40,8 @@ Generated artifacts:
 
 - `data/processed/corpus_stats.json`
 - `data/processed/trajectory_summary.csv`
+- `data/processed/trajectory_outcome_by_scaffold_model.csv`
+- `data/processed/trajectory_features_by_outcome.csv`
 - `data/processed/command_patterns.csv`
 - `data/processed/representative_snippets.jsonl`
 
@@ -138,10 +140,30 @@ Scaffold/model combinations:
 
 Trajectory-level pass/fail:
 
-- Explicit per-trajectory pass/fail field in trajectory JSON: not found.
-- `outcome` from trajectory JSON after conservative parsing: `missing` for 5,265/5,265.
-- Leaderboard aggregate metadata is available for some tasks: aggregate `successCount=27310`, `nTrials=59387`, aggregate resolution rate about `0.460`. This is not a per-trajectory label.
-- For matched rows, `leaderboard_avg_resolution_rate` distribution: min `0.0`, p25 `0.0`, median `0.4`, mean `0.490`, p75 `1.0`, max `1.0`.
+- Explicit per-trajectory pass/fail field in trajectory JSON: not found; `trajectory_json_outcome` remains `missing` for 5,265/5,265 after conservative parsing.
+- Per-run outcome is now joined from `data/indexes/trajectory_index_balanced_12.json`: `reward == 1.0` is pass and `reward == 0.0` is fail.
+- Index reward distribution: 1,992 passes and 3,273 failures across 5,265 trajectories, for a local success rate of 37.8%.
+- No reward values are missing, and all rewards are binary (`0.0` or `1.0`).
+- Validation against leaderboard task aggregates: all 1,007 complete local `(task, scaffold, model)` groups match leaderboard `avgResolutionRate` exactly. The 59 partial groups remain success-count consistent; their reward means can differ because fewer than all leaderboard trials were downloaded.
+
+Trajectory-level outcome by sampled scaffold/model:
+
+| Scaffold/model directory | Passes | Failures | Success rate |
+|---|---:|---:|---:|
+| `vix/claude-opus-4-7` | 400 | 40 | 90.9% |
+| `hookele/gpt-5.1-codex-mini` | 272 | 159 | 63.1% |
+| `claude-code/claude-opus-4-5-20251101` | 232 | 204 | 53.2% |
+| `mini-swe-agent/claude-sonnet-4-5-20250929` | 188 | 231 | 44.9% |
+| `openhands/claude-sonnet-4-5-20250929` | 188 | 250 | 42.9% |
+| `claude-code/minimax-m2.1` | 163 | 277 | 37.0% |
+| `terminus-2/accounts_fireworks_models_minimax-m2` | 138 | 313 | 30.6% |
+| `openhands/moonshotai_Kimi-K2-Instruct-0905` | 119 | 311 | 27.7% |
+| `mini-swe-agent/gemini-2.5-pro` | 116 | 319 | 26.7% |
+| `mini-swe-agent/gpt-5-mini` | 99 | 335 | 22.8% |
+| `terminus-2/grok-code-fast-1` | 63 | 382 | 14.2% |
+| `terminus-2/openai_gpt-oss-20b` | 14 | 452 | 3.0% |
+
+Passed trajectories are generally shorter than failed trajectories in this sample: median `step_count` is 29 for passes vs 28 for failures, but the mean is 41.3 vs 57.0 because long repair loops are concentrated in failures. Median command count is 9.5 for passes vs 6 for failures; the failed mean is higher, 30.6 vs 20.6.
 
 Length and resource distributions:
 
@@ -261,7 +283,7 @@ Use a stratified pilot of roughly 120 trajectories. If annotation time is tight,
 Recommended strata:
 
 - Scaffold/model: sample each scaffold, with at least 10 trajectories per scaffold; oversample `openhands` and `terminus-2` because their tool representations differ strongly from shell-only trajectories.
-- Outcome proxy: because per-run pass/fail is missing, use `leaderboard_avg_resolution_rate` bins as task/scaffold/model difficulty proxies: `0.0`, `(0.0, 0.5)`, `[0.5, 1.0)`, `1.0`, and unmatched/no leaderboard.
+- Outcome: stratify directly by `reward_outcome` (`pass`/`fail`) from the trajectory index, while retaining `leaderboard_avg_resolution_rate` as a task/scaffold/model difficulty covariate.
 - Length: sample short (`step_count <= 11`), medium (`12-66`), long (`67-183`), and extreme (`>183`) trajectories.
 - Tool density: include command/tool-call count bins `0`, `1-8`, `9-32`, `33-118`, and `>118`.
 - Command pattern: deliberately include trajectories dominated by editor tools (`view`/`str_replace`/`create`), shell exploration (`ls`/`find`/`grep`), heavy testing (`python eval.py`, `pytest`, `make`, compilers), dependency setup (`pip`, `apt-get`, `npm`), and domain tools (`pmars`, MuJoCo scripts, compilers).
@@ -269,12 +291,12 @@ Recommended strata:
 
 Suggested allocation for 120:
 
-- 60 balanced by scaffold/model and leaderboard-resolution bins.
+- 60 balanced by scaffold/model and reward outcome, with leaderboard-resolution bins used to preserve task difficulty spread.
 - 24 long/extreme trajectories because phase boundaries and repair loops are more visible there.
 - 18 short trajectories because they stress whether the taxonomy handles compressed behavior.
 - 18 ambiguity-enriched trajectories selected from `data/processed/representative_snippets.jsonl` and repeated-command cases.
 
-Do not use `leaderboard_avg_resolution_rate` as a trajectory pass/fail label. Treat it as an aggregate covariate unless per-run evaluation metadata is later recovered.
+Do not use `leaderboard_avg_resolution_rate` as a trajectory pass/fail label. Use `reward_outcome` for per-run success/failure and treat leaderboard resolution rate as an aggregate covariate.
 
 ## Annotation Export Metadata
 
@@ -282,7 +304,8 @@ Recommended CSV/JSONL row fields for downstream annotation:
 
 - Identifiers: `rel_path`, `session_id`, `schema_version`, `file_task_id`, `file_run_id`, `task_id`, `task_name`, `leaderboard_task_name`.
 - Agent metadata: `scaffold`, `model_dir`, `agent_name`, `agent_version`, `model_name`, `original_format`.
-- Aggregate outcome proxy: `leaderboard_avg_resolution_rate`, `leaderboard_success_count`, `leaderboard_n_trials`, `leaderboard_model`.
+- Per-run outcome: `reward`, `reward_outcome`, `trajectory_json_outcome`.
+- Aggregate task/submission metadata: `leaderboard_avg_resolution_rate`, `leaderboard_success_count`, `leaderboard_n_trials`, `leaderboard_model`.
 - Length/resource metadata: `file_size_bytes`, `step_count`, `agent_step_count`, `tool_call_count`, `command_count`, `message_chars`, `reasoning_chars`, `observation_chars`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `duration_seconds_from_timestamps`.
 - Finalization markers: `has_final_marker`, `final_message_snippet`.
 - Step-level annotation export should additionally include `step_id`, `step_index`, `source`, `message`, `reasoning_content`, normalized `tool_name`, normalized `command`, `arguments.path`, `observation_text`, `returncode` when recoverable, and previous/next step references.
@@ -323,7 +346,8 @@ Get-Content data\processed\command_patterns.csv -TotalCount 40
 
 ## Risks For Annotation Validity
 
-- No per-run pass/fail labels are present in the trajectory JSON files. Leaderboard aggregates can bias sampling but cannot support trajectory-level success/failure analyses.
+- No per-run pass/fail labels are present inside the trajectory JSON files themselves; the labels come from the companion index. Keep `reward_outcome` provenance explicit when annotating or modeling.
+- The reward index was validated against leaderboard aggregates for complete local task groups, but 59 task groups are partial downloads. Their local reward means need not equal leaderboard `avgResolutionRate`.
 - The same behavioral phase can be encoded differently by scaffold: shell command, editor tool, JSON keystroke, final-answer text, or empty message plus tool call.
 - Command-only labelling will overfit to surface syntax and miss intent; annotators need message, tool arguments, observation, and local sequence context.
 - Very long trajectories can dominate phase-frequency counts unless sampling or weighting accounts for trajectory length.

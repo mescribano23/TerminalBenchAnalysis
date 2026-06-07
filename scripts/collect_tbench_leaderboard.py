@@ -1147,7 +1147,7 @@ def collect_trajectories(
                     "reward": reward,
                     "cost": cost_cents,
                     "duration": duration_seconds,
-                    "filePath": str(output_path),
+                    "filePath": output_path.as_posix(),
                 }
 
                 if output_path.exists():

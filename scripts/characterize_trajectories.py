@@ -29,6 +29,7 @@ DATA_DIR = REPO_ROOT / "data"
 ROOT_DEFAULT = DATA_DIR / "trajectories" / "balanced_12"
 OUT_DEFAULT = DATA_DIR / "processed"
 LEADERBOARD_DEFAULT = DATA_DIR / "raw" / "leaderboard_v2.json"
+INDEX_DEFAULT = DATA_DIR / "indexes" / "trajectory_index_balanced_12.json"
 
 BASH_FENCE_RE = re.compile(r"```(?:bash|sh|shell)?\s*\n(.*?)```", re.IGNORECASE | re.DOTALL)
 COMPLETE_RE = re.compile(r"\bCOMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\b")
@@ -101,6 +102,93 @@ PURPOSE_PATTERNS: list[tuple[str, list[re.Pattern[str]]]] = [
 def load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_trajectory_index(path: Path, root: Path) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """Load the trajectory index and key it by corpus-relative path."""
+    if not path.exists():
+        return {}, {"path": display_path(path), "exists": False}
+
+    text = path.read_text(encoding="utf-8")
+    normalized_file_paths = False
+    try:
+        entries = json.loads(text)
+    except json.JSONDecodeError:
+        # Some older generated indexes used Windows paths with invalid JSON
+        # escapes in filePath. Normalize only filePath strings and retry.
+        def fix_filepath(match: re.Match[str]) -> str:
+            nonlocal normalized_file_paths
+            normalized_file_paths = True
+            value = match.group(1).replace("\\", "/")
+            value = re.sub(r"/+", "/", value)
+            return f'"filePath": "{value}"'
+
+        fixed = re.sub(r'"filePath"\s*:\s*"([^"]*)"', fix_filepath, text)
+        entries = json.loads(fixed)
+
+    if not isinstance(entries, list):
+        return {}, {"path": display_path(path), "exists": True, "entry_count": 0, "error": "index root is not a list"}
+
+    root_key = display_path(root).replace("\\", "/").rstrip("/")
+    by_rel: dict[str, dict[str, Any]] = {}
+    reward_counts: Counter[str] = Counter()
+    missing_reward = 0
+    invalid_reward = 0
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        reward = entry.get("reward")
+        if reward in {"", None}:
+            missing_reward += 1
+        else:
+            try:
+                reward_float = float(reward)
+                if reward_float in {0.0, 1.0}:
+                    reward_counts[str(int(reward_float))] += 1
+                else:
+                    invalid_reward += 1
+                    reward_counts[str(reward_float)] += 1
+            except (TypeError, ValueError):
+                invalid_reward += 1
+                reward_counts[str(reward)] += 1
+
+        file_path = str(entry.get("filePath", "")).replace("\\", "/")
+        file_path = re.sub(r"/+", "/", file_path)
+        rel_key = ""
+        if root_key and file_path.startswith(f"{root_key}/"):
+            rel_key = file_path[len(root_key) + 1 :]
+        else:
+            marker = "data/trajectories/balanced_12/"
+            if marker in file_path:
+                rel_key = file_path.split(marker, 1)[1]
+        if rel_key:
+            by_rel[rel_key] = entry
+
+    return by_rel, {
+        "path": display_path(path),
+        "exists": True,
+        "entry_count": len(entries),
+        "matched_path_key_count": len(by_rel),
+        "reward_counts": dict(reward_counts),
+        "missing_reward_count": missing_reward,
+        "invalid_reward_count": invalid_reward,
+        "normalized_file_paths_on_load": normalized_file_paths,
+    }
+
+
+def reward_outcome(reward: Any) -> str:
+    if reward in {"", None}:
+        return ""
+    try:
+        value = float(reward)
+    except (TypeError, ValueError):
+        return ""
+    if value == 1.0:
+        return "pass"
+    if value == 0.0:
+        return "fail"
+    return f"score_{value}"
 
 
 def display_path(path: Path) -> str:
@@ -295,6 +383,22 @@ def summarize_numeric(values: list[float]) -> dict[str, Any]:
     }
 
 
+def parse_float(value: Any) -> float | None:
+    if value in {"", None}:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_int(value: Any) -> int | None:
+    parsed = parse_float(value)
+    if parsed is None:
+        return None
+    return int(parsed)
+
+
 def sample_variance(values: list[float]) -> float | None:
     if len(values) < 2:
         return None
@@ -440,6 +544,7 @@ def main() -> None:
     ap.add_argument("--root", type=Path, default=ROOT_DEFAULT)
     ap.add_argument("--out", type=Path, default=OUT_DEFAULT)
     ap.add_argument("--leaderboard", type=Path, default=LEADERBOARD_DEFAULT)
+    ap.add_argument("--trajectory-index", type=Path, default=INDEX_DEFAULT)
     args = ap.parse_args()
 
     root = args.root
@@ -447,6 +552,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     paths = sorted(root.rglob("*.json"))
+    index_by_rel, index_stats = load_trajectory_index(args.trajectory_index, root)
     leaderboard_by_checksum: dict[str, list[dict[str, Any]]] = defaultdict(list)
     leaderboard_task_names: dict[str, str] = {}
     leaderboard_submissions: list[dict[str, Any]] = []
@@ -536,6 +642,7 @@ def main() -> None:
             continue
 
         rel = path.relative_to(root)
+        rel_key = rel.as_posix()
         parts = rel.parts
         scaffold = parts[0] if len(parts) >= 1 else ""
         model_dir = parts[1] if len(parts) >= 2 else ""
@@ -565,7 +672,11 @@ def main() -> None:
             if exactish:
                 leaderboard_matches = exactish
         leaderboard_meta = leaderboard_matches[0] if leaderboard_matches else {}
-        outcome = outcome_label(data)
+        trajectory_json_outcome = outcome_label(data)
+        index_meta = index_by_rel.get(rel_key, {})
+        reward = index_meta.get("reward", "")
+        outcome_from_reward = reward_outcome(reward)
+        outcome = outcome_from_reward or trajectory_json_outcome
         dur = duration_seconds([s for s in steps if isinstance(s, dict)])
 
         prompt_tokens = 0
@@ -645,6 +756,9 @@ def main() -> None:
                     "model_name": model_name,
                     "task_id": task_id,
                     "outcome": outcome,
+                    "reward": reward,
+                    "reward_outcome": outcome_from_reward,
+                    "trajectory_json_outcome": trajectory_json_outcome,
                     "step_id": raw_step.get("step_id", idx),
                     "step_index": idx,
                     "source": raw_step.get("source", ""),
@@ -712,6 +826,9 @@ def main() -> None:
             "file_task_id": file_task_id,
             "file_run_id": file_run_id,
             "outcome": outcome,
+            "reward": reward,
+            "reward_outcome": outcome_from_reward,
+            "trajectory_json_outcome": trajectory_json_outcome,
             "leaderboard_avg_resolution_rate": leaderboard_meta.get("avgResolutionRate", ""),
             "leaderboard_success_count": leaderboard_meta.get("successCount", ""),
             "leaderboard_n_trials": leaderboard_meta.get("nTrials", ""),
@@ -768,7 +885,8 @@ def main() -> None:
     csv_fields = [
         "rel_path", "path", "file_size_bytes", "schema_version", "session_id", "scaffold", "model_dir",
         "agent_name", "agent_version", "model_name", "original_format", "task_id", "file_task_id",
-        "task_name", "file_run_id", "outcome", "leaderboard_avg_resolution_rate", "leaderboard_success_count",
+        "task_name", "file_run_id", "outcome", "reward", "reward_outcome", "trajectory_json_outcome",
+        "leaderboard_avg_resolution_rate", "leaderboard_success_count",
         "leaderboard_n_trials", "leaderboard_task_name", "leaderboard_model", "submission_url",
         "leaderboard_rank",
         *OFFICIAL_LEADERBOARD_FIELDS,
@@ -822,6 +940,68 @@ def main() -> None:
         for item in selected_snippets:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
+    outcome_by_scaffold_model: list[dict[str, Any]] = []
+    grouped_rows: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped_rows[(str(row.get("scaffold", "")), str(row.get("model_dir", "")))].append(row)
+    for (scaffold, model_dir), items in sorted(grouped_rows.items()):
+        rewards = [parse_float(row.get("reward")) for row in items]
+        valid_rewards = [value for value in rewards if value is not None]
+        pass_items = [row for row in items if row.get("reward_outcome") == "pass"]
+        fail_items = [row for row in items if row.get("reward_outcome") == "fail"]
+        outcome_by_scaffold_model.append({
+            "scaffold": scaffold,
+            "model_dir": model_dir,
+            "trajectory_count": len(items),
+            "labeled_trajectory_count": len(valid_rewards),
+            "pass_count": len(pass_items),
+            "fail_count": len(fail_items),
+            "success_rate": mean(valid_rewards) if valid_rewards else "",
+            "mean_step_count_pass": mean([int(row["step_count"]) for row in pass_items]) if pass_items else "",
+            "mean_step_count_fail": mean([int(row["step_count"]) for row in fail_items]) if fail_items else "",
+            "mean_command_count_pass": mean([int(row["command_count"]) for row in pass_items]) if pass_items else "",
+            "mean_command_count_fail": mean([int(row["command_count"]) for row in fail_items]) if fail_items else "",
+        })
+
+    with (out / "trajectory_outcome_by_scaffold_model.csv").open("w", newline="", encoding="utf-8") as f:
+        fields = [
+            "scaffold", "model_dir", "trajectory_count", "labeled_trajectory_count",
+            "pass_count", "fail_count", "success_rate",
+            "mean_step_count_pass", "mean_step_count_fail",
+            "mean_command_count_pass", "mean_command_count_fail",
+        ]
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(outcome_by_scaffold_model)
+
+    outcome_feature_rows: list[dict[str, Any]] = []
+    feature_fields = [
+        "step_count",
+        "command_count",
+        "tool_call_count",
+        "message_chars",
+        "observation_chars",
+        "total_tokens",
+        "cost_usd",
+        "duration_seconds_from_timestamps",
+    ]
+    for outcome_name in ("pass", "fail"):
+        items = [row for row in rows if row.get("reward_outcome") == outcome_name]
+        summary_row: dict[str, Any] = {"reward_outcome": outcome_name, "trajectory_count": len(items)}
+        for field in feature_fields:
+            values = [parse_float(row.get(field)) for row in items]
+            values = [value for value in values if value is not None]
+            summary = summarize_numeric(values)
+            for stat in ("median", "mean", "p75", "p90", "max"):
+                summary_row[f"{field}_{stat}"] = summary.get(stat, "")
+        outcome_feature_rows.append(summary_row)
+
+    with (out / "trajectory_features_by_outcome.csv").open("w", newline="", encoding="utf-8") as f:
+        fields = list(outcome_feature_rows[0].keys()) if outcome_feature_rows else ["reward_outcome", "trajectory_count"]
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(outcome_feature_rows)
+
     step_counts = [int(r["step_count"]) for r in rows if r.get("step_count") != ""]
     command_counts = [int(r["command_count"]) for r in rows if r.get("command_count") != ""]
     tool_counts = [int(r["tool_call_count"]) for r in rows if r.get("tool_call_count") != ""]
@@ -854,6 +1034,9 @@ def main() -> None:
         for s in leaderboard_submissions
         if s.get("computed_submission_task_rate_variance") not in {"", None}
     ]
+    reward_values = [parse_float(r.get("reward")) for r in rows]
+    reward_values = [value for value in reward_values if value is not None]
+    reward_outcome_counts = Counter(str(r.get("reward_outcome", "")) for r in rows)
 
     # Coarse task-family hints from task ids and user prompt text.
     family_patterns = {
@@ -880,6 +1063,11 @@ def main() -> None:
     stats = {
         "root": display_path(root),
         "leaderboard": display_path(args.leaderboard) if args.leaderboard.exists() else "",
+        "trajectory_index": index_stats,
+        "trajectory_index_matched_rows": sum(1 for row in rows if row.get("reward") not in {"", None}),
+        "trajectory_index_unmatched_rows": sum(1 for row in rows if row.get("reward") in {"", None}),
+        "reward_distribution": summarize_numeric(reward_values),
+        "reward_outcome_counts": reward_outcome_counts.most_common(),
         "leaderboard_task_checksum_count": len(leaderboard_by_checksum),
         "leaderboard_scaffold_model_task_cells": len(leaderboard_cells),
         "leaderboard_aggregate_success_count": leaderboard_success_total,
@@ -922,6 +1110,8 @@ def main() -> None:
             "leaderboard_submission_summary_csv": display_path(out / "leaderboard_submission_summary.csv"),
             "command_patterns_csv": display_path(out / "command_patterns.csv"),
             "representative_snippets_jsonl": display_path(out / "representative_snippets.jsonl"),
+            "trajectory_outcome_by_scaffold_model_csv": display_path(out / "trajectory_outcome_by_scaffold_model.csv"),
+            "trajectory_features_by_outcome_csv": display_path(out / "trajectory_features_by_outcome.csv"),
         },
     }
     with (out / "corpus_stats.json").open("w", encoding="utf-8") as f:
