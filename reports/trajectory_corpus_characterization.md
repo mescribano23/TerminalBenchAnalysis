@@ -7,25 +7,25 @@ Generated on 2026-06-04 from the local workspace. This report characterizes the 
 The primary trajectory corpus is stored under:
 
 ```text
-terminal_bench_trajectory_work/trajectories_balanced_12/
+data/trajectories/balanced_12/
 ```
 
 The corpus contains JSON files nested by scaffold and model:
 
 ```text
-terminal_bench_trajectory_work/trajectories_balanced_12/{scaffold}/{model}/{task_checksum}_{run_uuid}.json
+data/trajectories/balanced_12/{scaffold}/{model}/{task_checksum}_{run_uuid}.json
 ```
 
 Example active-file path:
 
 ```text
-terminal_bench_trajectory_work/trajectories_balanced_12/mini-swe-agent/gemini-2.5-pro/0ddf1db011f2f37709b0fc536f67a3f4261ce5cae69613969f017f365c25ac94_3bd68e39-3bd5-4c21-8cd1-fc82865879f2.json
+data/trajectories/balanced_12/mini-swe-agent/gemini-2.5-pro/0ddf1db011f2f37709b0fc536f67a3f4261ce5cae69613969f017f365c25ac94_3bd68e39-3bd5-4c21-8cd1-fc82865879f2.json
 ```
 
 A nearby metadata file exists:
 
 ```text
-terminal_bench_trajectory_work/leaderboard_v2.json
+data/raw/leaderboard_v2.json
 ```
 
 This leaderboard file provides aggregate task/scaffold/model fields such as `taskName`, `taskChecksum`, `nTrials`, `avgResolutionRate`, and `successCount`. The trajectory JSON files themselves do not expose per-run pass/fail fields.
@@ -33,17 +33,15 @@ This leaderboard file provides aggregate task/scaffold/model fields such as `tas
 Reproduction command:
 
 ```powershell
-python terminal_bench_trajectory_work/analysis/characterize_trajectories.py
+python scripts/characterize_trajectories.py
 ```
 
 Generated artifacts:
 
-- `terminal_bench_trajectory_work/analysis/corpus_stats.json`
-- `terminal_bench_trajectory_work/analysis/trajectory_summary.csv`
-- `terminal_bench_trajectory_work/analysis/trajectory_summary.jsonl`
-- `terminal_bench_trajectory_work/analysis/command_patterns.csv`
-- `terminal_bench_trajectory_work/analysis/representative_snippets.jsonl`
-- `terminal_bench_trajectory_work/analysis/trajectory_corpus_characterization_draft.md`
+- `data/processed/corpus_stats.json`
+- `data/processed/trajectory_summary.csv`
+- `data/processed/command_patterns.csv`
+- `data/processed/representative_snippets.jsonl`
 
 ## Trajectory Schema
 
@@ -240,7 +238,7 @@ Simple command-based labelling will fail in several recurrent situations:
 
 ## Likely Task Families
 
-The following families are heuristic, based on available task names from `leaderboard_v2.json`, filename-linked checksums, final snippets, and command contents. They should seed stratification, not serve as definitive task-type labels.
+The following families are heuristic, based on available task names from `data/raw/leaderboard_v2.json`, filename-linked checksums, final snippets, and command contents. They should seed stratification, not serve as definitive task-type labels.
 
 | Heuristic family | Matched trajectories |
 |---|---:|
@@ -274,7 +272,7 @@ Suggested allocation for 120:
 - 60 balanced by scaffold/model and leaderboard-resolution bins.
 - 24 long/extreme trajectories because phase boundaries and repair loops are more visible there.
 - 18 short trajectories because they stress whether the taxonomy handles compressed behavior.
-- 18 ambiguity-enriched trajectories selected from `terminal_bench_trajectory_work/analysis/representative_snippets.jsonl` and repeated-command cases.
+- 18 ambiguity-enriched trajectories selected from `data/processed/representative_snippets.jsonl` and repeated-command cases.
 
 Do not use `leaderboard_avg_resolution_rate` as a trajectory pass/fail label. Treat it as an aggregate covariate unless per-run evaluation metadata is later recovered.
 
@@ -289,38 +287,38 @@ Recommended CSV/JSONL row fields for downstream annotation:
 - Finalization markers: `has_final_marker`, `final_message_snippet`.
 - Step-level annotation export should additionally include `step_id`, `step_index`, `source`, `message`, `reasoning_content`, normalized `tool_name`, normalized `command`, `arguments.path`, `observation_text`, `returncode` when recoverable, and previous/next step references.
 
-The generated `terminal_bench_trajectory_work/analysis/trajectory_summary.csv` already contains a trajectory-level subset of these fields. A later step-level export should be produced before manual annotation.
+The generated `data/processed/trajectory_summary.csv` already contains a trajectory-level subset of these fields. A later step-level export should be produced before manual annotation.
 
 ## Reproducible Commands
 
 Count trajectory JSON files:
 
 ```powershell
-Get-ChildItem terminal_bench_trajectory_work\trajectories_balanced_12 -Recurse -File -Filter *.json | Measure-Object
+Get-ChildItem data\trajectories\balanced_12 -Recurse -File -Filter *.json | Measure-Object
 ```
 
 List scaffold directories:
 
 ```powershell
-Get-ChildItem terminal_bench_trajectory_work\trajectories_balanced_12 -Directory | Select-Object Name
+Get-ChildItem data\trajectories\balanced_12 -Directory | Select-Object Name
 ```
 
 Run full characterization:
 
 ```powershell
-python terminal_bench_trajectory_work\analysis\characterize_trajectories.py
+python scripts\characterize_trajectories.py
 ```
 
 Inspect generated trajectory summary:
 
 ```powershell
-Get-Content terminal_bench_trajectory_work\analysis\trajectory_summary.csv -TotalCount 6
+Get-Content data\processed\trajectory_summary.csv -TotalCount 6
 ```
 
 Inspect common command patterns:
 
 ```powershell
-Get-Content terminal_bench_trajectory_work\analysis\command_patterns.csv -TotalCount 40
+Get-Content data\processed\command_patterns.csv -TotalCount 40
 ```
 
 ## Risks For Annotation Validity

@@ -25,8 +25,14 @@ from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.tbench.ai"
 DEFAULT_LEADERBOARD_URL = f"{BASE_URL}/leaderboard/terminal-bench/2.0"
-DEFAULT_OUTPUT_PATH = "leaderboard_v2.json"
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+DATA_DIR = REPO_ROOT / "data"
+DEFAULT_OUTPUT_PATH = DATA_DIR / "raw" / "leaderboard_v2.json"
+DEFAULT_TRAJECTORIES_DIR = DATA_DIR / "trajectories" / "sample"
+DEFAULT_TRAJECTORY_INDEX = DATA_DIR / "indexes" / "trajectory_index.json"
 REQUEST_DELAY_SECONDS = 0.5
+NORMAL_95_CI_MULTIPLIER = 1.96
 
 HEADERS = {
     "User-Agent": (
@@ -64,6 +70,16 @@ ROW_SUBMISSION_RE = re.compile(
     r'"modelProviders"\s*:\s*\[(?P<model_providers>[^\]]*)\]'
 )
 
+ROW_OBJECT_RE = re.compile(
+    r"\{"
+    r"(?=[^{}]*\"agentName\")"
+    r"(?=[^{}]*\"agentVersion\")"
+    r"(?=[^{}]*\"modelNames\")"
+    r"(?=[^{}]*\"modelProviders\")"
+    r"[^{}]*"
+    r"\}"
+)
+
 ARRAY_STRING_RE = re.compile(r'"((?:\\.|[^"\\])*)"')
 
 TRIAL_OBJECT_RE = re.compile(
@@ -82,6 +98,13 @@ class Submission:
     scaffold_version: str
     model: str
     provider: str
+    leaderboard_accuracy: float | None = None
+    leaderboard_stderr: float | None = None
+    leaderboard_date: str = ""
+    leaderboard_agent_display_name: str = ""
+    leaderboard_model_display: str = ""
+    leaderboard_agent_organization: str = ""
+    leaderboard_model_organization: str = ""
 
 
 def fetch_html(session: requests.Session, url: str) -> str:
@@ -138,7 +161,16 @@ def canonical_submission_url(
     provider: str,
 ) -> str:
     safe = "-._~"
-    model_provider = f"{quote(model, safe=safe)}@{quote(provider, safe=safe)}"
+    model_names = model.split(",")
+    providers = provider.split(",")
+    if len(model_names) == len(providers) and len(model_names) > 1:
+        model_provider_raw = ",".join(
+            f"{model_name}@{model_provider}"
+            for model_name, model_provider in zip(model_names, providers)
+        )
+    else:
+        model_provider_raw = f"{model}@{provider}"
+    model_provider = quote(model_provider_raw, safe=safe)
     return (
         f"{BASE_URL}/leaderboard/terminal-bench/"
         f"{quote(bench_version, safe=safe)}/"
@@ -166,7 +198,16 @@ def parse_submission_url(raw_url: str) -> Submission | None:
     if "@" not in model_provider:
         return None
 
-    model, provider = model_provider.rsplit("@", 1)
+    model_names: list[str] = []
+    providers: list[str] = []
+    for part in model_provider.split(","):
+        if "@" not in part:
+            return None
+        model_name, model_provider_name = part.rsplit("@", 1)
+        model_names.append(model_name)
+        providers.append(model_provider_name)
+    model = ",".join(model_names)
+    provider = ",".join(providers)
     return Submission(
         url=canonical_submission_url(
             bench_version, scaffold, scaffold_version, model, provider
@@ -194,6 +235,64 @@ def parse_jsonish_string_array(raw_array_body: str) -> list[str]:
     ]
 
 
+def jsonish_array_body(object_text: str, field_name: str) -> str | None:
+    match = re.search(
+        rf'"{re.escape(field_name)}"\s*:\s*\[(?P<value>[^\]]*)\]',
+        object_text,
+    )
+    if not match:
+        return None
+    return match.group("value")
+
+
+def optional_float(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def row_submission_from_object(object_text: str, bench_version: str) -> list[Submission]:
+    scaffold = json_field_string(object_text, "agentName")
+    scaffold_version = json_field_string(object_text, "agentVersion")
+    model_body = jsonish_array_body(object_text, "modelNames")
+    provider_body = jsonish_array_body(object_text, "modelProviders")
+    if scaffold is None or scaffold_version is None or model_body is None or provider_body is None:
+        return []
+
+    model_names = parse_jsonish_string_array(model_body)
+    model_providers = parse_jsonish_string_array(provider_body)
+    leaderboard_accuracy = json_field_number(object_text, "accuracy")
+    leaderboard_stderr = json_field_number(object_text, "stderr")
+    leaderboard_date = json_field_string(object_text, "date") or ""
+    agent_display_name = json_field_string(object_text, "agent") or ""
+    agent_organization = json_field_string(object_text, "agentOrganization") or ""
+    model_display_body = jsonish_array_body(object_text, "model")
+    model_org_body = jsonish_array_body(object_text, "modelOrganization")
+    model_display = ",".join(parse_jsonish_string_array(model_display_body or ""))
+    model_organization = ",".join(parse_jsonish_string_array(model_org_body or ""))
+
+    submissions: list[Submission] = []
+    for model, provider in row_model_provider_pairs(model_names, model_providers):
+        submissions.append(
+            Submission(
+                url=canonical_submission_url(
+                    bench_version, scaffold, scaffold_version, model, provider
+                ),
+                bench_version=bench_version,
+                scaffold=scaffold,
+                scaffold_version=scaffold_version,
+                model=model,
+                provider=provider,
+                leaderboard_accuracy=optional_float(leaderboard_accuracy),
+                leaderboard_stderr=optional_float(leaderboard_stderr),
+                leaderboard_date=leaderboard_date,
+                leaderboard_agent_display_name=agent_display_name,
+                leaderboard_model_display=model_display,
+                leaderboard_agent_organization=agent_organization,
+                leaderboard_model_organization=model_organization,
+            )
+        )
+    return submissions
+
+
 def row_model_provider_pairs(
     model_names: list[str], model_providers: list[str]
 ) -> list[tuple[str, str]]:
@@ -203,8 +302,8 @@ def row_model_provider_pairs(
     if len(model_names) == 1 and len(model_providers) == 1:
         return [(model_names[0], model_providers[0])]
 
-    # A leaderboard row is one submission. Multi-model rows are routed as a
-    # single comma-joined model/provider segment by the app.
+    # A leaderboard row is one submission. Multi-model rows are routed as
+    # comma-joined model/provider pairs, e.g. model-a@provider-a,model-b@provider-b.
     if len(model_names) == len(model_providers):
         return [(",".join(model_names), ",".join(model_providers))]
 
@@ -218,6 +317,14 @@ def row_model_provider_pairs(
 
 
 def extract_row_submissions(text: str, bench_version: str) -> Iterable[Submission]:
+    yielded = False
+    for object_match in ROW_OBJECT_RE.finditer(text):
+        for submission in row_submission_from_object(object_match.group(0), bench_version):
+            yielded = True
+            yield submission
+    if yielded:
+        return
+
     for match in ROW_SUBMISSION_RE.finditer(text):
         scaffold = decode_jsonish_string(match.group("scaffold"))
         scaffold_version = decode_jsonish_string(match.group("scaffold_version"))
@@ -234,6 +341,18 @@ def extract_row_submissions(text: str, bench_version: str) -> Iterable[Submissio
                 model=model,
                 provider=provider,
             )
+
+
+def keep_richer_submission(
+    submissions_by_url: dict[str, Submission],
+    submission: Submission,
+) -> None:
+    existing = submissions_by_url.get(submission.url)
+    if existing is None:
+        submissions_by_url[submission.url] = submission
+        return
+    if existing.leaderboard_accuracy is None and submission.leaderboard_accuracy is not None:
+        submissions_by_url[submission.url] = submission
 
 
 def iter_script_texts(soup: BeautifulSoup) -> Iterable[str]:
@@ -306,7 +425,7 @@ def extract_submission_links(html_text: str, leaderboard_url: str) -> list[Submi
     for anchor in soup.find_all("a", href=True):
         submission = parse_submission_url(anchor["href"])
         if submission:
-            submissions_by_url.setdefault(submission.url, submission)
+            keep_richer_submission(submissions_by_url, submission)
 
     searchable_texts = [html_text]
     searchable_texts.extend(iter_script_texts(soup))
@@ -315,9 +434,9 @@ def extract_submission_links(html_text: str, leaderboard_url: str) -> list[Submi
         for match in TEXT_SUBMISSION_RE.finditer(normalized):
             submission = parse_submission_url(match.group("url"))
             if submission:
-                submissions_by_url.setdefault(submission.url, submission)
+                keep_richer_submission(submissions_by_url, submission)
         for submission in extract_row_submissions(normalized, bench_version):
-            submissions_by_url.setdefault(submission.url, submission)
+            keep_richer_submission(submissions_by_url, submission)
 
     return list(submissions_by_url.values())
 
@@ -552,6 +671,32 @@ def submission_score(submission: dict[str, Any]) -> float:
     return 0.0
 
 
+def leaderboard_accuracy_record(submission: Submission) -> dict[str, object]:
+    accuracy = submission.leaderboard_accuracy
+    stderr = submission.leaderboard_stderr
+    accuracy_percent = accuracy * 100.0 if accuracy is not None else None
+    stderr_percent = stderr * 100.0 if stderr is not None else None
+    ci95_pm_percent = stderr * NORMAL_95_CI_MULTIPLIER * 100.0 if stderr is not None else None
+    accuracy_display = (
+        f"{accuracy_percent:.1f}%+/- {ci95_pm_percent:.1f}"
+        if accuracy_percent is not None and ci95_pm_percent is not None
+        else ""
+    )
+    return {
+        "leaderboard_accuracy": accuracy if accuracy is not None else "",
+        "leaderboard_accuracy_percent": accuracy_percent if accuracy_percent is not None else "",
+        "leaderboard_stderr": stderr if stderr is not None else "",
+        "leaderboard_stderr_percent": stderr_percent if stderr_percent is not None else "",
+        "leaderboard_accuracy_ci95_pm_percent": ci95_pm_percent if ci95_pm_percent is not None else "",
+        "leaderboard_accuracy_display": accuracy_display,
+        "leaderboard_date": submission.leaderboard_date,
+        "leaderboard_agent_display_name": submission.leaderboard_agent_display_name,
+        "leaderboard_model_display": submission.leaderboard_model_display,
+        "leaderboard_agent_organization": submission.leaderboard_agent_organization,
+        "leaderboard_model_organization": submission.leaderboard_model_organization,
+    }
+
+
 def select_evenly_spaced(items: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
     if count <= 0 or not items:
         return []
@@ -736,7 +881,7 @@ def sample_submissions(
     n: int,
     strategy: str,
     submissions: list[dict[str, Any]] | None = None,
-    leaderboard_path: Path = Path(DEFAULT_OUTPUT_PATH),
+    leaderboard_path: Path = DEFAULT_OUTPUT_PATH,
 ) -> list[dict[str, Any]]:
     if n <= 0:
         return []
@@ -904,6 +1049,7 @@ def check_trajectory_availability(
             f"has_trajectories={has_trajectories} ({reason})"
         )
 
+    leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
     leaderboard_path.write_text(
         json.dumps(leaderboard, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -931,6 +1077,7 @@ def collect_trajectories(
     sampled = sample_submissions(sample_n, strategy, leaderboard)
     session = requests.Session()
 
+    index_path.parent.mkdir(parents=True, exist_ok=True)
     index_entries = load_existing_index(index_path)
     index_by_key = {index_key(entry): entry for entry in index_entries}
 
@@ -1077,6 +1224,24 @@ def collect_leaderboard(
     output_path: Path,
     limit: int | None = None,
 ) -> int:
+    existing_by_key: dict[tuple[str, str, str, str], dict[str, object]] = {}
+    if output_path.exists():
+        try:
+            existing_rows = json.loads(output_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing_rows = []
+        if isinstance(existing_rows, list):
+            for row in existing_rows:
+                if not isinstance(row, dict):
+                    continue
+                key = (
+                    str(row.get("scaffold", "")),
+                    str(row.get("scaffold_version", "")),
+                    str(row.get("model", "")),
+                    str(row.get("provider", "")),
+                )
+                existing_by_key[key] = row
+
     session = requests.Session()
     print(f"Fetching leaderboard: {leaderboard_url}")
     leaderboard_html = fetch_html(session, leaderboard_url)
@@ -1101,16 +1266,31 @@ def collect_leaderboard(
         if not tasks:
             print("  warning: no task records found", file=sys.stderr)
 
+        key = (
+            submission.scaffold,
+            submission.scaffold_version,
+            submission.model,
+            submission.provider,
+        )
+        existing = existing_by_key.get(key, {})
+        official_metrics = leaderboard_accuracy_record(submission)
+        for metric_key, metric_value in list(official_metrics.items()):
+            if metric_value in {"", None} and existing.get(metric_key) not in {"", None}:
+                official_metrics[metric_key] = existing[metric_key]
         rows.append(
             {
                 "scaffold": submission.scaffold,
                 "scaffold_version": submission.scaffold_version,
                 "model": submission.model,
                 "provider": submission.provider,
+                "has_trajectories": existing.get("has_trajectories", ""),
+                "submission_url": submission.url,
+                **official_metrics,
                 "tasks": tasks,
             }
         )
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Wrote {len(rows)} submissions to {output_path}")
 
@@ -1122,12 +1302,65 @@ def collect_leaderboard(
     return 0
 
 
+def refresh_leaderboard_row_metrics(
+    leaderboard_url: str,
+    leaderboard_path: Path,
+) -> int:
+    try:
+        rows = json.loads(leaderboard_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Could not read {leaderboard_path}: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(rows, list):
+        print(f"{leaderboard_path} does not contain a JSON list", file=sys.stderr)
+        return 1
+
+    session = requests.Session()
+    print(f"Fetching leaderboard row metrics: {leaderboard_url}")
+    leaderboard_html = fetch_html(session, leaderboard_url)
+    submissions = extract_submission_links(leaderboard_html, leaderboard_url)
+    metrics_by_key = {
+        (
+            submission.scaffold,
+            submission.scaffold_version,
+            submission.model,
+            submission.provider,
+        ): leaderboard_accuracy_record(submission)
+        for submission in submissions
+        if submission.leaderboard_accuracy is not None
+    }
+
+    updated = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = (
+            str(row.get("scaffold", "")),
+            str(row.get("scaffold_version", "")),
+            str(row.get("model", "")),
+            str(row.get("provider", "")),
+        )
+        metrics = metrics_by_key.get(key)
+        if not metrics:
+            continue
+        row.update(metrics)
+        updated += 1
+
+    leaderboard_path.parent.mkdir(parents=True, exist_ok=True)
+    leaderboard_path.write_text(
+        json.dumps(rows, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    print(f"Updated official leaderboard metrics for {updated}/{len(rows)} rows in {leaderboard_path}")
+    return 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Scrape Terminal-Bench leaderboard task data from tbench.ai HTML."
     )
     parser.add_argument("--leaderboard-url", default=DEFAULT_LEADERBOARD_URL)
-    parser.add_argument("--output", default=DEFAULT_OUTPUT_PATH)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument(
         "--collect-trajectories",
         action="store_true",
@@ -1142,7 +1375,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--refresh-row-metrics-only",
+        action="store_true",
+        help=(
+            "Fetch the leaderboard table and update official row-level "
+            "accuracy/stderr fields in an existing leaderboard JSON."
+        ),
+    )
+    parser.add_argument(
         "--leaderboard-json",
+        type=Path,
         default=DEFAULT_OUTPUT_PATH,
         help="Existing leaderboard JSON to sample from when --collect-trajectories is used.",
     )
@@ -1160,12 +1402,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--trajectories-dir",
-        default="trajectories",
+        type=Path,
+        default=DEFAULT_TRAJECTORIES_DIR,
         help="Directory where trajectory JSON files are saved.",
     )
     parser.add_argument(
         "--trajectory-index",
-        default="trajectory_index.json",
+        type=Path,
+        default=DEFAULT_TRAJECTORY_INDEX,
         help="Master trajectory index JSON path.",
     )
     parser.add_argument(
@@ -1197,26 +1441,32 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.refresh_row_metrics_only:
+        return refresh_leaderboard_row_metrics(
+            leaderboard_url=args.leaderboard_url,
+            leaderboard_path=args.leaderboard_json,
+        )
+
     if args.check_trajectory_availability:
         return check_trajectory_availability(
-            leaderboard_path=Path(args.leaderboard_json),
+            leaderboard_path=args.leaderboard_json,
             limit=args.availability_limit,
         )
 
     if args.collect_trajectories:
         return collect_trajectories(
-            leaderboard_path=Path(args.leaderboard_json),
+            leaderboard_path=args.leaderboard_json,
             sample_n=args.sample_n,
             strategy=args.strategy,
-            trajectories_dir=Path(args.trajectories_dir),
-            index_path=Path(args.trajectory_index),
+            trajectories_dir=args.trajectories_dir,
+            index_path=args.trajectory_index,
             task_limit=args.task_limit,
             trial_limit=args.trial_limit,
         )
 
     return collect_leaderboard(
         leaderboard_url=args.leaderboard_url,
-        output_path=Path(args.output),
+        output_path=args.output,
         limit=args.limit,
     )
 

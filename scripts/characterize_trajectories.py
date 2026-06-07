@@ -2,12 +2,11 @@
 """Characterize TerminalBench trajectory JSON files.
 
 Outputs:
-- terminal_bench_trajectory_work/analysis/trajectory_summary.csv
-- terminal_bench_trajectory_work/analysis/trajectory_summary.jsonl
-- terminal_bench_trajectory_work/analysis/corpus_stats.json
-- terminal_bench_trajectory_work/analysis/command_patterns.csv
-- terminal_bench_trajectory_work/analysis/representative_snippets.jsonl
-- terminal_bench_trajectory_work/analysis/trajectory_corpus_characterization_draft.md
+- data/processed/trajectory_summary.csv
+- data/processed/leaderboard_submission_summary.csv
+- data/processed/corpus_stats.json
+- data/processed/command_patterns.csv
+- data/processed/representative_snippets.jsonl
 """
 
 from __future__ import annotations
@@ -25,13 +24,42 @@ from typing import Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-WORK_DIR = SCRIPT_DIR.parent
-ROOT_DEFAULT = WORK_DIR / "trajectories_balanced_12"
-OUT_DEFAULT = SCRIPT_DIR
-LEADERBOARD_DEFAULT = WORK_DIR / "leaderboard_v2.json"
+REPO_ROOT = SCRIPT_DIR.parent
+DATA_DIR = REPO_ROOT / "data"
+ROOT_DEFAULT = DATA_DIR / "trajectories" / "balanced_12"
+OUT_DEFAULT = DATA_DIR / "processed"
+LEADERBOARD_DEFAULT = DATA_DIR / "raw" / "leaderboard_v2.json"
 
 BASH_FENCE_RE = re.compile(r"```(?:bash|sh|shell)?\s*\n(.*?)```", re.IGNORECASE | re.DOTALL)
 COMPLETE_RE = re.compile(r"\bCOMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\b")
+
+OFFICIAL_LEADERBOARD_FIELDS = [
+    "leaderboard_accuracy",
+    "leaderboard_accuracy_percent",
+    "leaderboard_stderr",
+    "leaderboard_stderr_percent",
+    "leaderboard_accuracy_ci95_pm_percent",
+    "leaderboard_accuracy_display",
+    "leaderboard_date",
+    "leaderboard_agent_display_name",
+    "leaderboard_model_display",
+    "leaderboard_agent_organization",
+    "leaderboard_model_organization",
+]
+
+COMPUTED_SUBMISSION_FIELDS = [
+    "computed_submission_task_count",
+    "computed_submission_success_count",
+    "computed_submission_trial_count",
+    "computed_submission_accuracy",
+    "computed_submission_accuracy_percent",
+    "computed_submission_weighted_trial_accuracy",
+    "computed_submission_weighted_trial_accuracy_percent",
+    "computed_submission_task_rate_variance",
+    "computed_submission_accuracy_pm_percent",
+    "computed_submission_binomial_accuracy_variance",
+    "computed_submission_accuracy_display",
+]
 
 
 PURPOSE_PATTERNS: list[tuple[str, list[re.Pattern[str]]]] = [
@@ -73,6 +101,14 @@ PURPOSE_PATTERNS: list[tuple[str, list[re.Pattern[str]]]] = [
 def load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def display_path(path: Path) -> str:
+    """Return a repo-relative path when possible, keeping generated files portable."""
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def scalar_value(data: Any, names: set[str], max_depth: int = 4) -> Any:
@@ -259,6 +295,60 @@ def summarize_numeric(values: list[float]) -> dict[str, Any]:
     }
 
 
+def sample_variance(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    avg = mean(values)
+    return sum((value - avg) ** 2 for value in values) / (len(values) - 1)
+
+
+def submission_accuracy_summary(entry: dict[str, Any], rank: int | None = None) -> dict[str, Any]:
+    tasks = [task for task in entry.get("tasks", []) if isinstance(task, dict)]
+    total_trials = sum(int(task.get("nTrials", 0) or 0) for task in tasks)
+    total_successes = sum(int(task.get("successCount", 0) or 0) for task in tasks)
+    rates = [
+        float(task.get("avgResolutionRate", 0.0) or 0.0)
+        for task in tasks
+        if "avgResolutionRate" in task
+    ]
+    weighted_trial_accuracy = (total_successes / total_trials) if total_trials else None
+    accuracy = mean(rates) if rates else weighted_trial_accuracy
+    task_rate_variance = sample_variance(rates)
+    task_rate_std_error = math.sqrt(task_rate_variance / len(rates)) if task_rate_variance is not None and rates else None
+    binomial_p = weighted_trial_accuracy if weighted_trial_accuracy is not None else accuracy
+    binomial_variance = (
+        binomial_p * (1.0 - binomial_p) / total_trials
+        if binomial_p is not None and total_trials
+        else None
+    )
+    accuracy_percent = accuracy * 100.0 if accuracy is not None else None
+    accuracy_pm_percent = task_rate_std_error * 100.0 if task_rate_std_error is not None else None
+    accuracy_display = (
+        f"{accuracy_percent:.1f}%+/- {accuracy_pm_percent:.1f}"
+        if accuracy_percent is not None and accuracy_pm_percent is not None
+        else (f"{accuracy_percent:.1f}%+/- N/A" if accuracy_percent is not None else "")
+    )
+    computed = {
+        "leaderboard_rank": rank if rank is not None else "",
+        "computed_submission_task_count": len(tasks),
+        "computed_submission_success_count": total_successes,
+        "computed_submission_trial_count": total_trials,
+        "computed_submission_accuracy": accuracy if accuracy is not None else "",
+        "computed_submission_accuracy_percent": accuracy_percent if accuracy_percent is not None else "",
+        "computed_submission_weighted_trial_accuracy": weighted_trial_accuracy if weighted_trial_accuracy is not None else "",
+        "computed_submission_weighted_trial_accuracy_percent": weighted_trial_accuracy * 100.0 if weighted_trial_accuracy is not None else "",
+        "computed_submission_task_rate_variance": task_rate_variance if task_rate_variance is not None else "",
+        "computed_submission_accuracy_pm_percent": accuracy_pm_percent if accuracy_pm_percent is not None else "",
+        "computed_submission_binomial_accuracy_variance": binomial_variance if binomial_variance is not None else "",
+        "computed_submission_accuracy_display": accuracy_display,
+    }
+    return computed
+
+
+def official_leaderboard_summary(entry: dict[str, Any]) -> dict[str, Any]:
+    return {field: entry.get(field, "") for field in OFFICIAL_LEADERBOARD_FIELDS}
+
+
 def outcome_label(data: dict[str, Any]) -> str:
     containers = [data]
     if isinstance(data.get("final_metrics"), dict):
@@ -359,13 +449,26 @@ def main() -> None:
     paths = sorted(root.rglob("*.json"))
     leaderboard_by_checksum: dict[str, list[dict[str, Any]]] = defaultdict(list)
     leaderboard_task_names: dict[str, str] = {}
+    leaderboard_submissions: list[dict[str, Any]] = []
     if args.leaderboard.exists():
         try:
             leaderboard = load_json(args.leaderboard)
             if isinstance(leaderboard, list):
-                for entry in leaderboard:
+                for rank, entry in enumerate(leaderboard, start=1):
                     if not isinstance(entry, dict):
                         continue
+                    submission_summary = {
+                        "leaderboard_rank": rank,
+                        "scaffold": entry.get("scaffold", ""),
+                        "scaffold_version": entry.get("scaffold_version", ""),
+                        "leaderboard_model": entry.get("model", ""),
+                        "provider": entry.get("provider", ""),
+                        "has_trajectories": entry.get("has_trajectories", ""),
+                        "submission_url": entry.get("submission_url", ""),
+                        **official_leaderboard_summary(entry),
+                        **submission_accuracy_summary(entry, rank),
+                    }
+                    leaderboard_submissions.append(submission_summary)
                     for task in entry.get("tasks", []):
                         if not isinstance(task, dict):
                             continue
@@ -377,18 +480,29 @@ def main() -> None:
                             "scaffold_version": entry.get("scaffold_version", ""),
                             "leaderboard_model": entry.get("model", ""),
                             "provider": entry.get("provider", ""),
+                            "submission_url": entry.get("submission_url", ""),
                             "taskName": task.get("taskName", ""),
                             "taskChecksum": checksum,
                             "nTrials": task.get("nTrials", ""),
                             "avgResolutionRate": task.get("avgResolutionRate", ""),
                             "successCount": task.get("successCount", ""),
+                            **{
+                                field: submission_summary[field]
+                                for field in OFFICIAL_LEADERBOARD_FIELDS
+                            },
                             "trialUrl": task.get("trialUrl", ""),
+                            **{
+                                field: submission_summary[field]
+                                for field in COMPUTED_SUBMISSION_FIELDS
+                            },
+                            "leaderboard_rank": submission_summary["leaderboard_rank"],
                         }
                         leaderboard_by_checksum[str(checksum)].append(merged)
                         if task.get("taskName"):
                             leaderboard_task_names[str(checksum)] = str(task.get("taskName"))
         except Exception:
             leaderboard_by_checksum = defaultdict(list)
+            leaderboard_submissions = []
     leaderboard_cells = [item for items in leaderboard_by_checksum.values() for item in items]
     leaderboard_success_total = sum(int(item.get("successCount") or 0) for item in leaderboard_cells)
     leaderboard_trial_total = sum(int(item.get("nTrials") or 0) for item in leaderboard_cells)
@@ -416,7 +530,7 @@ def main() -> None:
         try:
             data = load_json(path)
         except Exception as exc:
-            rows.append({"path": str(path), "parse_error": str(exc)})
+            rows.append({"path": display_path(path), "parse_error": str(exc)})
             continue
         if not isinstance(data, dict):
             continue
@@ -523,7 +637,7 @@ def main() -> None:
                 purpose_counter[purpose] += 1
                 purpose_by_scaffold[scaffold][purpose] += 1
                 command_records.append({
-                    "path": str(path),
+                    "path": display_path(path),
                     "rel_path": str(rel),
                     "scaffold": scaffold,
                     "model_dir": model_dir,
@@ -582,7 +696,7 @@ def main() -> None:
             })
 
         row = {
-            "path": str(path),
+            "path": display_path(path),
             "rel_path": str(rel),
             "file_size_bytes": path.stat().st_size,
             "schema_version": data.get("schema_version", ""),
@@ -603,6 +717,16 @@ def main() -> None:
             "leaderboard_n_trials": leaderboard_meta.get("nTrials", ""),
             "leaderboard_task_name": leaderboard_meta.get("taskName", ""),
             "leaderboard_model": leaderboard_meta.get("leaderboard_model", ""),
+            "submission_url": leaderboard_meta.get("submission_url", ""),
+            "leaderboard_rank": leaderboard_meta.get("leaderboard_rank", ""),
+            **{
+                field: leaderboard_meta.get(field, "")
+                for field in OFFICIAL_LEADERBOARD_FIELDS
+            },
+            **{
+                field: leaderboard_meta.get(field, "")
+                for field in COMPUTED_SUBMISSION_FIELDS
+            },
             "step_count": len(steps),
             "agent_step_count": source_counts.get("agent", 0),
             "user_step_count": source_counts.get("user", 0),
@@ -645,7 +769,11 @@ def main() -> None:
         "rel_path", "path", "file_size_bytes", "schema_version", "session_id", "scaffold", "model_dir",
         "agent_name", "agent_version", "model_name", "original_format", "task_id", "file_task_id",
         "task_name", "file_run_id", "outcome", "leaderboard_avg_resolution_rate", "leaderboard_success_count",
-        "leaderboard_n_trials", "leaderboard_task_name", "leaderboard_model", "step_count", "agent_step_count", "user_step_count", "system_step_count",
+        "leaderboard_n_trials", "leaderboard_task_name", "leaderboard_model", "submission_url",
+        "leaderboard_rank",
+        *OFFICIAL_LEADERBOARD_FIELDS,
+        *COMPUTED_SUBMISSION_FIELDS,
+        "step_count", "agent_step_count", "user_step_count", "system_step_count",
         "tool_call_count", "command_count", "message_chars", "reasoning_chars", "observation_chars",
         "metric_step_count", "prompt_tokens", "completion_tokens", "total_tokens", "cost_usd",
         "duration_seconds_from_timestamps", "has_final_marker", "final_message_snippet", "top_level_keys",
@@ -654,9 +782,17 @@ def main() -> None:
         writer = csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
-    with (out / "trajectory_summary.jsonl").open("w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    submission_fields = [
+        "leaderboard_rank", "scaffold", "scaffold_version", "leaderboard_model", "provider", "submission_url",
+        "has_trajectories",
+        *OFFICIAL_LEADERBOARD_FIELDS,
+        *COMPUTED_SUBMISSION_FIELDS,
+    ]
+    with (out / "leaderboard_submission_summary.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=submission_fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(leaderboard_submissions)
 
     with (out / "command_patterns.csv").open("w", newline="", encoding="utf-8") as f:
         fields = ["rank", "count", "command_head", "purpose_candidate", "example_command"]
@@ -693,6 +829,31 @@ def main() -> None:
     tokens = [float(r["total_tokens"]) for r in rows if r.get("total_tokens") not in {"", None}]
     durations = [float(r["duration_seconds_from_timestamps"]) for r in rows if r.get("duration_seconds_from_timestamps") not in {"", None}]
     leaderboard_rates = [float(r["leaderboard_avg_resolution_rate"]) for r in rows if r.get("leaderboard_avg_resolution_rate") not in {"", None}]
+    submission_accuracies = [
+        float(s["computed_submission_accuracy"])
+        for s in leaderboard_submissions
+        if s.get("computed_submission_accuracy") not in {"", None}
+    ]
+    leaderboard_accuracies = [
+        float(s["leaderboard_accuracy"])
+        for s in leaderboard_submissions
+        if s.get("leaderboard_accuracy") not in {"", None}
+    ]
+    leaderboard_accuracy_pms = [
+        float(s["leaderboard_accuracy_ci95_pm_percent"])
+        for s in leaderboard_submissions
+        if s.get("leaderboard_accuracy_ci95_pm_percent") not in {"", None}
+    ]
+    submission_accuracy_pms = [
+        float(s["computed_submission_accuracy_pm_percent"])
+        for s in leaderboard_submissions
+        if s.get("computed_submission_accuracy_pm_percent") not in {"", None}
+    ]
+    submission_task_rate_variances = [
+        float(s["computed_submission_task_rate_variance"])
+        for s in leaderboard_submissions
+        if s.get("computed_submission_task_rate_variance") not in {"", None}
+    ]
 
     # Coarse task-family hints from task ids and user prompt text.
     family_patterns = {
@@ -717,13 +878,19 @@ def main() -> None:
             family_counts["unclassified_from_available_text"] += 1
 
     stats = {
-        "root": str(root),
-        "leaderboard": str(args.leaderboard) if args.leaderboard.exists() else "",
+        "root": display_path(root),
+        "leaderboard": display_path(args.leaderboard) if args.leaderboard.exists() else "",
         "leaderboard_task_checksum_count": len(leaderboard_by_checksum),
         "leaderboard_scaffold_model_task_cells": len(leaderboard_cells),
         "leaderboard_aggregate_success_count": leaderboard_success_total,
         "leaderboard_aggregate_trial_count": leaderboard_trial_total,
         "leaderboard_aggregate_resolution_rate": (leaderboard_success_total / leaderboard_trial_total) if leaderboard_trial_total else None,
+        "leaderboard_submission_count": len(leaderboard_submissions),
+        "leaderboard_official_accuracy_distribution": summarize_numeric(leaderboard_accuracies),
+        "leaderboard_official_accuracy_ci95_pm_percent_distribution": summarize_numeric(leaderboard_accuracy_pms),
+        "computed_submission_accuracy_distribution": summarize_numeric(submission_accuracies),
+        "computed_submission_accuracy_pm_percent_distribution": summarize_numeric(submission_accuracy_pms),
+        "computed_submission_task_rate_variance_distribution": summarize_numeric(submission_task_rate_variances),
         "trajectory_count": len(rows),
         "unique_task_count": len(task_ids),
         "top_level_keys": top_keys.most_common(),
@@ -751,59 +918,14 @@ def main() -> None:
         "ambiguous_case_count": len(ambiguous),
         "ambiguous_case_examples": ambiguous[:20],
         "artifacts": {
-            "trajectory_summary_csv": str(out / "trajectory_summary.csv"),
-            "trajectory_summary_jsonl": str(out / "trajectory_summary.jsonl"),
-            "command_patterns_csv": str(out / "command_patterns.csv"),
-            "representative_snippets_jsonl": str(out / "representative_snippets.jsonl"),
+            "trajectory_summary_csv": display_path(out / "trajectory_summary.csv"),
+            "leaderboard_submission_summary_csv": display_path(out / "leaderboard_submission_summary.csv"),
+            "command_patterns_csv": display_path(out / "command_patterns.csv"),
+            "representative_snippets_jsonl": display_path(out / "representative_snippets.jsonl"),
         },
     }
     with (out / "corpus_stats.json").open("w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2, ensure_ascii=False)
-
-    draft = [
-        "# TerminalBench Trajectory Corpus Characterization Draft",
-        "",
-        f"Root inspected: `{root}`",
-        f"Trajectory JSON files: {len(rows)}",
-        f"Unique task ids inferred: {len(task_ids)}",
-        "",
-        "## Reproduce",
-        "",
-        "```powershell",
-        "python terminal_bench_trajectory_work/analysis/characterize_trajectories.py",
-        "```",
-        "",
-        "## Main Counts",
-        "",
-        f"- Scaffolds: {scaffolds.most_common()}",
-        f"- Models: {model_names.most_common()}",
-        f"- Outcomes: {outcomes.most_common()}",
-        f"- Step counts: {summarize_numeric(step_counts)}",
-        f"- Command counts: {summarize_numeric(command_counts)}",
-        f"- Tool-call counts: {summarize_numeric(tool_counts)}",
-        f"- Cost presence: {len(costs)} trajectories",
-        f"- Token presence: {len(tokens)} trajectories",
-        "",
-        "## Common Command Heads",
-        "",
-    ]
-    for head, count in command_head_counter.most_common(30):
-        draft.append(f"- `{head}`: {count}")
-    draft.extend([
-        "",
-        "## Candidate Purposes",
-        "",
-    ])
-    for purpose, count in purpose_counter.most_common():
-        draft.append(f"- `{purpose}`: {count}")
-    draft.extend([
-        "",
-        "See `terminal_bench_trajectory_work/analysis/corpus_stats.json`,",
-        "`terminal_bench_trajectory_work/analysis/trajectory_summary.csv`,",
-        "`terminal_bench_trajectory_work/analysis/command_patterns.csv`, and",
-        "`terminal_bench_trajectory_work/analysis/representative_snippets.jsonl` for details.",
-    ])
-    (out / "trajectory_corpus_characterization_draft.md").write_text("\n".join(draft), encoding="utf-8")
 
 
 if __name__ == "__main__":

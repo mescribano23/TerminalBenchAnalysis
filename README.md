@@ -1,73 +1,66 @@
 # TerminalBenchAnalysis
 
 Tools and data for collecting, indexing, and characterizing Terminal-Bench
-trajectory traces.
+leaderboard submissions and trajectory traces.
 
-This repository contains a balanced sample of Terminal-Bench trajectories,
-leaderboard metadata, and analysis outputs used to study how coding agents move
-through terminal-based tasks.
-
-## Repository Contents
+## Repository Layout
 
 ```text
 .
-|-- collect_tbench_leaderboard.py        # Leaderboard scraper and trajectory downloader
-|-- leaderboard_v2.json                  # Terminal-Bench v2 leaderboard metadata
-|-- trajectory_index_balanced_12.json    # Index for the collected trajectory sample
-|-- trajectories_balanced_12/            # Full trajectory JSON files
-`-- analysis/
-    |-- characterize_trajectories.py     # Corpus characterization script
-    |-- corpus_stats.json                # Aggregate corpus statistics
-    |-- trajectory_summary.csv           # Per-trajectory summary table
-    |-- trajectory_summary.jsonl         # Per-trajectory summary records
-    |-- command_patterns.csv             # Extracted command-pattern counts
-    |-- representative_snippets.jsonl    # Example trajectory snippets
+|-- scripts/
+|   |-- collect_tbench_leaderboard.py        # Scrape leaderboard and download trajectories
+|   |-- characterize_trajectories.py         # Build trajectory/corpus summary tables
+|   `-- analyze_leaderboard_superficial.py   # Accuracy and scaffold/model variance analysis
+|-- data/
+|   |-- raw/
+|   |   `-- leaderboard_v2.json              # Collected Terminal-Bench v2 leaderboard metadata
+|   |-- indexes/
+|   |   `-- trajectory_index_balanced_12.json
+|   |-- trajectories/
+|   |   `-- balanced_12/                     # Downloaded trajectory JSON files
+|   `-- processed/
+|       |-- trajectory_summary.csv           # One row per local trajectory
+|       |-- leaderboard_submission_summary.csv
+|       |-- leaderboard_scaffold_variance.csv
+|       |-- leaderboard_model_variance.csv
+|       |-- leaderboard_model_component_variance.csv
+|       |-- corpus_stats.json
+|       |-- command_patterns.csv
+|       `-- representative_snippets.jsonl
+`-- reports/
+    |-- leaderboard_superficial_analysis.md
     `-- trajectory_corpus_characterization.md
 ```
 
 Trajectory files are organized as:
 
 ```text
-trajectories_balanced_12/{scaffold}/{model}/{taskChecksum}_{trialId}.json
+data/trajectories/balanced_12/{scaffold}/{model}/{taskChecksum}_{trialId}.json
 ```
 
 ## Dataset Snapshot
 
-- 5,265 trajectory JSON files
-- 218 unique Terminal-Bench tasks
-- 6 scaffolds: `claude-code`, `hookele`, `mini-swe-agent`, `openhands`,
-  `terminus-2`, and `vix`
-- 12 scaffold/model submissions sampled with a balanced strategy
-- Common trajectory envelope: `schema_version`, `session_id`, `agent`, `steps`,
-  and `final_metrics`
+- 5,265 trajectory JSON files.
+- 218 unique Terminal-Bench tasks in the local trajectory sample.
+- 6 local trajectory scaffolds: `claude-code`, `hookele`, `mini-swe-agent`,
+  `openhands`, `terminus-2`, and `vix`.
+- 12 scaffold/model submissions sampled with a balanced strategy.
 
-The master index is [`trajectory_index_balanced_12.json`](trajectory_index_balanced_12.json).
-Each record includes:
+The master trajectory index is:
 
-- `scaffold`
-- `model`
-- `taskName`
-- `taskChecksum`
-- `trialId`
-- `reward`
-- `cost`
-- `duration`
-- `filePath`
+```text
+data/indexes/trajectory_index_balanced_12.json
+```
 
 ## Setup
 
-The collection script uses Python and `requests`.
+The collection script uses Python, `requests`, and `beautifulsoup4`.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install requests
+python -m pip install requests beautifulsoup4
 ```
-
-If you already have a thesis/project virtual environment, you can use that
-instead of creating `.venv`.
-
-## Usage
 
 Run commands from the repository root:
 
@@ -75,78 +68,94 @@ Run commands from the repository root:
 cd TerminalBenchAnalysis
 ```
 
+## Collection
+
 Refresh leaderboard metadata:
 
 ```powershell
-python collect_tbench_leaderboard.py --output leaderboard_v2.json
+python scripts\collect_tbench_leaderboard.py
+```
+
+Refresh only the official leaderboard row metrics, without re-fetching every
+submission task page:
+
+```powershell
+python scripts\collect_tbench_leaderboard.py --refresh-row-metrics-only
 ```
 
 Check which leaderboard submissions expose trajectory pages:
 
 ```powershell
-python collect_tbench_leaderboard.py `
-  --check-trajectory-availability `
-  --leaderboard-json leaderboard_v2.json
+python scripts\collect_tbench_leaderboard.py --check-trajectory-availability
 ```
 
 Collect the balanced trajectory sample:
 
 ```powershell
-python collect_tbench_leaderboard.py `
+python scripts\collect_tbench_leaderboard.py `
   --collect-trajectories `
-  --leaderboard-json leaderboard_v2.json `
   --sample-n 12 `
   --strategy balanced `
-  --trajectories-dir trajectories_balanced_12 `
-  --trajectory-index trajectory_index_balanced_12.json
+  --trajectories-dir data\trajectories\balanced_12 `
+  --trajectory-index data\indexes\trajectory_index_balanced_12.json
 ```
 
 Run a smaller debug collection:
 
 ```powershell
-python collect_tbench_leaderboard.py `
+python scripts\collect_tbench_leaderboard.py `
   --collect-trajectories `
-  --leaderboard-json leaderboard_v2.json `
   --sample-n 3 `
   --strategy balanced `
   --task-limit 5 `
   --trial-limit 2 `
-  --trajectories-dir trajectories_debug `
-  --trajectory-index trajectory_index_debug.json
+  --trajectories-dir data\trajectories\debug `
+  --trajectory-index data\indexes\trajectory_index_debug.json
 ```
 
-Regenerate the corpus characterization artifacts:
+## Analysis
+
+Regenerate trajectory and corpus artifacts:
 
 ```powershell
-python analysis\characterize_trajectories.py `
-  --root trajectories_balanced_12 `
-  --leaderboard leaderboard_v2.json `
-  --out analysis
+python scripts\characterize_trajectories.py
 ```
 
-## Analysis Outputs
+Regenerate the superficial leaderboard analysis:
 
-The analysis pipeline produces:
+```powershell
+python scripts\analyze_leaderboard_superficial.py
+```
 
-- [`analysis/corpus_stats.json`](analysis/corpus_stats.json): aggregate corpus
-  statistics, scaffold/model counts, schema coverage, command counts, and
-  distribution summaries
-- [`analysis/trajectory_summary.csv`](analysis/trajectory_summary.csv):
-  tabular per-trajectory metadata
-- [`analysis/command_patterns.csv`](analysis/command_patterns.csv): extracted
-  command patterns grouped by inferred purpose
-- [`analysis/representative_snippets.jsonl`](analysis/representative_snippets.jsonl):
-  representative examples for qualitative inspection
-- [`analysis/trajectory_corpus_characterization.md`](analysis/trajectory_corpus_characterization.md):
-  narrative summary of the corpus
+## Main Outputs
 
-## Loading the Index
+- `data/processed/trajectory_summary.csv`: one row per local trajectory with
+  scaffold/model/task metadata, step counts, command counts, token/cost fields,
+  and joined leaderboard metadata.
+- `data/processed/leaderboard_submission_summary.csv`: one row per leaderboard
+  submission with official scraped accuracy/error fields and separate computed
+  task-level metrics.
+- `reports/leaderboard_superficial_analysis.md`: readable accuracy, variance,
+  and scaffold/model comparison report.
+- `data/processed/leaderboard_scaffold_variance.csv`: same-scaffold,
+  different-model comparisons.
+- `data/processed/leaderboard_model_variance.csv`: same-model,
+  different-scaffold comparisons.
+- `data/processed/leaderboard_model_component_variance.csv`: model comparison
+  after splitting comma-separated multi-model rows.
+- `data/processed/corpus_stats.json`: aggregate corpus statistics.
+- `data/processed/command_patterns.csv`: extracted command-pattern counts.
+- `data/processed/representative_snippets.jsonl`: examples for qualitative
+  inspection.
+- `reports/trajectory_corpus_characterization.md`: narrative corpus summary.
+
+## Loading The Index
 
 ```python
 import json
 import pandas as pd
 
-with open("trajectory_index_balanced_12.json", encoding="utf-8") as f:
+with open("data/indexes/trajectory_index_balanced_12.json", encoding="utf-8") as f:
     index = json.load(f)
 
 df = pd.DataFrame(index)
@@ -155,11 +164,10 @@ print(df.groupby("scaffold")["reward"].agg(["count", "mean"]).round(2))
 
 ## Notes
 
-- `leaderboard_v2.json` stores aggregate leaderboard task/scaffold/model
-  metadata, including fields such as `taskName`, `taskChecksum`, `nTrials`,
+- `data/raw/leaderboard_v2.json` stores collected leaderboard metadata,
+  including per-task `taskName`, `taskChecksum`, `nTrials`,
   `avgResolutionRate`, and `successCount`.
-- Individual trajectory JSON files do not consistently expose per-run pass/fail
+- Local trajectory JSON files do not consistently expose per-run pass/fail
   labels; use the index and leaderboard metadata when joining outcomes.
-- Some generated analysis files may contain local absolute paths from the
-  machine that produced them. These paths are metadata only and are not required
-  to load the repository data.
+- Generated analysis files use repo-relative paths where possible. These paths
+  are metadata only and are not required to load the repository data.
