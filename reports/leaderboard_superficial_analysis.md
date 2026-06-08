@@ -129,8 +129,43 @@ This is a one-way ANOVA-style eta-squared diagnostic on submission accuracy, not
 - Exact model label eta-squared: 0.958 across 62 model groups.
 - Exploded model component eta-squared: 0.894 across 55 model-component groups.
 
+## Trajectory Resource Efficiency
+
+The companion efficiency files use local trajectory rows from `data/processed/trajectory_summary.csv`, not the full leaderboard. Coverage columns report how many local trajectories support token, duration, and cost estimates.
+
+For model components, multi-model rows are duplicated across components and are not credit-apportioned. Component-level token, duration, and cost metrics should be read as association or presence metrics: submissions involving this model component had this resource profile.
+
+Top sampled scaffolds by trajectory success rate:
+
+| Scaffold | Trajectories | Passes | Failures | Success rate | Median tokens | Median sec. | Median cost | Tokens/pass |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| vix | 440 | 400 | 40 | 90.9% | 8619.50 | 153.64 | 0.00 | 21077.67 |
+| hookele | 431 | 272 | 159 | 63.1% | 304446.00 | 224.00 | 0.03 | 1186740.28 |
+| claude-code | 876 | 395 | 481 | 45.1% | 1037771.50 | 298.96 | 0.00 | 7555890.90 |
+| openhands | 868 | 307 | 561 | 35.4% | 805434.50 | 320.61 | 0.08 | 4230109.25 |
+| mini-swe-agent | 1288 | 403 | 885 | 31.3% | 151220.50 | 0.00 | 0.16 | 3071282.20 |
+| terminus-2 | 1362 | 215 | 1147 | 15.8% | 65272.50 | 171.19 | 0.00 | 4307768.45 |
+
+Top sampled model components by trajectory success rate:
+
+| Model component | Trajectories | Passes | Failures | Success rate | Median tokens | Median sec. | Median cost | Tokens/pass |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| claude-opus-4-7 | 440 | 400 | 40 | 90.9% | 8619.50 | 153.64 | 0.00 | 21077.67 |
+| gpt-5.1-codex-mini | 431 | 272 | 159 | 63.1% | 304446.00 | 224.00 | 0.03 | 1186740.28 |
+| claude-opus-4-5-20251101 | 436 | 232 | 204 | 53.2% | 908130.00 | 230.95 | 0.00 | 5362608.63 |
+| claude-sonnet-4-5-20250929 | 857 | 376 | 481 | 43.9% | 595962.00 | 61.24 | 0.43 | 3043235.81 |
+| minimax-m2.1 | 440 | 163 | 277 | 37.0% | 1294444.50 | 416.21 | 0.00 | 10677617.80 |
+| accounts_fireworks_models_minimax-m2 | 451 | 138 | 313 | 30.6% | 257672.00 | 459.19 | 0.00 | 3321541.36 |
+| moonshotai_Kimi-K2-Instruct-0905 | 430 | 119 | 311 | 27.7% | 759048.50 | 291.29 | 0.00 | 5301285.50 |
+| gemini-2.5-pro | 435 | 116 | 319 | 26.7% | 151281.00 | 0.00 | 0.31 | 5759265.71 |
+| gpt-5-mini | 434 | 99 | 335 | 22.8% | 38932.50 | 0.00 | 0.03 | 941270.73 |
+| grok-code-fast-1 | 445 | 63 | 382 | 14.2% | 43061.00 | 138.10 | 0.02 | 1023776.87 |
+| openai_gpt-oss-20b | 466 | 14 | 452 | 3.0% | 17170.00 | 66.83 | 0.01 | 28807111.86 |
+
 ## Generated Artifacts
 
 - `data/processed/leaderboard_scaffold_variance.csv`
 - `data/processed/leaderboard_model_variance.csv`
 - `data/processed/leaderboard_model_component_variance.csv`
+- `data/processed/trajectory_scaffold_efficiency.csv`
+- `data/processed/trajectory_model_component_efficiency.csv`

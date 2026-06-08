@@ -22,6 +22,8 @@ leaderboard submissions and trajectory traces.
 |       |-- trajectory_summary.csv           # One row per local trajectory
 |       |-- trajectory_outcome_by_scaffold_model.csv
 |       |-- trajectory_features_by_outcome.csv
+|       |-- trajectory_scaffold_efficiency.csv
+|       |-- trajectory_model_component_efficiency.csv
 |       |-- leaderboard_submission_summary.csv
 |       |-- leaderboard_scaffold_variance.csv
 |       |-- leaderboard_model_variance.csv
@@ -139,6 +141,11 @@ python scripts\analyze_leaderboard_superficial.py
 - `data/processed/trajectory_features_by_outcome.csv`: passed-vs-failed
   trajectory summaries for length, commands, tool calls, tokens, cost, and
   duration.
+- `data/processed/trajectory_scaffold_efficiency.csv`: local trajectory
+  success/resource summaries by scaffold, with token/duration/cost coverage.
+- `data/processed/trajectory_model_component_efficiency.csv`: local trajectory
+  success/resource summaries for rows involving each model component. Multi-model
+  rows are duplicated across components and are not credit-apportioned.
 - `data/processed/leaderboard_submission_summary.csv`: one row per leaderboard
   submission with official scraped accuracy/error fields and separate computed
   task-level metrics.
