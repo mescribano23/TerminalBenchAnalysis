@@ -139,6 +139,22 @@ def row_label(row: dict[str, Any]) -> str:
     return f"{row.get('scaffold', '')} {version} / {row.get('leaderboard_model', '')}"
 
 
+def representative_display_name(items: list[dict[str, Any]], key: str) -> str:
+    if key == "scaffold":
+        field = "leaderboard_agent_display_name"
+    else:
+        field = "leaderboard_model_display"
+
+    names = sorted(
+        {
+            str(row.get(field, "")).strip()
+            for row in items
+            if str(row.get(field, "")).strip()
+        }
+    )
+    return ", ".join(names)
+
+
 def load_rows(path: Path) -> list[dict[str, Any]]:
     with path.open(newline="", encoding="utf-8") as f:
         raw_rows = list(csv.DictReader(f))
@@ -201,6 +217,7 @@ def group_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
         distinct_models = sorted({str(row.get("leaderboard_model", "")) for row in items})
         summary = {
             key: value,
+            "display_name": representative_display_name(items, key),
             "row_count": len(items),
             "distinct_scaffold_count": len(distinct_scaffolds),
             "distinct_model_count": len(distinct_models),
@@ -291,6 +308,7 @@ def summarize_efficiency_group(items: list[dict[str, Any]], key: str, value: str
 
     return {
         key: value,
+        "display_name": representative_display_name(items, key),
         "trajectory_count": trajectory_count,
         "trajectory_count_with_tokens": len(token_values),
         "trajectory_count_with_duration": len(duration_values),

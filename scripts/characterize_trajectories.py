@@ -63,6 +63,16 @@ COMPUTED_SUBMISSION_FIELDS = [
 ]
 
 
+def leaderboard_display_name(entry: dict[str, Any]) -> str:
+    agent_display_name = str(entry.get("agent") or entry.get("leaderboard_agent_display_name") or "").strip()
+    if agent_display_name:
+        return agent_display_name
+    model_display_name = str(entry.get("model") or entry.get("leaderboard_model_display") or "").strip()
+    if model_display_name:
+        return model_display_name
+    return str(entry.get("scaffold") or "").strip()
+
+
 PURPOSE_PATTERNS: list[tuple[str, list[re.Pattern[str]]]] = [
     ("environment_inspection", [
         re.compile(r"^(ls|pwd|tree|find\b.*(?:-maxdepth|/app|\.)|du\b|df\b|whoami|env\b|printenv\b|uname\b)", re.I),
@@ -570,6 +580,7 @@ def main() -> None:
                         "leaderboard_model": entry.get("model", ""),
                         "provider": entry.get("provider", ""),
                         "has_trajectories": entry.get("has_trajectories", ""),
+                        "display_name": leaderboard_display_name(entry),
                         "submission_url": entry.get("submission_url", ""),
                         **official_leaderboard_summary(entry),
                         **submission_accuracy_summary(entry, rank),
@@ -586,6 +597,7 @@ def main() -> None:
                             "scaffold_version": entry.get("scaffold_version", ""),
                             "leaderboard_model": entry.get("model", ""),
                             "provider": entry.get("provider", ""),
+                            "display_name": leaderboard_display_name(entry),
                             "submission_url": entry.get("submission_url", ""),
                             "taskName": task.get("taskName", ""),
                             "taskChecksum": checksum,
@@ -834,6 +846,7 @@ def main() -> None:
             "leaderboard_n_trials": leaderboard_meta.get("nTrials", ""),
             "leaderboard_task_name": leaderboard_meta.get("taskName", ""),
             "leaderboard_model": leaderboard_meta.get("leaderboard_model", ""),
+            "display_name": leaderboard_meta.get("display_name", ""),
             "submission_url": leaderboard_meta.get("submission_url", ""),
             "leaderboard_rank": leaderboard_meta.get("leaderboard_rank", ""),
             **{
@@ -888,7 +901,7 @@ def main() -> None:
         "task_name", "file_run_id", "outcome", "reward", "reward_outcome", "trajectory_json_outcome",
         "leaderboard_avg_resolution_rate", "leaderboard_success_count",
         "leaderboard_n_trials", "leaderboard_task_name", "leaderboard_model", "submission_url",
-        "leaderboard_rank",
+        "leaderboard_rank", "display_name",
         *OFFICIAL_LEADERBOARD_FIELDS,
         *COMPUTED_SUBMISSION_FIELDS,
         "step_count", "agent_step_count", "user_step_count", "system_step_count",
@@ -903,7 +916,7 @@ def main() -> None:
 
     submission_fields = [
         "leaderboard_rank", "scaffold", "scaffold_version", "leaderboard_model", "provider", "submission_url",
-        "has_trajectories",
+        "has_trajectories", "display_name",
         *OFFICIAL_LEADERBOARD_FIELDS,
         *COMPUTED_SUBMISSION_FIELDS,
     ]
