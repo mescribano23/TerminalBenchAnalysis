@@ -10,7 +10,8 @@ leaderboard submissions and trajectory traces.
 |-- scripts/
 |   |-- collect_tbench_leaderboard.py        # Scrape leaderboard and download trajectories
 |   |-- characterize_trajectories.py         # Build trajectory/corpus summary tables
-|   `-- analyze_leaderboard_superficial.py   # Accuracy and scaffold/model variance analysis
+|   |-- analyze_leaderboard_superficial.py   # Accuracy and scaffold/model variance analysis
+|   `-- analyze_diminishing_returns.py       # Descriptive effort-bin diminishing returns
 |-- data/
 |   |-- raw/
 |   |   `-- leaderboard_v2.json              # Collected Terminal-Bench v2 leaderboard metadata
@@ -24,6 +25,8 @@ leaderboard submissions and trajectory traces.
 |       |-- trajectory_features_by_outcome.csv
 |       |-- trajectory_scaffold_efficiency.csv
 |       |-- trajectory_model_component_efficiency.csv
+|       |-- diminishing_returns_effort_bins.csv
+|       |-- diminishing_returns_variable_coverage.csv
 |       |-- leaderboard_submission_summary.csv
 |       |-- leaderboard_scaffold_variance.csv
 |       |-- leaderboard_model_variance.csv
@@ -33,7 +36,8 @@ leaderboard submissions and trajectory traces.
 |       `-- representative_snippets.jsonl
 `-- reports/
     |-- leaderboard_superficial_analysis.md
-    `-- trajectory_corpus_characterization.md
+    |-- trajectory_corpus_characterization.md
+    `-- diminishing_returns_analysis.md
 ```
 
 Trajectory files are organized as:
@@ -131,6 +135,26 @@ Regenerate the superficial leaderboard analysis:
 python scripts\analyze_leaderboard_superficial.py
 ```
 
+Regenerate the diminishing-returns CSVs and figures:
+
+```powershell
+python scripts\analyze_diminishing_returns.py
+```
+
+Optionally add grouped appendix-style figures:
+
+```powershell
+python scripts\analyze_diminishing_returns.py --by-scaffold
+python scripts\analyze_diminishing_returns.py --by-model
+```
+
+These grouped figures are written under `reports/figures/by_scaffold/` and
+`reports/figures/by_model/`.
+
+`scripts/analyze_diminishing_returns.py` generates the processed
+diminishing-returns CSVs and figures. The Markdown report is maintained
+manually.
+
 ## Main Outputs
 
 - `data/processed/trajectory_summary.csv`: one row per local trajectory with
@@ -146,6 +170,16 @@ python scripts\analyze_leaderboard_superficial.py
 - `data/processed/trajectory_model_component_efficiency.csv`: local trajectory
   success/resource summaries for rows involving each model component. Multi-model
   rows are duplicated across components and are not credit-apportioned.
+- `data/processed/diminishing_returns_effort_bins.csv`: trajectory success rates
+  with Wilson confidence intervals across effort bins for steps,
+  scaffold-normalized steps, commands, tool calls, tokens, duration, and positive
+  reported cost, with bins under 30 trajectories flagged as low-support.
+- `data/processed/diminishing_returns_variable_coverage.csv`: complete-case,
+  positive, zero, and distribution coverage for each effort variable, including
+  the positive-cost subset.
+- `reports/diminishing_returns_analysis.md`: manually maintained narrative
+  summary of the diminishing-returns research question, step-count bins,
+  high-effort bins, and figure links.
 - `data/processed/leaderboard_submission_summary.csv`: one row per leaderboard
   submission with official scraped accuracy/error fields and separate computed
   task-level metrics.
