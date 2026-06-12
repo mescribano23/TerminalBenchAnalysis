@@ -173,7 +173,7 @@ manually.
 - `data/processed/diminishing_returns_effort_bins.csv`: trajectory success rates
   with Wilson confidence intervals across effort bins for steps,
   scaffold-normalized steps, commands, tool calls, tokens, duration, and positive
-  reported cost, with bins under 30 trajectories flagged as low-support.
+  reported cost.
 - `data/processed/diminishing_returns_variable_coverage.csv`: complete-case,
   positive, zero, and distribution coverage for each effort variable, including
   the positive-cost subset.

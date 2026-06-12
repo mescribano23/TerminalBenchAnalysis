@@ -16,7 +16,7 @@ How does the probability of Terminal-Bench success vary with observed trajectory
 
 ## Method
 
-This analysis groups completed trajectories into effort bins and computes the empirical success rate in each bin. Success rates are reported with Wilson 95% confidence intervals to show uncertainty around bin-level estimates. Bins with fewer than 30 trajectories are flagged as low-support and interpreted cautiously. The `n < 30` rule is a pragmatic warning flag, not a statistically discovered threshold.
+This analysis groups completed trajectories into effort bins and computes the empirical success rate in each bin. Success rates are reported with Wilson 95% confidence intervals to show uncertainty around bin-level estimates.
 
 This analysis is post-hoc: it uses completed trajectories and final effort values. It can identify low-return regions in completed runs, but it does not prove that an online agent should have stopped earlier.
 

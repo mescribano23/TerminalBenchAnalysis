@@ -75,7 +75,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, default=INPUT_DEFAULT)
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
-    parser.add_argument("--min-bin-n", type=int, default=30)
     parser.add_argument(
         "--by-scaffold",
         action="store_true",
@@ -171,7 +170,7 @@ def bin_series(series: pd.Series, variable: str) -> pd.Categorical:
     )
 
 
-def build_effort_bins(df: pd.DataFrame, min_bin_n: int, group_column: str | None = None) -> pd.DataFrame:
+def build_effort_bins(df: pd.DataFrame, group_column: str | None = None) -> pd.DataFrame:
     if group_column is not None and group_column not in df.columns:
         raise ValueError(f"Cannot build grouped plots because {group_column!r} is missing.")
 
@@ -197,7 +196,6 @@ def build_effort_bins(df: pd.DataFrame, min_bin_n: int, group_column: str | None
                     "success_rate": passes / n if n else None,
                     "success_rate_ci95_low": ci_low,
                     "success_rate_ci95_high": ci_high,
-                    "low_support": n < min_bin_n,
                 }
                 if group_column is not None:
                     row.update({"group_column": group_column, "group_value": str(group_value)})
@@ -208,7 +206,6 @@ def build_effort_bins(df: pd.DataFrame, min_bin_n: int, group_column: str | None
 def plot_effort_bins(
     bins: pd.DataFrame,
     figures_dir: Path,
-    min_bin_n: int = 0,
     group_column: str | None = None,
 ) -> list[Path]:
     paths: list[Path] = []
@@ -222,7 +219,7 @@ def plot_effort_bins(
         if group_label is None:
             plot_overall_series(ax, subset)
         else:
-            subset = subset[subset["n"] >= min_bin_n].sort_values(["group_value", "bin_order"])
+            subset = subset.sort_values(["group_value", "bin_order"])
             for group_value, group in subset.groupby("group_value"):
                 ax.plot(group["bin_order"], group["success_rate"], marker="o", linewidth=1.5, label=group_value)
             ax.legend(fontsize=7, ncol=2)
@@ -264,15 +261,15 @@ def main() -> None:
 
     df = load_data(args.input)
     coverage = build_variable_coverage(df)
-    bins = build_effort_bins(df, args.min_bin_n)
+    bins = build_effort_bins(df)
     figures = plot_effort_bins(bins, args.figures_dir)
     grouped_figures: list[Path] = []
     if args.by_scaffold:
-        scaffold_bins = build_effort_bins(df, args.min_bin_n, group_column="scaffold")
-        grouped_figures.extend(plot_effort_bins(scaffold_bins, args.figures_dir, args.min_bin_n, "scaffold"))
+        scaffold_bins = build_effort_bins(df, group_column="scaffold")
+        grouped_figures.extend(plot_effort_bins(scaffold_bins, args.figures_dir, "scaffold"))
     if args.by_model:
-        model_bins = build_effort_bins(df, args.min_bin_n, group_column="model_dir")
-        grouped_figures.extend(plot_effort_bins(model_bins, args.figures_dir, args.min_bin_n, "model_dir"))
+        model_bins = build_effort_bins(df, group_column="model_dir")
+        grouped_figures.extend(plot_effort_bins(model_bins, args.figures_dir, "model_dir"))
 
     bins_path = args.out / "diminishing_returns_effort_bins.csv"
     coverage_path = args.out / "diminishing_returns_variable_coverage.csv"
