@@ -1,44 +1,43 @@
 # Superficial Terminal-Bench Leaderboard Analysis
 
-This report uses `data/processed/leaderboard_submission_summary.csv` and stays at submission-row level. Accuracy and +/- use scraped official leaderboard fields; task-rate variance remains a computed diagnostic from per-task resolution rates. Passed task-trials are represented by computed aggregate counts (`computed_submission_success_count`). Trajectory-level pass/fail analysis now lives in the trajectory characterization outputs via the validated reward index.
+This report uses the current leaderboard snapshot in `data/processed_live/leaderboard_submission_summary.csv` and stays at submission-row level. Accuracy and +/- use scraped official leaderboard fields. Local trajectory rows are used only for coverage and resource summaries, not for recalculating leaderboard accuracy.
 
 ## Overall Submission-Level Picture
 
-- Submission rows: 144.
-- Rows with local trajectories: 76.
-- Unique scaffolds: 45.
-- Unique exact model labels: 62.
-- Total passed task-trials: 29734 / 62937 (47.2%).
-- Leaderboard accuracy: mean 46.7%, median 44.7%, range 3.1%-90.2%.
-- Within-submission task-rate variance: mean 0.1416, median 0.1523.
+- Submission rows: 142.
+- Rows with local trajectories: 74.
+- Unique scaffolds: 43.
+- Unique exact model labels: 61.
+- Leaderboard accuracy: mean 46.1%, median 44.1%, range 3.1%-84.7%.
+- Within-submission task-rate variance: mean 0.1427, median 0.1533.
 - Leaderboard +/- estimate: mean 2.6%, median 2.7%.
 
 ## Preliminary Reading
 
 - Same-scaffold comparisons are available for 22 scaffolds. The largest accuracy ranges are `codex` (70.8%), `terminus-2` (61.6%), and `spoox-m` (49.7%).
-- Same-model comparisons are available for 30 exact model labels. The largest exact-model ranges are `gpt-5.1-codex` (20.9%), `gemini-3.1-pro-preview` (20.9%), and `gpt-5.5` (18.7%).
+- Same-model comparisons are available for 29 exact model labels. The largest exact-model ranges are `gpt-5.1-codex` (20.9%), `gemini-3.1-pro-preview` (20.9%), and `gpt-5.5` (18.7%).
 - After splitting comma-separated model labels, 31 model components appear with more than one scaffold. This view is useful for spotting mixed-model or ensemble rows that would otherwise hide under a combined label.
 - The eta-squared values below are descriptive only. They are inflated when many groups have one or two rows, so they should guide where to inspect next rather than settle the scaffold-vs-model question.
 
 ## Top Rows by Accuracy
 
-| Rank | Scaffold | Model | Passed | Trials | Accuracy | Task-rate variance | +/- | Has trajectories |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | vix | claude-opus-4-7 | 400 | 442 | 90.2% | 0.0493 | 2.1% | True |
-| 2 | jj-agent-harness | multiple | 775 | 890 | 87.1% | 0.0769 | 1.3% | True |
-| 3 | nexau | gpt-5.5 | 376 | 443 | 84.7% | 0.0900 | 2.1% | True |
-| 4 | Lemoncode-agent | gemini-3.1-pro-preview,gpt-5.3-codex | 376 | 445 | 84.5% | 0.0707 | 2.6% | False |
-| 5 | capy-build | gpt-5.5 | 370 | 445 | 83.1% | 0.0999 | 2.1% | False |
-| 6 | codex | gpt-5.5 | 366 | 445 | 82.2% | 0.1013 | 2.2% | False |
-| 7 | polaris | claude-opus-4-7,gemini-3.1-pro-preview,gpt-5.5 | 365 | 444 | 82.2% | 0.0759 | 2.8% | False |
-| 8 | judy | gemini-3.1-pro-preview | 357 | 445 | 80.2% | 0.0959 | 2.6% | True |
-| 9 | claude-wozcode-plugin | claude-opus-4-7 | 357 | 445 | 80.2% | 0.1186 | 2.1% | False |
-| 10 | Lemoncode-agent | gemini-3.1-pro-preview,gpt-3.5-codex | 349 | 437 | 79.9% | 0.0788 | 3.0% | False |
-| 11 | sage | gpt-5.3-codex | 349 | 445 | 78.4% | 0.1257 | 2.2% | False |
-| 12 | Factory Droid | gpt-5.3-codex | 344 | 445 | 77.3% | 0.1338 | 2.2% | False |
-| 13 | terminus-kira-env-bootstrap | claude-opus-4-6 | 340 | 445 | 76.4% | 0.1269 | 2.4% | True |
-| 14 | ruley | gpt-5.3-codex | 675 | 890 | 75.8% | 0.0984 | 2.0% | False |
-| 15 | codelia | gpt-5.3-codex | 337 | 445 | 75.7% | 0.1422 | 2.2% | False |
+| Rank | Scaffold | Model | Official accuracy | +/- | Has trajectories |
+| --- | --- | --- | ---: | ---: | --- |
+| 1 | nexau | gpt-5.5 | 84.7% | 2.1% | True |
+| 2 | Lemoncode-agent | gemini-3.1-pro-preview,gpt-5.3-codex | 84.5% | 2.6% | False |
+| 3 | capy-build | gpt-5.5 | 83.1% | 2.1% | False |
+| 4 | codex | gpt-5.5 | 82.2% | 2.2% | False |
+| 5 | polaris | claude-opus-4-7,gemini-3.1-pro-preview,gpt-5.5 | 82.2% | 2.8% | False |
+| 6 | claude-wozcode-plugin | claude-opus-4-7 | 80.2% | 2.1% | False |
+| 7 | judy | gemini-3.1-pro-preview | 80.2% | 2.6% | True |
+| 8 | Lemoncode-agent | gemini-3.1-pro-preview,gpt-3.5-codex | 79.9% | 3.0% | False |
+| 9 | sage | gpt-5.3-codex | 78.4% | 2.2% | False |
+| 10 | Factory Droid | gpt-5.3-codex | 77.3% | 2.2% | False |
+| 11 | terminus-kira-env-bootstrap | claude-opus-4-6 | 76.4% | 2.4% | True |
+| 12 | ruley | gpt-5.3-codex | 75.8% | 2.0% | False |
+| 13 | codelia | gpt-5.3-codex | 75.7% | 2.2% | False |
+| 14 | capy-build | claude-opus-4-6 | 75.3% | 2.4% | False |
+| 15 | simple_codex | gpt-5.3-codex | 75.1% | 2.4% | False |
 
 ## Same Scaffold, Different Models
 
@@ -89,10 +88,10 @@ These groups show how much leaderboard accuracy moves when the exact model label
 | grok-code-fast-1 | 2 | 2 | 20.0% | 11.7% | 8.3% | 25.8% | 14.2% |
 | claude-opus-4-5-20251101 | 4 | 4 | 56.2% | 11.2% | 5.3% | 63.1% | 51.9% |
 | gpt-5.2 | 4 | 4 | 60.6% | 10.9% | 4.7% | 64.9% | 54.0% |
-| claude-opus-4-7 | 2 | 2 | 85.2% | 9.9% | 7.0% | 90.2% | 80.2% |
 | minimax-m2.1 | 2 | 2 | 32.9% | 7.4% | 5.2% | 36.6% | 29.2% |
 | claude-opus-4-5 | 4 | 4 | 55.9% | 7.4% | 3.5% | 59.1% | 51.7% |
 | openai/gpt-oss-120b | 2 | 2 | 16.4% | 4.5% | 3.2% | 18.7% | 14.2% |
+| grok-4-0709 | 3 | 3 | 25.2% | 4.0% | 2.0% | 27.2% | 23.1% |
 
 ## Same Model Component, Different Scaffolds
 
@@ -118,54 +117,61 @@ Some leaderboard rows list model ensembles or multiple model names. This explode
 | claude-opus-4-5-20251101 | 4 | 4 | 56.2% | 11.2% | 5.3% | 63.1% | 51.9% |
 | gpt-5.2 | 5 | 5 | 60.8% | 10.9% | 4.1% | 64.9% | 54.0% |
 | claude-sonnet-4-5-20250929 | 5 | 5 | 43.6% | 10.1% | 3.8% | 50.1% | 40.1% |
-| claude-opus-4-7 | 3 | 3 | 84.2% | 9.9% | 5.3% | 90.2% | 80.2% |
 | minimax-m2.1 | 2 | 2 | 32.9% | 7.4% | 5.2% | 36.6% | 29.2% |
+| claude-opus-4-5 | 4 | 4 | 55.9% | 7.4% | 3.5% | 59.1% | 51.7% |
 
 ## Coarse Variance Attribution
 
-This is a one-way ANOVA-style eta-squared diagnostic on submission accuracy, not a causal estimate. It asks how much row-level accuracy variance is associated with grouping by one label at a time.
+This is a one-way ANOVA-style eta-squared diagnostic on scraped official leaderboard accuracy, not a causal estimate and not a local reward-derived accuracy. It asks how much row-level official accuracy variance is associated with grouping by one label at a time.
 
-- Scaffold label eta-squared: 0.695 across 45 scaffold groups.
-- Exact model label eta-squared: 0.958 across 62 model groups.
-- Exploded model component eta-squared: 0.894 across 55 model-component groups.
+- Scaffold label eta-squared: 0.678 across 43 scaffold groups.
+- Exact model label eta-squared: 0.957 across 61 model groups.
+- Exploded model component eta-squared: 0.890 across 54 model-component groups.
 
 ## Trajectory Resource Efficiency
 
-The companion efficiency files use local trajectory rows from `data/processed/trajectory_summary.csv`, not the full leaderboard. Coverage columns report how many local trajectories support token, duration, and cost estimates.
+The companion efficiency files use local trajectory rows from `data/processed_live/trajectory_summary.csv`, not the full leaderboard. The tables below use scraped leaderboard accuracy for performance columns and local trajectories only for coverage/resource columns.
 
 For model components, multi-model rows are duplicated across components and are not credit-apportioned. Component-level token, duration, and cost metrics should be read as association or presence metrics: submissions involving this model component had this resource profile.
 
-Top sampled scaffolds by trajectory success rate:
+Sampled scaffolds with official leaderboard accuracy and local resource coverage:
 
-| Scaffold | Trajectories | Passes | Failures | Success rate | Median tokens | Median sec. | Median cost | Tokens/pass |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| vix | 440 | 400 | 40 | 90.9% | 8619.50 | 153.64 | 0.00 | 21077.67 |
-| hookele | 431 | 272 | 159 | 63.1% | 304446.00 | 224.00 | 0.03 | 1186740.28 |
-| claude-code | 876 | 395 | 481 | 45.1% | 1037771.50 | 298.96 | 0.00 | 7555890.90 |
-| openhands | 868 | 307 | 561 | 35.4% | 805434.50 | 320.61 | 0.08 | 4230109.25 |
-| mini-swe-agent | 1288 | 403 | 885 | 31.3% | 151220.50 | 0.00 | 0.16 | 3071282.20 |
-| terminus-2 | 1362 | 215 | 1147 | 15.8% | 65272.50 | 171.19 | 0.00 | 4307768.45 |
+| Scaffold | Best official rank | Best official accuracy | Mean official accuracy | Official rows | Local trajectories | Median tokens | Median sec. | Median cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `nexau` | 1 | 84.7% | 84.7% | 1 | 443 |  | 259.35 |  |
+| `codex` | 4 | 82.2% | 49.3% | 9 | 1,242 | 116,400 | 105.84 |  |
+| `judy` | 7 | 80.2% | 76.1% | 2 | 166 | 1,162,406.5 | 490.88 | 2.59 |
+| `terminus-kira-env-bootstrap` | 11 | 76.4% | 76.4% | 1 | 444 | 764,644 | 375.81 | 1.01 |
+| `terminus-3-3` | 16 | 74.8% | 74.8% | 2 | 678 | 331,998 | 416.86 | 0.60 |
+| `deepagent-harbor` | 27 | 66.5% | 66.5% | 1 | 417 | 653,287 | 0.00 |  |
+| `terminus-2` | 32 | 64.7% | 35.1% | 33 | 12,739 | 106,787 | 341.26 | 0.04 |
+| `hookele` | 39 | 61.6% | 61.6% | 1 | 431 | 304,446 | 224.00 | 0.03 |
+| `gemini-cli` | 40 | 61.4% | 40.6% | 5 | 1,221 | 250,975 | 168.08 | 0.00 |
+| `claude-code` | 50 | 58.0% | 40.3% | 7 | 2,522 | 932,449 | 232.29 | 0.00 |
+| `openhands` | 62 | 51.9% | 28.4% | 12 | 5,190 | 506,093 | 416.46 | 0.25 |
+| `mini-swe-agent` | 82 | 42.5% | 24.9% | 13 | 5,610 | 83,543 | 0.00 | 0.11 |
 
-Top sampled model components by trajectory success rate:
+Sampled model components with official leaderboard accuracy and local resource coverage:
 
-| Model component | Trajectories | Passes | Failures | Success rate | Median tokens | Median sec. | Median cost | Tokens/pass |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| claude-opus-4-7 | 440 | 400 | 40 | 90.9% | 8619.50 | 153.64 | 0.00 | 21077.67 |
-| gpt-5.1-codex-mini | 431 | 272 | 159 | 63.1% | 304446.00 | 224.00 | 0.03 | 1186740.28 |
-| claude-opus-4-5-20251101 | 436 | 232 | 204 | 53.2% | 908130.00 | 230.95 | 0.00 | 5362608.63 |
-| claude-sonnet-4-5-20250929 | 857 | 376 | 481 | 43.9% | 595962.00 | 61.24 | 0.43 | 3043235.81 |
-| minimax-m2.1 | 440 | 163 | 277 | 37.0% | 1294444.50 | 416.21 | 0.00 | 10677617.80 |
-| accounts_fireworks_models_minimax-m2 | 451 | 138 | 313 | 30.6% | 257672.00 | 459.19 | 0.00 | 3321541.36 |
-| moonshotai_Kimi-K2-Instruct-0905 | 430 | 119 | 311 | 27.7% | 759048.50 | 291.29 | 0.00 | 5301285.50 |
-| gemini-2.5-pro | 435 | 116 | 319 | 26.7% | 151281.00 | 0.00 | 0.31 | 5759265.71 |
-| gpt-5-mini | 434 | 99 | 335 | 22.8% | 38932.50 | 0.00 | 0.03 | 941270.73 |
-| grok-code-fast-1 | 445 | 63 | 382 | 14.2% | 43061.00 | 138.10 | 0.02 | 1023776.87 |
-| openai_gpt-oss-20b | 466 | 14 | 452 | 3.0% | 17170.00 | 66.83 | 0.01 | 28807111.86 |
+| Model component | Best official accuracy | Mean official accuracy | Official rows | Local trajectories | Median tokens | Median sec. | Median cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `gpt-5.5` | 84.7% | 79.7% | 5 | 443 |  | 259.35 |  |
+| `gemini-3.1-pro-preview` | 84.5% | 74.2% | 8 | 1,031 | 463,130 | 397.70 | 0.29 |
+| `claude-opus-4-6` | 76.4% | 69.1% | 9 | 1,571 | 458,199 | 333.35 | 0.37 |
+| `gemini-3-flash-preview` | 71.0% | 58.6% | 4 | 444 | 167,975.5 | 227.32 | 0.11 |
+| `gemini-3-pro-preview` | 69.4% | 61.1% | 9 | 445 | 86,375 | 258.21 | 0.29 |
+| `gpt-5.2-codex` | 66.5% | 66.5% | 1 | 417 | 653,287 | 0.00 |  |
+| `gpt-5.2` | 64.9% | 60.8% | 5 | 443 | 71,644 | 433.48 | 0.31 |
+| `claude-opus-4-5-20251101` | 63.1% | 56.2% | 4 | 1,319 | 515,086 | 288.82 | 0.00 |
+| `gpt-5.1-codex-mini` | 61.6% | 52.4% | 2 | 431 | 304,446 | 224.00 | 0.03 |
+| `gpt-5-nano` | 59.1% | 23.9% | 7 | 1,726 | 110,103 | 137.61 | 0.02 |
+| `claude-haiku-4-5-20251001` | 59.1% | 34.8% | 6 | 1,688 | 601,187 | 161.39 | 0.11 |
+| `gpt-5.1-codex` | 57.8% | 49.4% | 3 | 445 | 83,509 | 627.88 | 0.19 |
 
 ## Generated Artifacts
 
-- `data/processed/leaderboard_scaffold_variance.csv`
-- `data/processed/leaderboard_model_variance.csv`
-- `data/processed/leaderboard_model_component_variance.csv`
-- `data/processed/trajectory_scaffold_efficiency.csv`
-- `data/processed/trajectory_model_component_efficiency.csv`
+- `data/processed_live/leaderboard_scaffold_variance.csv`
+- `data/processed_live/leaderboard_model_variance.csv`
+- `data/processed_live/leaderboard_model_component_variance.csv`
+- `data/processed_live/trajectory_scaffold_efficiency.csv`
+- `data/processed_live/trajectory_model_component_efficiency.csv`

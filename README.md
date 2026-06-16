@@ -8,17 +8,25 @@ leaderboard submissions and trajectory traces.
 ```text
 .
 |-- scripts/
-|   |-- collect_tbench_leaderboard.py        # Scrape leaderboard and download trajectories
-|   |-- characterize_trajectories.py         # Build trajectory/corpus summary tables
-|   |-- analyze_leaderboard_superficial.py   # Accuracy and scaffold/model variance analysis
-|   `-- analyze_diminishing_returns.py       # Descriptive effort-bin diminishing returns
+|   |-- mining/
+|   |   |-- scrape_tbench_leaderboard.py     # Scrape leaderboard and download trajectories
+|   |   |-- sampling_strategies.py           # Submission sampling strategies
+|   |   `-- build_trajectory_index.py        # Trajectory index loading/checkpointing
+|   `-- analysis/
+|       |-- characterize_trajectories.py     # Build trajectory/corpus summary tables
+|       |-- analyze_leaderboard_superficial.py
+|       `-- analyze_diminishing_returns.py
 |-- data/
 |   |-- raw/
-|   |   `-- leaderboard_v2.json              # Collected Terminal-Bench v2 leaderboard metadata
+|   |   |-- leaderboard_submissions_current.json
+|   |   `-- leaderboard_submissions_historical.json
 |   |-- indexes/
-|   |   `-- trajectory_index_balanced_12.json
+|   |   |-- trajectory_trials_current.json
+|   |   |-- trajectory_trials_balanced_12.json
+|   |   `-- trajectory_trials_historical.json
 |   |-- trajectories/
-|   |   `-- balanced_12/                     # Downloaded trajectory JSON files
+|   |   |-- current_leaderboard/              # Current downloaded trajectory JSON files
+|   |   `-- balanced_12/                     # Historical balanced trajectory sample
 |   `-- processed/
 |       |-- trajectory_summary.csv           # One row per local trajectory
 |       |-- trajectory_outcome_by_scaffold_model.csv
@@ -43,7 +51,7 @@ leaderboard submissions and trajectory traces.
 Trajectory files are organized as:
 
 ```text
-data/trajectories/balanced_12/{scaffold}/{model}/{taskChecksum}_{trialId}.json
+data/trajectories/{corpus}/{scaffold}/{model}/{taskChecksum}_{trialId}.json
 ```
 
 ## Dataset Snapshot
@@ -57,7 +65,7 @@ data/trajectories/balanced_12/{scaffold}/{model}/{taskChecksum}_{trialId}.json
 The master trajectory index is:
 
 ```text
-data/indexes/trajectory_index_balanced_12.json
+data/indexes/trajectory_trials_balanced_12.json
 ```
 
 ## Setup
@@ -81,44 +89,44 @@ cd TerminalBenchAnalysis
 Refresh leaderboard metadata:
 
 ```powershell
-python scripts\collect_tbench_leaderboard.py
+python -m scripts.mining.scrape_tbench_leaderboard
 ```
 
 Refresh only the official leaderboard row metrics, without re-fetching every
 submission task page:
 
 ```powershell
-python scripts\collect_tbench_leaderboard.py --refresh-row-metrics-only
+python -m scripts.mining.scrape_tbench_leaderboard --refresh-row-metrics-only
 ```
 
 Check which leaderboard submissions expose trajectory pages:
 
 ```powershell
-python scripts\collect_tbench_leaderboard.py --check-trajectory-availability
+python -m scripts.mining.scrape_tbench_leaderboard --check-trajectory-availability
 ```
 
 Collect the balanced trajectory sample:
 
 ```powershell
-python scripts\collect_tbench_leaderboard.py `
+python -m scripts.mining.scrape_tbench_leaderboard `
   --collect-trajectories `
   --sample-n 12 `
   --strategy balanced `
   --trajectories-dir data\trajectories\balanced_12 `
-  --trajectory-index data\indexes\trajectory_index_balanced_12.json
+  --trajectory-index data\indexes\trajectory_trials_balanced_12.json
 ```
 
 Run a smaller debug collection:
 
 ```powershell
-python scripts\collect_tbench_leaderboard.py `
+python -m scripts.mining.scrape_tbench_leaderboard `
   --collect-trajectories `
   --sample-n 3 `
-  --strategy balanced `
+  --strategy top `
   --task-limit 5 `
   --trial-limit 2 `
   --trajectories-dir data\trajectories\debug `
-  --trajectory-index data\indexes\trajectory_index_debug.json
+  --trajectory-index data\indexes\trajectory_trials_debug.json
 ```
 
 ## Analysis
@@ -126,32 +134,32 @@ python scripts\collect_tbench_leaderboard.py `
 Regenerate trajectory and corpus artifacts:
 
 ```powershell
-python scripts\characterize_trajectories.py
+python -m scripts.analysis.characterize_trajectories
 ```
 
 Regenerate the superficial leaderboard analysis:
 
 ```powershell
-python scripts\analyze_leaderboard_superficial.py
+python -m scripts.analysis.analyze_leaderboard_superficial
 ```
 
 Regenerate the diminishing-returns CSVs and figures:
 
 ```powershell
-python scripts\analyze_diminishing_returns.py
+python -m scripts.analysis.analyze_diminishing_returns
 ```
 
 Optionally add grouped appendix-style figures:
 
 ```powershell
-python scripts\analyze_diminishing_returns.py --by-scaffold
-python scripts\analyze_diminishing_returns.py --by-model
+python -m scripts.analysis.analyze_diminishing_returns --by-scaffold
+python -m scripts.analysis.analyze_diminishing_returns --by-model
 ```
 
 These grouped figures are written under `reports/figures/by_scaffold/` and
 `reports/figures/by_model/`.
 
-`scripts/analyze_diminishing_returns.py` generates the processed
+`scripts/analysis/analyze_diminishing_returns.py` generates the processed
 diminishing-returns CSVs and figures. The Markdown report is maintained
 manually.
 
@@ -203,7 +211,7 @@ manually.
 import json
 import pandas as pd
 
-with open("data/indexes/trajectory_index_balanced_12.json", encoding="utf-8") as f:
+with open("data/indexes/trajectory_trials_balanced_12.json", encoding="utf-8") as f:
     index = json.load(f)
 
 df = pd.DataFrame(index)
@@ -212,11 +220,11 @@ print(df.groupby("scaffold")["reward"].agg(["count", "mean"]).round(2))
 
 ## Notes
 
-- `data/raw/leaderboard_v2.json` stores collected leaderboard metadata,
+- `data/raw/leaderboard_submissions_current.json` stores collected leaderboard metadata,
   including per-task `taskName`, `taskChecksum`, `nTrials`,
   `avgResolutionRate`, and `successCount`.
 - Local trajectory JSON files do not consistently expose per-run pass/fail
-  labels, but `data/indexes/trajectory_index_balanced_12.json` now provides
+  labels, but `data/indexes/trajectory_trials_balanced_12.json` now provides
   reliable per-run `reward` labels for the local balanced sample. In that index,
   `reward == 1.0` is treated as pass and `reward == 0.0` as fail.
 - Reward was validated against leaderboard task aggregates: complete local
