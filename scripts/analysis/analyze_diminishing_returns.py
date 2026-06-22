@@ -26,6 +26,7 @@ REPO_ROOT = SCRIPT_DIR.parent.parent
 DATA_PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 REPORTS_DIR = REPO_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "figures"
+GENERAL_FIGURES_DIR = REPORTS_DIR / "general_characteristics"
 
 INPUT_DEFAULT = DATA_PROCESSED_DIR / "trajectory_summary.csv"
 OUT_DEFAULT = DATA_PROCESSED_DIR
@@ -75,6 +76,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=Path, default=INPUT_DEFAULT)
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
+    parser.add_argument(
+        "--general-figures-dir",
+        type=Path,
+        default=GENERAL_FIGURES_DIR,
+        help="Directory for general trajectory characterization figures.",
+    )
     parser.add_argument(
         "--by-scaffold",
         action="store_true",
@@ -318,6 +325,58 @@ def plot_overall_series(ax: plt.Axes, subset: pd.DataFrame) -> None:
     ax.errorbar(x, y, yerr=yerr, marker="o", linewidth=1.8, capsize=4, color="#1f77b4")
 
 
+def plot_step_count_by_outcome(df: pd.DataFrame, figures_dir: Path) -> Path | None:
+    grouped = [
+        ("fail", df.loc[df["passed"] == 0, "step_count"].dropna().to_numpy(dtype=float)),
+        ("pass", df.loc[df["passed"] == 1, "step_count"].dropna().to_numpy(dtype=float)),
+    ]
+    grouped = [(label, values[values > 0]) for label, values in grouped if len(values)]
+    if len(grouped) < 2:
+        return None
+
+    labels = [f"{label}\n(n={len(values):,})" for label, values in grouped]
+    values = [group_values for _, group_values in grouped]
+    positions = np.arange(1, len(values) + 1)
+
+    fig, ax = plt.subplots(figsize=(7.2, 5.8))
+    parts = ax.violinplot(values, positions=positions, showmeans=False, showmedians=False, showextrema=False)
+    colors = ["#c97b63", "#6aa57a"]
+    for body, color in zip(parts["bodies"], colors):
+        body.set_facecolor(color)
+        body.set_edgecolor("#2f3337")
+        body.set_alpha(0.48)
+
+    ax.boxplot(
+        values,
+        positions=positions,
+        widths=0.24,
+        patch_artist=True,
+        showfliers=False,
+        boxprops={"facecolor": "#ffffff", "edgecolor": "#243b4a", "linewidth": 1.1},
+        medianprops={"color": "#1f2d3a", "linewidth": 1.8},
+        whiskerprops={"color": "#243b4a", "linewidth": 1.0},
+        capprops={"color": "#243b4a", "linewidth": 1.0},
+    )
+
+    means = [float(np.mean(group_values)) for group_values in values]
+    ax.scatter(positions, means, marker="D", s=34, color="#111111", zorder=3, label="Mean")
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
+    ax.set_yscale("log")
+    ax.set_ylabel("Step count (log scale)")
+    ax.set_xlabel("Local trajectory outcome")
+    ax.set_title("Trajectory step count distribution by outcome")
+    ax.grid(axis="y", alpha=0.25, which="both")
+    ax.legend(frameon=False, loc="upper left")
+    fig.tight_layout()
+
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    path = figures_dir / "trajectory_step_count_by_outcome.png"
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+    return path
+
+
 def main() -> None:
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -326,6 +385,7 @@ def main() -> None:
     coverage = build_variable_coverage(df)
     bins = build_effort_bins(df)
     figures = plot_effort_bins(bins, args.figures_dir)
+    general_figure = plot_step_count_by_outcome(df, args.general_figures_dir)
     grouped_figures: list[Path] = []
     if args.by_scaffold:
         scaffold_bins = build_effort_bins(df, group_column="scaffold")
@@ -342,6 +402,8 @@ def main() -> None:
     print(f"Wrote {bins_path}")
     print(f"Wrote {coverage_path}")
     print(f"Wrote {len(figures)} figures to {args.figures_dir}")
+    if general_figure is not None:
+        print(f"Wrote general figure to {general_figure}")
     if grouped_figures:
         print(f"Wrote {len(grouped_figures)} optional grouped figures to {args.figures_dir}")
 

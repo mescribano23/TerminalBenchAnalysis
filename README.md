@@ -39,9 +39,8 @@ leaderboard submissions and trajectory traces.
 |       |-- corpus_stats.json
 |       `-- command_patterns.csv
 `-- reports/
-    |-- leaderboard_superficial_analysis.md
-    |-- trajectory_corpus_characterization.md
-    `-- diminishing_returns_analysis.md
+    |-- general_characteristics/              # Leaderboard characterization figures
+    `-- figures_live/                         # Other generated analysis figures
 ```
 
 Trajectory files are organized as:
@@ -133,13 +132,14 @@ Regenerate trajectory and corpus artifacts:
 python -m scripts.analysis.characterize_trajectories
 ```
 
-Regenerate the superficial leaderboard analysis:
+Regenerate the superficial leaderboard analysis artifacts:
 
 ```powershell
 python -m scripts.analysis.analyze_leaderboard_superficial
 ```
 
-This also writes first-pass leaderboard figures under `reports/figures_live/`.
+This also writes first-pass leaderboard characterization figures under
+`reports/general_characteristics/`.
 
 Regenerate the diminishing-returns CSVs and figures:
 
@@ -157,10 +157,6 @@ python -m scripts.analysis.analyze_diminishing_returns --by-model
 These grouped figures are written under `reports/figures/by_scaffold/` and
 `reports/figures/by_model/`.
 
-`scripts/analysis/analyze_diminishing_returns.py` generates the processed
-diminishing-returns CSVs and figures. The Markdown report is maintained
-manually.
-
 ## Main Outputs
 
 - `data/processed/trajectory_summary.csv`: one row per local trajectory with
@@ -176,27 +172,20 @@ manually.
 - `data/processed/diminishing_returns_variable_coverage.csv`: complete-case,
   positive, zero, and distribution coverage for each effort variable, including
   the positive-cost subset.
-- `reports/diminishing_returns_analysis.md`: manually maintained narrative
-  summary of the diminishing-returns research question, step-count bins,
-  high-effort bins, and figure links.
 - `data/processed/leaderboard_submission_summary.csv`: one row per leaderboard
   submission with official scraped accuracy/error fields and separate computed
   task-level metrics.
-- `reports/leaderboard_superficial_analysis.md`: readable accuracy, variance,
-  scaffold/model comparison report, and links to leaderboard distribution
-  figures.
 - `data/processed/leaderboard_scaffold_variance.csv`: same-scaffold,
   different-model comparisons.
 - `data/processed/leaderboard_model_variance.csv`: same-model,
   different-scaffold comparisons.
 - `data/processed/leaderboard_model_component_variance.csv`: model comparison
   after splitting comma-separated multi-model rows.
-- `reports/figures_live/`: first-pass live leaderboard visualizations,
+- `reports/general_characteristics/`: first-pass live leaderboard visualizations,
   including accuracy distribution, scaffold/model-component violin-box plots,
   and largest within-label accuracy ranges.
 - `data/processed/corpus_stats.json`: aggregate corpus statistics.
 - `data/processed/command_patterns.csv`: extracted command-pattern counts.
-- `reports/trajectory_corpus_characterization.md`: narrative corpus summary.
 
 ## Loading The Index
 

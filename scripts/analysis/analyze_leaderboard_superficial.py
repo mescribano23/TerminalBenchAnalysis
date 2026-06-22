@@ -15,7 +15,6 @@ import argparse
 import csv
 import io
 import math
-import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -30,10 +29,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 DATA_PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 REPORTS_DIR = REPO_ROOT / "reports"
-FIGURES_DIR = REPORTS_DIR / "figures_live"
+FIGURES_DIR = REPORTS_DIR / "general_characteristics"
 INPUT_DEFAULT = DATA_PROCESSED_DIR / "leaderboard_submission_summary.csv"
 OUT_DEFAULT = DATA_PROCESSED_DIR
-REPORT_DEFAULT = REPORTS_DIR / "leaderboard_superficial_analysis.md"
 
 INT_FIELDS = (
     "computed_submission_task_count",
@@ -82,58 +80,6 @@ def sample_std(values: list[float]) -> float | None:
     return math.sqrt(sum((value - avg) ** 2 for value in values) / (len(values) - 1))
 
 
-def percentile(values: list[float], q: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    pos = (len(ordered) - 1) * q
-    lo = math.floor(pos)
-    hi = math.ceil(pos)
-    if lo == hi:
-        return ordered[lo]
-    return ordered[lo] * (hi - pos) + ordered[hi] * (pos - lo)
-
-
-def numeric_summary(values: list[float]) -> dict[str, float | int | None]:
-    if not values:
-        return {
-            "count": 0,
-            "min": None,
-            "p25": None,
-            "median": None,
-            "mean": None,
-            "p75": None,
-            "p90": None,
-            "max": None,
-            "std": None,
-        }
-    return {
-        "count": len(values),
-        "min": min(values),
-        "p25": percentile(values, 0.25),
-        "median": median(values),
-        "mean": mean(values),
-        "p75": percentile(values, 0.75),
-        "p90": percentile(values, 0.90),
-        "max": max(values),
-        "std": sample_std(values),
-    }
-
-
-def fmt_pct(value: float | None, digits: int = 1) -> str:
-    if value is None:
-        return ""
-    return f"{value:.{digits}f}%"
-
-
-def fmt_num(value: float | int | None, digits: int = 2) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, int):
-        return str(value)
-    return f"{value:.{digits}f}"
-
-
 def split_multi(value: str) -> list[str]:
     parts = [part.strip() for part in value.split(",") if part.strip()]
     return parts or [value.strip()]
@@ -178,6 +124,21 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
         row["analysis_task_rate_variance"] = row.get("computed_submission_task_rate_variance")
         rows.append(row)
     return rows
+
+
+def load_accuracy_by_outcome(path: Path) -> list[tuple[str, list[float]]]:
+    if not path.exists():
+        return []
+
+    values: dict[str, list[float]] = {"fail": [], "pass": []}
+    with path.open(newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            outcome = str(row.get("reward_outcome", "")).strip().lower()
+            accuracy = parse_float(row.get("leaderboard_accuracy_percent"))
+            if outcome in values and accuracy is not None:
+                values[outcome].append(accuracy)
+
+    return [(label, items) for label, items in values.items() if items]
 
 
 def group_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
@@ -249,27 +210,6 @@ def exploded_model_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return exploded
 
 
-def one_way_eta_squared(rows: list[dict[str, Any]], key: str) -> dict[str, float | int | None]:
-    usable = [
-        row
-        for row in rows
-        if row.get("analysis_accuracy_percent") is not None and str(row.get(key, "")) != ""
-    ]
-    if len(usable) < 2:
-        return {"n": len(usable), "groups": 0, "eta_squared": None}
-    overall = mean(float(row["analysis_accuracy_percent"]) for row in usable)
-    grouped: dict[str, list[float]] = defaultdict(list)
-    for row in usable:
-        grouped[str(row[key])].append(float(row["analysis_accuracy_percent"]))
-    total_ss = sum((float(row["analysis_accuracy_percent"]) - overall) ** 2 for row in usable)
-    between_ss = sum(len(values) * (mean(values) - overall) ** 2 for values in grouped.values())
-    return {
-        "n": len(usable),
-        "groups": len(grouped),
-        "eta_squared": between_ss / total_ss if total_ss else None,
-    }
-
-
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
@@ -299,27 +239,6 @@ def slugify(value: str) -> str:
     return "_".join("".join(chars).strip("_").split("_")) or "unknown"
 
 
-def relative_path(path: Path) -> str:
-    try:
-        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def markdown_link_path(target: Path, markdown_file: Path) -> str:
-    return Path(os.path.relpath(target.resolve(), start=markdown_file.parent.resolve())).as_posix()
-
-
-def figure_caption(path: Path) -> str:
-    captions = {
-        "leaderboard_accuracy_distribution": "Leaderboard accuracy distribution",
-        "leaderboard_accuracy_by_scaffold": "Leaderboard accuracy by scaffold",
-        "leaderboard_accuracy_by_model_component": "Leaderboard accuracy by model component",
-        "leaderboard_largest_accuracy_ranges": "Largest within-label accuracy ranges",
-    }
-    return captions.get(path.stem, path.stem.replace("_", " ").title())
-
-
 def grouped_accuracy_values(rows: list[dict[str, Any]], key: str, groups: list[dict[str, Any]], limit: int) -> list[tuple[str, list[float]]]:
     selected_keys = [str(group.get(key, "")) for group in groups if (group.get("row_count") or 0) >= 2][:limit]
     grouped: dict[str, list[float]] = {value: [] for value in selected_keys}
@@ -331,10 +250,20 @@ def grouped_accuracy_values(rows: list[dict[str, Any]], key: str, groups: list[d
     return [(value, grouped[value]) for value in selected_keys if grouped[value]]
 
 
+def order_groups_by_leaderboard_rank(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        groups,
+        key=lambda group: (
+            int(group.get("best_rank") or 999999),
+            str(group.get("scaffold") or group.get("model_component") or group.get("leaderboard_model") or ""),
+        ),
+    )
+
+
 def plot_violin_box(
     grouped_values: list[tuple[str, list[float]]],
     title: str,
-    xlabel: str,
+    ylabel: str,
     path: Path,
 ) -> Path | None:
     if not grouped_values:
@@ -342,10 +271,10 @@ def plot_violin_box(
 
     labels = [f"{label}\n(n={len(values)})" for label, values in grouped_values]
     values = [group_values for _, group_values in grouped_values]
-    height = max(5.0, min(13.5, 1.4 + len(values) * 0.46))
-    fig, ax = plt.subplots(figsize=(10.5, height))
+    width = max(10.5, min(18.0, 3.2 + len(values) * 0.62))
+    fig, ax = plt.subplots(figsize=(width, 6.4))
 
-    parts = ax.violinplot(values, vert=False, showmeans=False, showmedians=False, showextrema=False)
+    parts = ax.violinplot(values, vert=True, showmeans=False, showmedians=False, showextrema=False)
     for body in parts["bodies"]:
         body.set_facecolor("#7aa6c2")
         body.set_edgecolor("#3d5f73")
@@ -353,7 +282,7 @@ def plot_violin_box(
 
     ax.boxplot(
         values,
-        vert=False,
+        vert=True,
         widths=0.22,
         patch_artist=True,
         showfliers=False,
@@ -367,20 +296,21 @@ def plot_violin_box(
     for position, group_values in enumerate(values, start=1):
         jitter = rng.normal(0, 0.035, len(group_values))
         ax.scatter(
-            group_values,
             np.full(len(group_values), position) + jitter,
+            group_values,
             s=16,
             color="#1f2d3a",
             alpha=0.65,
             linewidths=0,
         )
 
-    ax.set_yticks(range(1, len(labels) + 1))
-    ax.set_yticklabels(labels, fontsize=8.5)
-    ax.set_xlim(0, 100)
-    ax.set_xlabel(xlabel)
+    ax.set_xticks(range(1, len(labels) + 1))
+    ax.set_xticklabels(labels, fontsize=8.0, rotation=45, ha="right")
+    ax.set_ylim(0, 100)
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel("Groups ordered by best leaderboard rank")
     ax.set_title(title)
-    ax.grid(axis="x", alpha=0.25)
+    ax.grid(axis="y", alpha=0.25)
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=180)
@@ -388,32 +318,44 @@ def plot_violin_box(
     return path
 
 
-def plot_overall_accuracy_distribution(rows: list[dict[str, Any]], path: Path) -> Path | None:
-    accuracies = [float(row["analysis_accuracy_percent"]) for row in rows if row.get("analysis_accuracy_percent") is not None]
-    if not accuracies:
+def plot_accuracy_by_trajectory_outcome(grouped_values: list[tuple[str, list[float]]], path: Path) -> Path | None:
+    if len(grouped_values) < 2:
         return None
 
-    fig, (ax_hist, ax_box) = plt.subplots(
-        2,
-        1,
-        figsize=(9.5, 6.0),
-        gridspec_kw={"height_ratios": [3.0, 1.0]},
-        sharex=True,
+    labels = [f"{label}\n(n={len(values):,})" for label, values in grouped_values]
+    values = [group_values for _, group_values in grouped_values]
+    positions = np.arange(1, len(values) + 1)
+
+    fig, ax = plt.subplots(figsize=(7.2, 5.8))
+    parts = ax.violinplot(values, positions=positions, showmeans=False, showmedians=False, showextrema=False)
+    colors = ["#c97b63", "#6aa57a"]
+    for body, color in zip(parts["bodies"], colors):
+        body.set_facecolor(color)
+        body.set_edgecolor("#2f3337")
+        body.set_alpha(0.48)
+
+    ax.boxplot(
+        values,
+        positions=positions,
+        widths=0.24,
+        patch_artist=True,
+        showfliers=False,
+        boxprops={"facecolor": "#ffffff", "edgecolor": "#243b4a", "linewidth": 1.1},
+        medianprops={"color": "#1f2d3a", "linewidth": 1.8},
+        whiskerprops={"color": "#243b4a", "linewidth": 1.0},
+        capprops={"color": "#243b4a", "linewidth": 1.0},
     )
-    ax_hist.hist(accuracies, bins=np.arange(0, 105, 5), color="#6c8ebf", edgecolor="white")
-    ax_hist.axvline(mean(accuracies), color="#c44e52", linewidth=1.8, label=f"Mean {mean(accuracies):.1f}%")
-    ax_hist.axvline(median(accuracies), color="#2f6f4e", linewidth=1.8, linestyle="--", label=f"Median {median(accuracies):.1f}%")
-    ax_hist.set_ylabel("Submission rows")
-    ax_hist.set_title("Leaderboard submission accuracy distribution")
-    ax_hist.grid(axis="y", alpha=0.25)
-    ax_hist.legend(frameon=False)
 
-    ax_box.violinplot([accuracies], vert=False, showmeans=False, showmedians=False, showextrema=False)
-    ax_box.boxplot([accuracies], vert=False, widths=0.32, showfliers=False)
-    ax_box.set_yticks([])
-    ax_box.set_xlabel("Official leaderboard accuracy (%)")
-    ax_box.grid(axis="x", alpha=0.25)
-
+    means = [mean(group_values) for group_values in values]
+    ax.scatter(positions, means, marker="D", s=34, color="#111111", zorder=3, label="Mean")
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
+    ax.set_ylim(0, 100)
+    ax.set_ylabel("Official leaderboard accuracy (%)")
+    ax.set_xlabel("Local trajectory outcome")
+    ax.set_title("Leaderboard accuracy distribution by trajectory outcome")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(frameon=False, loc="upper left")
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=180)
@@ -461,15 +403,19 @@ def plot_leaderboard_figures(
     scaffold_groups: list[dict[str, Any]],
     exploded_rows: list[dict[str, Any]],
     exploded_model_groups: list[dict[str, Any]],
+    outcome_accuracy_values: list[tuple[str, list[float]]],
     figures_dir: Path,
 ) -> list[Path]:
     figures: list[Path] = []
 
-    overall = plot_overall_accuracy_distribution(rows, figures_dir / "leaderboard_accuracy_distribution.png")
-    if overall is not None:
-        figures.append(overall)
+    outcome_plot = plot_accuracy_by_trajectory_outcome(
+        outcome_accuracy_values,
+        figures_dir / "leaderboard_accuracy_by_trajectory_outcome.png",
+    )
+    if outcome_plot is not None:
+        figures.append(outcome_plot)
 
-    scaffold_values = grouped_accuracy_values(rows, "scaffold", scaffold_groups, limit=20)
+    scaffold_values = grouped_accuracy_values(rows, "scaffold", order_groups_by_leaderboard_rank(scaffold_groups), limit=20)
     scaffold_plot = plot_violin_box(
         scaffold_values,
         "Leaderboard accuracy by scaffold",
@@ -479,7 +425,12 @@ def plot_leaderboard_figures(
     if scaffold_plot is not None:
         figures.append(scaffold_plot)
 
-    model_values = grouped_accuracy_values(exploded_rows, "model_component", exploded_model_groups, limit=20)
+    model_values = grouped_accuracy_values(
+        exploded_rows,
+        "model_component",
+        order_groups_by_leaderboard_rank(exploded_model_groups),
+        limit=20,
+    )
     model_plot = plot_violin_box(
         model_values,
         "Leaderboard accuracy by model component",
@@ -500,245 +451,41 @@ def plot_leaderboard_figures(
     return figures
 
 
-def markdown_table(rows: list[dict[str, Any]], columns: list[tuple[str, str]], limit: int) -> str:
-    selected = rows[:limit]
-    out = [
-        "| " + " | ".join(label for _, label in columns) + " |",
-        "| " + " | ".join("---" for _ in columns) + " |",
-    ]
-    for row in selected:
-        cells: list[str] = []
-        for key, _ in columns:
-            value = row.get(key)
-            if key.endswith("_percent") or key in {
-                "mean_accuracy_percent",
-                "weighted_accuracy_percent",
-                "accuracy_range_percent",
-                "accuracy_std_percent",
-                "best_accuracy_percent",
-                "worst_accuracy_percent",
-                "min_accuracy_percent",
-                "max_accuracy_percent",
-                "success_rate",
-                "token_coverage",
-                "duration_coverage",
-                "cost_coverage",
-            }:
-                if key in {"success_rate", "token_coverage", "duration_coverage", "cost_coverage"} and value is not None:
-                    cells.append(fmt_pct(float(value) * 100.0))
-                else:
-                    cells.append(fmt_pct(value))
-            elif "variance" in key:
-                cells.append(fmt_num(value, 4))
-            elif isinstance(value, float):
-                cells.append(fmt_num(value))
-            else:
-                cells.append(str(value) if value is not None else "")
-        out.append("| " + " | ".join(cells) + " |")
-    return "\n".join(out)
-
-
-def write_report(
-    path: Path,
-    rows: list[dict[str, Any]],
-    scaffold_groups: list[dict[str, Any]],
-    model_groups: list[dict[str, Any]],
-    exploded_model_groups: list[dict[str, Any]],
-    decomposition: dict[str, Any],
-    figures: list[Path],
-    out_dir: Path,
-) -> None:
-    accuracies = [float(row["analysis_accuracy_percent"]) for row in rows if row.get("analysis_accuracy_percent") is not None]
-    variances = [float(row["analysis_task_rate_variance"]) for row in rows if row.get("analysis_task_rate_variance") is not None]
-    pms = [float(row["analysis_pm_percent"]) for row in rows if row.get("analysis_pm_percent") is not None]
-    ranked_rows = sorted(rows, key=lambda row: row.get("leaderboard_rank") or 999999)
-    scaffold_multi = [row for row in scaffold_groups if (row.get("distinct_model_count") or 0) > 1]
-    model_multi = [row for row in model_groups if (row.get("distinct_scaffold_count") or 0) > 1]
-    exploded_multi = [row for row in exploded_model_groups if (row.get("distinct_scaffold_count") or 0) > 1]
-    accuracy_summary = numeric_summary(accuracies)
-    variance_summary = numeric_summary(variances)
-    pm_summary = numeric_summary(pms)
-    figure_lines: list[str] = []
-    for figure in figures:
-        figure_lines.extend(
-            [
-                f"![{figure_caption(figure)}]({markdown_link_path(figure, path)})",
-                "",
-            ]
-        )
-
-    lines = [
-        "# Superficial Terminal-Bench Leaderboard Analysis",
-        "",
-        "This report uses the current leaderboard snapshot and stays at submission-row level. "
-        "Accuracy and +/- use scraped official leaderboard fields.",
-        "",
-        "## Overall Submission-Level Picture",
-        "",
-        f"- Submission rows: {len(rows)}.",
-        f"- Rows with local trajectories: {sum(1 for row in rows if row.get('has_trajectories'))}.",
-        f"- Unique scaffolds: {len({row.get('scaffold') for row in rows})}.",
-        f"- Unique exact model labels: {len({row.get('leaderboard_model') for row in rows})}.",
-        f"- Leaderboard accuracy: mean {fmt_pct(accuracy_summary['mean'])}, median {fmt_pct(accuracy_summary['median'])}, range {fmt_pct(accuracy_summary['min'])}-{fmt_pct(accuracy_summary['max'])}.",
-        f"- Within-submission task-rate variance: mean {fmt_num(variance_summary['mean'], 4)}, median {fmt_num(variance_summary['median'], 4)}.",
-        f"- Leaderboard +/- estimate: mean {fmt_pct(pm_summary['mean'])}, median {fmt_pct(pm_summary['median'])}.",
-        "",
-        "## Preliminary Reading",
-        "",
-        f"- Same-scaffold comparisons are available for {len(scaffold_multi)} scaffolds. "
-        f"The largest accuracy ranges are `{scaffold_multi[0]['scaffold']}` ({fmt_pct(scaffold_multi[0]['accuracy_range_percent'])}), "
-        f"`{scaffold_multi[1]['scaffold']}` ({fmt_pct(scaffold_multi[1]['accuracy_range_percent'])}), and "
-        f"`{scaffold_multi[2]['scaffold']}` ({fmt_pct(scaffold_multi[2]['accuracy_range_percent'])}).",
-        f"- Same-model comparisons are available for {len(model_multi)} exact model labels. "
-        f"The largest exact-model ranges are `{model_multi[0]['leaderboard_model']}` ({fmt_pct(model_multi[0]['accuracy_range_percent'])}), "
-        f"`{model_multi[1]['leaderboard_model']}` ({fmt_pct(model_multi[1]['accuracy_range_percent'])}), and "
-        f"`{model_multi[2]['leaderboard_model']}` ({fmt_pct(model_multi[2]['accuracy_range_percent'])}).",
-        f"- After splitting comma-separated model labels, {len(exploded_multi)} model components appear with more than one scaffold. "
-        "This view is useful for spotting mixed-model or ensemble rows that would otherwise hide under a combined label.",
-        "- The eta-squared values below are descriptive only. They are inflated when many groups have one or two rows, so they should guide where to inspect next rather than settle the scaffold-vs-model question.",
-        "",
-        "## Visual Diagnostics",
-        "",
-        "These figures are intended as a first-pass visualization of the leaderboard rows. Violin widths show the distribution shape, box plots show the median and interquartile range, and individual dots show the actual submission rows.",
-        "",
-        *figure_lines,
-        "## Top Rows by Accuracy",
-        "",
-        markdown_table(
-            ranked_rows,
-            [
-                ("leaderboard_rank", "Rank"),
-                ("scaffold", "Scaffold"),
-                ("leaderboard_model", "Model"),
-                ("analysis_accuracy_percent", "Official accuracy"),
-                ("analysis_pm_percent", "+/-"),
-                ("has_trajectories", "Has trajectories"),
-            ],
-            15,
-        ),
-        "",
-        "## Same Scaffold, Different Models",
-        "",
-        "These groups show how much leaderboard accuracy moves when the scaffold label is fixed and the model label changes. "
-        "Large ranges suggest model choice matters within that scaffold, although scaffold versions are not collapsed here.",
-        "",
-        markdown_table(
-            scaffold_multi,
-            [
-                ("scaffold", "Scaffold"),
-                ("row_count", "Rows"),
-                ("distinct_model_count", "Models"),
-                ("mean_accuracy_percent", "Mean acc."),
-                ("accuracy_range_percent", "Range"),
-                ("accuracy_std_percent", "Std."),
-                ("best_accuracy_percent", "Best"),
-                ("worst_accuracy_percent", "Worst"),
-            ],
-            20,
-        ),
-        "",
-        "## Same Model, Different Scaffolds",
-        "",
-        "These groups show how much leaderboard accuracy moves when the exact model label is fixed and the scaffold changes. "
-        "Large ranges suggest scaffold choice matters for that model.",
-        "",
-        markdown_table(
-            model_multi,
-            [
-                ("leaderboard_model", "Model"),
-                ("row_count", "Rows"),
-                ("distinct_scaffold_count", "Scaffolds"),
-                ("mean_accuracy_percent", "Mean acc."),
-                ("accuracy_range_percent", "Range"),
-                ("accuracy_std_percent", "Std."),
-                ("best_accuracy_percent", "Best"),
-                ("worst_accuracy_percent", "Worst"),
-            ],
-            20,
-        ),
-        "",
-        "## Same Model Component, Different Scaffolds",
-        "",
-        "Some leaderboard rows list model ensembles or multiple model names. This exploded view splits comma-separated model labels before grouping, so mixed-model rows can still contribute to model-level pattern finding.",
-        "",
-        markdown_table(
-            exploded_multi,
-            [
-                ("model_component", "Model component"),
-                ("row_count", "Rows"),
-                ("distinct_scaffold_count", "Scaffolds"),
-                ("mean_accuracy_percent", "Mean acc."),
-                ("accuracy_range_percent", "Range"),
-                ("accuracy_std_percent", "Std."),
-                ("best_accuracy_percent", "Best"),
-                ("worst_accuracy_percent", "Worst"),
-            ],
-            20,
-        ),
-        "",
-        "## Coarse Variance Attribution",
-        "",
-        "This is a one-way ANOVA-style eta-squared diagnostic on scraped official leaderboard accuracy, not a causal estimate and not a local reward-derived accuracy. "
-        "It asks how much row-level official accuracy variance is associated with grouping by one label at a time.",
-        "",
-        f"- Scaffold label eta-squared: {fmt_num(decomposition['scaffold']['eta_squared'], 3)} across {decomposition['scaffold']['groups']} scaffold groups.",
-        f"- Exact model label eta-squared: {fmt_num(decomposition['leaderboard_model']['eta_squared'], 3)} across {decomposition['leaderboard_model']['groups']} model groups.",
-        f"- Exploded model component eta-squared: {fmt_num(decomposition['model_component']['eta_squared'], 3)} across {decomposition['model_component']['groups']} model-component groups.",
-        "",
-        "## Generated Artifacts",
-        "",
-        f"- `{relative_path(out_dir / 'leaderboard_scaffold_variance.csv')}`",
-        f"- `{relative_path(out_dir / 'leaderboard_model_variance.csv')}`",
-        f"- `{relative_path(out_dir / 'leaderboard_model_component_variance.csv')}`",
-        *[f"- `{relative_path(figure)}`" for figure in figures],
-    ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, default=INPUT_DEFAULT)
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
-    parser.add_argument("--report", type=Path, default=REPORT_DEFAULT)
+    parser.add_argument(
+        "--trajectory-input",
+        type=Path,
+        default=None,
+        help="Trajectory summary CSV used for pass/fail split plots. Defaults to trajectory_summary.csv next to --input.",
+    )
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
     args = parser.parse_args()
 
     rows = load_rows(args.input)
+    trajectory_input = args.trajectory_input or args.input.parent / "trajectory_summary.csv"
+    outcome_accuracy_values = load_accuracy_by_outcome(trajectory_input)
     args.out.mkdir(parents=True, exist_ok=True)
-    args.report.parent.mkdir(parents=True, exist_ok=True)
     args.figures_dir.mkdir(parents=True, exist_ok=True)
 
     scaffold_groups = group_rows(rows, "scaffold")
     model_groups = group_rows(rows, "leaderboard_model")
     exploded_rows = exploded_model_rows(rows)
     exploded_model_groups = group_rows(exploded_rows, "model_component")
-    decomposition = {
-        "scaffold": one_way_eta_squared(rows, "scaffold"),
-        "leaderboard_model": one_way_eta_squared(rows, "leaderboard_model"),
-        "model_component": one_way_eta_squared(exploded_rows, "model_component"),
-    }
 
     write_csv(args.out / "leaderboard_scaffold_variance.csv", scaffold_groups)
     write_csv(args.out / "leaderboard_model_variance.csv", model_groups)
     write_csv(args.out / "leaderboard_model_component_variance.csv", exploded_model_groups)
 
-    figures = plot_leaderboard_figures(
+    plot_leaderboard_figures(
         rows,
         scaffold_groups,
         exploded_rows,
         exploded_model_groups,
+        outcome_accuracy_values,
         args.figures_dir,
-    )
-
-    write_report(
-        args.report,
-        rows,
-        scaffold_groups,
-        model_groups,
-        exploded_model_groups,
-        decomposition,
-        figures,
-        args.out,
     )
 
 
