@@ -1,6 +1,6 @@
 # Superficial Terminal-Bench Leaderboard Analysis
 
-This report uses the current leaderboard snapshot in `data/processed_live/leaderboard_submission_summary.csv` and stays at submission-row level. Accuracy and +/- use scraped official leaderboard fields. Local trajectory rows are used only for coverage and resource summaries, not for recalculating leaderboard accuracy.
+This report uses the current leaderboard snapshot and stays at submission-row level. Accuracy and +/- use scraped official leaderboard fields.
 
 ## Overall Submission-Level Picture
 
@@ -19,10 +19,22 @@ This report uses the current leaderboard snapshot in `data/processed_live/leader
 - After splitting comma-separated model labels, 31 model components appear with more than one scaffold. This view is useful for spotting mixed-model or ensemble rows that would otherwise hide under a combined label.
 - The eta-squared values below are descriptive only. They are inflated when many groups have one or two rows, so they should guide where to inspect next rather than settle the scaffold-vs-model question.
 
+## Visual Diagnostics
+
+These figures are intended as a first-pass visualization of the leaderboard rows. Violin widths show the distribution shape, box plots show the median and interquartile range, and individual dots show the actual submission rows.
+
+![Leaderboard accuracy distribution](figures_live/leaderboard_accuracy_distribution.png)
+
+![Leaderboard accuracy by scaffold](figures_live/leaderboard_accuracy_by_scaffold.png)
+
+![Leaderboard accuracy by model component](figures_live/leaderboard_accuracy_by_model_component.png)
+
+![Largest within-label accuracy ranges](figures_live/leaderboard_largest_accuracy_ranges.png)
+
 ## Top Rows by Accuracy
 
 | Rank | Scaffold | Model | Official accuracy | +/- | Has trajectories |
-| --- | --- | --- | ---: | ---: | --- |
+| --- | --- | --- | --- | --- | --- |
 | 1 | nexau | gpt-5.5 | 84.7% | 2.1% | True |
 | 2 | Lemoncode-agent | gemini-3.1-pro-preview,gpt-5.3-codex | 84.5% | 2.6% | False |
 | 3 | capy-build | gpt-5.5 | 83.1% | 2.1% | False |
@@ -128,50 +140,12 @@ This is a one-way ANOVA-style eta-squared diagnostic on scraped official leaderb
 - Exact model label eta-squared: 0.957 across 61 model groups.
 - Exploded model component eta-squared: 0.890 across 54 model-component groups.
 
-## Trajectory Resource Efficiency
-
-The companion efficiency files use local trajectory rows from `data/processed_live/trajectory_summary.csv`, not the full leaderboard. The tables below use scraped leaderboard accuracy for performance columns and local trajectories only for coverage/resource columns.
-
-For model components, multi-model rows are duplicated across components and are not credit-apportioned. Component-level token, duration, and cost metrics should be read as association or presence metrics: submissions involving this model component had this resource profile.
-
-Sampled scaffolds with official leaderboard accuracy and local resource coverage:
-
-| Scaffold | Best official rank | Best official accuracy | Mean official accuracy | Official rows | Local trajectories | Median tokens | Median sec. | Median cost |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `nexau` | 1 | 84.7% | 84.7% | 1 | 443 |  | 259.35 |  |
-| `codex` | 4 | 82.2% | 49.3% | 9 | 1,242 | 116,400 | 105.84 |  |
-| `judy` | 7 | 80.2% | 76.1% | 2 | 166 | 1,162,406.5 | 490.88 | 2.59 |
-| `terminus-kira-env-bootstrap` | 11 | 76.4% | 76.4% | 1 | 444 | 764,644 | 375.81 | 1.01 |
-| `terminus-3-3` | 16 | 74.8% | 74.8% | 2 | 678 | 331,998 | 416.86 | 0.60 |
-| `deepagent-harbor` | 27 | 66.5% | 66.5% | 1 | 417 | 653,287 | 0.00 |  |
-| `terminus-2` | 32 | 64.7% | 35.1% | 33 | 12,739 | 106,787 | 341.26 | 0.04 |
-| `hookele` | 39 | 61.6% | 61.6% | 1 | 431 | 304,446 | 224.00 | 0.03 |
-| `gemini-cli` | 40 | 61.4% | 40.6% | 5 | 1,221 | 250,975 | 168.08 | 0.00 |
-| `claude-code` | 50 | 58.0% | 40.3% | 7 | 2,522 | 932,449 | 232.29 | 0.00 |
-| `openhands` | 62 | 51.9% | 28.4% | 12 | 5,190 | 506,093 | 416.46 | 0.25 |
-| `mini-swe-agent` | 82 | 42.5% | 24.9% | 13 | 5,610 | 83,543 | 0.00 | 0.11 |
-
-Sampled model components with official leaderboard accuracy and local resource coverage:
-
-| Model component | Best official accuracy | Mean official accuracy | Official rows | Local trajectories | Median tokens | Median sec. | Median cost |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `gpt-5.5` | 84.7% | 79.7% | 5 | 443 |  | 259.35 |  |
-| `gemini-3.1-pro-preview` | 84.5% | 74.2% | 8 | 1,031 | 463,130 | 397.70 | 0.29 |
-| `claude-opus-4-6` | 76.4% | 69.1% | 9 | 1,571 | 458,199 | 333.35 | 0.37 |
-| `gemini-3-flash-preview` | 71.0% | 58.6% | 4 | 444 | 167,975.5 | 227.32 | 0.11 |
-| `gemini-3-pro-preview` | 69.4% | 61.1% | 9 | 445 | 86,375 | 258.21 | 0.29 |
-| `gpt-5.2-codex` | 66.5% | 66.5% | 1 | 417 | 653,287 | 0.00 |  |
-| `gpt-5.2` | 64.9% | 60.8% | 5 | 443 | 71,644 | 433.48 | 0.31 |
-| `claude-opus-4-5-20251101` | 63.1% | 56.2% | 4 | 1,319 | 515,086 | 288.82 | 0.00 |
-| `gpt-5.1-codex-mini` | 61.6% | 52.4% | 2 | 431 | 304,446 | 224.00 | 0.03 |
-| `gpt-5-nano` | 59.1% | 23.9% | 7 | 1,726 | 110,103 | 137.61 | 0.02 |
-| `claude-haiku-4-5-20251001` | 59.1% | 34.8% | 6 | 1,688 | 601,187 | 161.39 | 0.11 |
-| `gpt-5.1-codex` | 57.8% | 49.4% | 3 | 445 | 83,509 | 627.88 | 0.19 |
-
 ## Generated Artifacts
 
 - `data/processed_live/leaderboard_scaffold_variance.csv`
 - `data/processed_live/leaderboard_model_variance.csv`
 - `data/processed_live/leaderboard_model_component_variance.csv`
-- `data/processed_live/trajectory_scaffold_efficiency.csv`
-- `data/processed_live/trajectory_model_component_efficiency.csv`
+- `reports/figures_live/leaderboard_accuracy_distribution.png`
+- `reports/figures_live/leaderboard_accuracy_by_scaffold.png`
+- `reports/figures_live/leaderboard_accuracy_by_model_component.png`
+- `reports/figures_live/leaderboard_largest_accuracy_ranges.png`

@@ -845,40 +845,6 @@ def main() -> None:
             })
             rank += 1
 
-    outcome_by_scaffold_model: list[dict[str, Any]] = []
-    grouped_rows: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        grouped_rows[(str(row.get("scaffold", "")), str(row.get("model_dir", "")))].append(row)
-    for (scaffold, model_dir), items in sorted(grouped_rows.items()):
-        rewards = [parse_float(row.get("reward")) for row in items]
-        valid_rewards = [value for value in rewards if value is not None]
-        pass_items = [row for row in items if row.get("reward_outcome") == "pass"]
-        fail_items = [row for row in items if row.get("reward_outcome") == "fail"]
-        outcome_by_scaffold_model.append({
-            "scaffold": scaffold,
-            "model_dir": model_dir,
-            "trajectory_count": len(items),
-            "labeled_trajectory_count": len(valid_rewards),
-            "pass_count": len(pass_items),
-            "fail_count": len(fail_items),
-            "success_rate": mean(valid_rewards) if valid_rewards else "",
-            "mean_step_count_pass": mean([int(row["step_count"]) for row in pass_items]) if pass_items else "",
-            "mean_step_count_fail": mean([int(row["step_count"]) for row in fail_items]) if fail_items else "",
-            "mean_command_count_pass": mean([int(row["command_count"]) for row in pass_items]) if pass_items else "",
-            "mean_command_count_fail": mean([int(row["command_count"]) for row in fail_items]) if fail_items else "",
-        })
-
-    with (out / "trajectory_outcome_by_scaffold_model.csv").open("w", newline="", encoding="utf-8") as f:
-        fields = [
-            "scaffold", "model_dir", "trajectory_count", "labeled_trajectory_count",
-            "pass_count", "fail_count", "success_rate",
-            "mean_step_count_pass", "mean_step_count_fail",
-            "mean_command_count_pass", "mean_command_count_fail",
-        ]
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(outcome_by_scaffold_model)
-
     outcome_feature_rows: list[dict[str, Any]] = []
     feature_fields = [
         "step_count",
@@ -1012,7 +978,6 @@ def main() -> None:
             "trajectory_summary_csv": display_path(out / "trajectory_summary.csv"),
             "leaderboard_submission_summary_csv": display_path(out / "leaderboard_submission_summary.csv"),
             "command_patterns_csv": display_path(out / "command_patterns.csv"),
-            "trajectory_outcome_by_scaffold_model_csv": display_path(out / "trajectory_outcome_by_scaffold_model.csv"),
             "trajectory_features_by_outcome_csv": display_path(out / "trajectory_features_by_outcome.csv"),
         },
     }

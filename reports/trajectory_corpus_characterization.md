@@ -27,7 +27,6 @@ The summary tables used for this report are the current `processed_live` outputs
 
 ```text
 data/processed_live/trajectory_summary.csv
-data/processed_live/trajectory_outcome_by_scaffold_model.csv
 data/processed_live/trajectory_features_by_outcome.csv
 data/processed_live/command_patterns.csv
 data/processed_live/corpus_stats.json
@@ -306,7 +305,6 @@ Regenerate the current leaderboard-level report:
 ```powershell
 python -m scripts.analysis.analyze_leaderboard_superficial `
   --input data\processed_live\leaderboard_submission_summary.csv `
-  --trajectory-summary data\processed_live\trajectory_summary.csv `
   --out data\processed_live `
   --report reports\leaderboard_superficial_analysis.md
 ```

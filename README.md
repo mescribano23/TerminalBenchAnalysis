@@ -29,10 +29,7 @@ leaderboard submissions and trajectory traces.
 |   |   `-- balanced_12/                     # Historical balanced trajectory sample
 |   `-- processed/
 |       |-- trajectory_summary.csv           # One row per local trajectory
-|       |-- trajectory_outcome_by_scaffold_model.csv
 |       |-- trajectory_features_by_outcome.csv
-|       |-- trajectory_scaffold_efficiency.csv
-|       |-- trajectory_model_component_efficiency.csv
 |       |-- diminishing_returns_effort_bins.csv
 |       |-- diminishing_returns_variable_coverage.csv
 |       |-- leaderboard_submission_summary.csv
@@ -142,6 +139,8 @@ Regenerate the superficial leaderboard analysis:
 python -m scripts.analysis.analyze_leaderboard_superficial
 ```
 
+This also writes first-pass leaderboard figures under `reports/figures_live/`.
+
 Regenerate the diminishing-returns CSVs and figures:
 
 ```powershell
@@ -167,16 +166,9 @@ manually.
 - `data/processed/trajectory_summary.csv`: one row per local trajectory with
   scaffold/model/task metadata, reward-backed pass/fail labels, step counts,
   command counts, token/cost fields, and joined leaderboard metadata.
-- `data/processed/trajectory_outcome_by_scaffold_model.csv`: trajectory-level
-  pass/fail counts and success rates by local scaffold/model directory.
 - `data/processed/trajectory_features_by_outcome.csv`: passed-vs-failed
   trajectory summaries for length, commands, tool calls, tokens, cost, and
   duration.
-- `data/processed/trajectory_scaffold_efficiency.csv`: local trajectory
-  success/resource summaries by scaffold, with token/duration/cost coverage.
-- `data/processed/trajectory_model_component_efficiency.csv`: local trajectory
-  success/resource summaries for rows involving each model component. Multi-model
-  rows are duplicated across components and are not credit-apportioned.
 - `data/processed/diminishing_returns_effort_bins.csv`: trajectory success rates
   with Wilson confidence intervals across effort bins for steps,
   scaffold-normalized steps, commands, tool calls, tokens, duration, and positive
@@ -191,13 +183,17 @@ manually.
   submission with official scraped accuracy/error fields and separate computed
   task-level metrics.
 - `reports/leaderboard_superficial_analysis.md`: readable accuracy, variance,
-  and scaffold/model comparison report.
+  scaffold/model comparison report, and links to leaderboard distribution
+  figures.
 - `data/processed/leaderboard_scaffold_variance.csv`: same-scaffold,
   different-model comparisons.
 - `data/processed/leaderboard_model_variance.csv`: same-model,
   different-scaffold comparisons.
 - `data/processed/leaderboard_model_component_variance.csv`: model comparison
   after splitting comma-separated multi-model rows.
+- `reports/figures_live/`: first-pass live leaderboard visualizations,
+  including accuracy distribution, scaffold/model-component violin-box plots,
+  and largest within-label accuracy ranges.
 - `data/processed/corpus_stats.json`: aggregate corpus statistics.
 - `data/processed/command_patterns.csv`: extracted command-pattern counts.
 - `reports/trajectory_corpus_characterization.md`: narrative corpus summary.

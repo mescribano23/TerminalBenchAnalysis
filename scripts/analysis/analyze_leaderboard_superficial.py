@@ -15,19 +15,23 @@ import argparse
 import csv
 import io
 import math
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
+import matplotlib.pyplot as plt
+import numpy as np
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 DATA_PROCESSED_DIR = REPO_ROOT / "data" / "processed"
 REPORTS_DIR = REPO_ROOT / "reports"
+FIGURES_DIR = REPORTS_DIR / "figures_live"
 INPUT_DEFAULT = DATA_PROCESSED_DIR / "leaderboard_submission_summary.csv"
-TRAJECTORY_SUMMARY_DEFAULT = DATA_PROCESSED_DIR / "trajectory_summary.csv"
 OUT_DEFAULT = DATA_PROCESSED_DIR
 REPORT_DEFAULT = REPORTS_DIR / "leaderboard_superficial_analysis.md"
 
@@ -176,23 +180,6 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def load_trajectory_rows(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    with path.open(newline="", encoding="utf-8") as f:
-        raw_rows = list(csv.DictReader(f))
-
-    rows: list[dict[str, Any]] = []
-    for raw in raw_rows:
-        row = dict(raw)
-        row["reward"] = parse_float(row.get("reward"))
-        row["total_tokens"] = parse_float(row.get("total_tokens"))
-        row["duration_seconds_from_timestamps"] = parse_float(row.get("duration_seconds_from_timestamps"))
-        row["cost_usd"] = parse_float(row.get("cost_usd"))
-        rows.append(row)
-    return rows
-
-
 def group_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -262,101 +249,6 @@ def exploded_model_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return exploded
 
 
-def exploded_trajectory_model_component_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    exploded: list[dict[str, Any]] = []
-    for row in rows:
-        model_value = str(row.get("model_dir") or row.get("leaderboard_model") or "")
-        for model in split_multi(model_value):
-            item = dict(row)
-            item["model_component"] = model
-            exploded.append(item)
-    return exploded
-
-
-def summarize_efficiency_group(items: list[dict[str, Any]], key: str, value: str) -> dict[str, Any]:
-    trajectory_count = len(items)
-    pass_items = [row for row in items if row.get("reward_outcome") == "pass"]
-    fail_items = [row for row in items if row.get("reward_outcome") == "fail"]
-    pass_count = len(pass_items)
-    fail_count = len(fail_items)
-    labeled_count = pass_count + fail_count
-
-    token_values = [row["total_tokens"] for row in items if row.get("total_tokens") is not None]
-    duration_values = [
-        row["duration_seconds_from_timestamps"]
-        for row in items
-        if row.get("duration_seconds_from_timestamps") is not None
-    ]
-    cost_values = [row["cost_usd"] for row in items if row.get("cost_usd") is not None]
-    token_summary = numeric_summary(token_values)
-    duration_summary = numeric_summary(duration_values)
-    cost_summary = numeric_summary(cost_values)
-
-    token_pass_values = [row["total_tokens"] for row in pass_items if row.get("total_tokens") is not None]
-    token_fail_values = [row["total_tokens"] for row in fail_items if row.get("total_tokens") is not None]
-    duration_pass_values = [
-        row["duration_seconds_from_timestamps"]
-        for row in pass_items
-        if row.get("duration_seconds_from_timestamps") is not None
-    ]
-    duration_fail_values = [
-        row["duration_seconds_from_timestamps"]
-        for row in fail_items
-        if row.get("duration_seconds_from_timestamps") is not None
-    ]
-    cost_pass_values = [row["cost_usd"] for row in pass_items if row.get("cost_usd") is not None]
-    cost_fail_values = [row["cost_usd"] for row in fail_items if row.get("cost_usd") is not None]
-
-    return {
-        key: value,
-        "display_name": representative_display_name(items, key),
-        "trajectory_count": trajectory_count,
-        "trajectory_count_with_tokens": len(token_values),
-        "trajectory_count_with_duration": len(duration_values),
-        "trajectory_count_with_cost": len(cost_values),
-        "token_coverage": len(token_values) / trajectory_count if trajectory_count else None,
-        "duration_coverage": len(duration_values) / trajectory_count if trajectory_count else None,
-        "cost_coverage": len(cost_values) / trajectory_count if trajectory_count else None,
-        "pass_count": pass_count,
-        "fail_count": fail_count,
-        "success_rate": pass_count / labeled_count if labeled_count else None,
-        "mean_total_tokens": token_summary["mean"],
-        "median_total_tokens": token_summary["median"],
-        "p90_total_tokens": token_summary["p90"],
-        "mean_duration_seconds": duration_summary["mean"],
-        "median_duration_seconds": duration_summary["median"],
-        "p90_duration_seconds": duration_summary["p90"],
-        "mean_cost_usd": cost_summary["mean"],
-        "median_cost_usd": cost_summary["median"],
-        "p90_cost_usd": cost_summary["p90"],
-        "mean_tokens_pass": mean(token_pass_values) if token_pass_values else None,
-        "mean_tokens_fail": mean(token_fail_values) if token_fail_values else None,
-        "mean_duration_pass": mean(duration_pass_values) if duration_pass_values else None,
-        "mean_duration_fail": mean(duration_fail_values) if duration_fail_values else None,
-        "mean_cost_pass": mean(cost_pass_values) if cost_pass_values else None,
-        "mean_cost_fail": mean(cost_fail_values) if cost_fail_values else None,
-        "tokens_per_pass": sum(token_values) / pass_count if pass_count and token_values else None,
-        "seconds_per_pass": sum(duration_values) / pass_count if pass_count and duration_values else None,
-        "cost_per_pass": sum(cost_values) / pass_count if pass_count and cost_values else None,
-    }
-
-
-def efficiency_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        grouped[str(row.get(key, ""))].append(row)
-
-    summaries = [summarize_efficiency_group(items, key, value) for value, items in grouped.items()]
-    summaries.sort(
-        key=lambda item: (
-            -(item.get("success_rate") or 0.0),
-            -(item.get("trajectory_count") or 0),
-            str(item.get(key, "")),
-        )
-    )
-    return summaries
-
-
 def one_way_eta_squared(rows: list[dict[str, Any]], key: str) -> dict[str, float | int | None]:
     usable = [
         row
@@ -400,6 +292,212 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
             print(f"warning: could not update locked file: {path}", file=sys.stderr)
             return
         raise
+
+
+def slugify(value: str) -> str:
+    chars = [char.lower() if char.isalnum() else "_" for char in value]
+    return "_".join("".join(chars).strip("_").split("_")) or "unknown"
+
+
+def relative_path(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def markdown_link_path(target: Path, markdown_file: Path) -> str:
+    return Path(os.path.relpath(target.resolve(), start=markdown_file.parent.resolve())).as_posix()
+
+
+def figure_caption(path: Path) -> str:
+    captions = {
+        "leaderboard_accuracy_distribution": "Leaderboard accuracy distribution",
+        "leaderboard_accuracy_by_scaffold": "Leaderboard accuracy by scaffold",
+        "leaderboard_accuracy_by_model_component": "Leaderboard accuracy by model component",
+        "leaderboard_largest_accuracy_ranges": "Largest within-label accuracy ranges",
+    }
+    return captions.get(path.stem, path.stem.replace("_", " ").title())
+
+
+def grouped_accuracy_values(rows: list[dict[str, Any]], key: str, groups: list[dict[str, Any]], limit: int) -> list[tuple[str, list[float]]]:
+    selected_keys = [str(group.get(key, "")) for group in groups if (group.get("row_count") or 0) >= 2][:limit]
+    grouped: dict[str, list[float]] = {value: [] for value in selected_keys}
+    for row in rows:
+        value = str(row.get(key, ""))
+        if value not in grouped or row.get("analysis_accuracy_percent") is None:
+            continue
+        grouped[value].append(float(row["analysis_accuracy_percent"]))
+    return [(value, grouped[value]) for value in selected_keys if grouped[value]]
+
+
+def plot_violin_box(
+    grouped_values: list[tuple[str, list[float]]],
+    title: str,
+    xlabel: str,
+    path: Path,
+) -> Path | None:
+    if not grouped_values:
+        return None
+
+    labels = [f"{label}\n(n={len(values)})" for label, values in grouped_values]
+    values = [group_values for _, group_values in grouped_values]
+    height = max(5.0, min(13.5, 1.4 + len(values) * 0.46))
+    fig, ax = plt.subplots(figsize=(10.5, height))
+
+    parts = ax.violinplot(values, vert=False, showmeans=False, showmedians=False, showextrema=False)
+    for body in parts["bodies"]:
+        body.set_facecolor("#7aa6c2")
+        body.set_edgecolor("#3d5f73")
+        body.set_alpha(0.45)
+
+    ax.boxplot(
+        values,
+        vert=False,
+        widths=0.22,
+        patch_artist=True,
+        showfliers=False,
+        boxprops={"facecolor": "#ffffff", "edgecolor": "#243b4a", "linewidth": 1.1},
+        medianprops={"color": "#c44e52", "linewidth": 1.6},
+        whiskerprops={"color": "#243b4a", "linewidth": 1.0},
+        capprops={"color": "#243b4a", "linewidth": 1.0},
+    )
+
+    rng = np.random.default_rng(7)
+    for position, group_values in enumerate(values, start=1):
+        jitter = rng.normal(0, 0.035, len(group_values))
+        ax.scatter(
+            group_values,
+            np.full(len(group_values), position) + jitter,
+            s=16,
+            color="#1f2d3a",
+            alpha=0.65,
+            linewidths=0,
+        )
+
+    ax.set_yticks(range(1, len(labels) + 1))
+    ax.set_yticklabels(labels, fontsize=8.5)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    ax.grid(axis="x", alpha=0.25)
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+    return path
+
+
+def plot_overall_accuracy_distribution(rows: list[dict[str, Any]], path: Path) -> Path | None:
+    accuracies = [float(row["analysis_accuracy_percent"]) for row in rows if row.get("analysis_accuracy_percent") is not None]
+    if not accuracies:
+        return None
+
+    fig, (ax_hist, ax_box) = plt.subplots(
+        2,
+        1,
+        figsize=(9.5, 6.0),
+        gridspec_kw={"height_ratios": [3.0, 1.0]},
+        sharex=True,
+    )
+    ax_hist.hist(accuracies, bins=np.arange(0, 105, 5), color="#6c8ebf", edgecolor="white")
+    ax_hist.axvline(mean(accuracies), color="#c44e52", linewidth=1.8, label=f"Mean {mean(accuracies):.1f}%")
+    ax_hist.axvline(median(accuracies), color="#2f6f4e", linewidth=1.8, linestyle="--", label=f"Median {median(accuracies):.1f}%")
+    ax_hist.set_ylabel("Submission rows")
+    ax_hist.set_title("Leaderboard submission accuracy distribution")
+    ax_hist.grid(axis="y", alpha=0.25)
+    ax_hist.legend(frameon=False)
+
+    ax_box.violinplot([accuracies], vert=False, showmeans=False, showmedians=False, showextrema=False)
+    ax_box.boxplot([accuracies], vert=False, widths=0.32, showfliers=False)
+    ax_box.set_yticks([])
+    ax_box.set_xlabel("Official leaderboard accuracy (%)")
+    ax_box.grid(axis="x", alpha=0.25)
+
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+    return path
+
+
+def plot_accuracy_ranges(
+    scaffold_groups: list[dict[str, Any]],
+    exploded_model_groups: list[dict[str, Any]],
+    path: Path,
+    limit: int = 15,
+) -> Path | None:
+    scaffold_multi = [row for row in scaffold_groups if (row.get("distinct_model_count") or 0) > 1][:limit]
+    model_multi = [row for row in exploded_model_groups if (row.get("distinct_scaffold_count") or 0) > 1][:limit]
+    if not scaffold_multi and not model_multi:
+        return None
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, 6.4), sharex=True)
+    panels = [
+        (axes[0], scaffold_multi, "scaffold", "Top same-scaffold ranges"),
+        (axes[1], model_multi, "model_component", "Top model-component ranges"),
+    ]
+    for ax, rows, key, title in panels:
+        labels = [str(row.get(key, "")) for row in rows][::-1]
+        ranges = [float(row.get("accuracy_range_percent") or 0.0) for row in rows][::-1]
+        counts = [int(row.get("row_count") or 0) for row in rows][::-1]
+        y = np.arange(len(labels))
+        ax.barh(y, ranges, color="#8f7ab8")
+        ax.set_yticks(y)
+        ax.set_yticklabels([f"{label} (n={count})" for label, count in zip(labels, counts)], fontsize=8)
+        ax.set_title(title)
+        ax.set_xlabel("Accuracy range (percentage points)")
+        ax.grid(axis="x", alpha=0.25)
+    fig.suptitle("Largest within-label leaderboard accuracy spreads", y=0.995)
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+    return path
+
+
+def plot_leaderboard_figures(
+    rows: list[dict[str, Any]],
+    scaffold_groups: list[dict[str, Any]],
+    exploded_rows: list[dict[str, Any]],
+    exploded_model_groups: list[dict[str, Any]],
+    figures_dir: Path,
+) -> list[Path]:
+    figures: list[Path] = []
+
+    overall = plot_overall_accuracy_distribution(rows, figures_dir / "leaderboard_accuracy_distribution.png")
+    if overall is not None:
+        figures.append(overall)
+
+    scaffold_values = grouped_accuracy_values(rows, "scaffold", scaffold_groups, limit=20)
+    scaffold_plot = plot_violin_box(
+        scaffold_values,
+        "Leaderboard accuracy by scaffold",
+        "Official leaderboard accuracy (%)",
+        figures_dir / "leaderboard_accuracy_by_scaffold.png",
+    )
+    if scaffold_plot is not None:
+        figures.append(scaffold_plot)
+
+    model_values = grouped_accuracy_values(exploded_rows, "model_component", exploded_model_groups, limit=20)
+    model_plot = plot_violin_box(
+        model_values,
+        "Leaderboard accuracy by model component",
+        "Official leaderboard accuracy (%)",
+        figures_dir / "leaderboard_accuracy_by_model_component.png",
+    )
+    if model_plot is not None:
+        figures.append(model_plot)
+
+    range_plot = plot_accuracy_ranges(
+        scaffold_groups,
+        exploded_model_groups,
+        figures_dir / "leaderboard_largest_accuracy_ranges.png",
+    )
+    if range_plot is not None:
+        figures.append(range_plot)
+
+    return figures
 
 
 def markdown_table(rows: list[dict[str, Any]], columns: list[tuple[str, str]], limit: int) -> str:
@@ -446,9 +544,9 @@ def write_report(
     scaffold_groups: list[dict[str, Any]],
     model_groups: list[dict[str, Any]],
     exploded_model_groups: list[dict[str, Any]],
-    scaffold_efficiency: list[dict[str, Any]],
-    model_component_efficiency: list[dict[str, Any]],
     decomposition: dict[str, Any],
+    figures: list[Path],
+    out_dir: Path,
 ) -> None:
     accuracies = [float(row["analysis_accuracy_percent"]) for row in rows if row.get("analysis_accuracy_percent") is not None]
     variances = [float(row["analysis_task_rate_variance"]) for row in rows if row.get("analysis_task_rate_variance") is not None]
@@ -460,49 +558,20 @@ def write_report(
     accuracy_summary = numeric_summary(accuracies)
     variance_summary = numeric_summary(variances)
     pm_summary = numeric_summary(pms)
-    official_by_scaffold = {row.get("scaffold"): row for row in scaffold_groups}
-    scaffold_resource_rows: list[dict[str, Any]] = []
-    for row in scaffold_efficiency:
-        official = official_by_scaffold.get(row.get("scaffold"))
-        if not official:
-            continue
-        scaffold_resource_rows.append({
-            "scaffold": row.get("scaffold"),
-            "best_rank": official.get("best_rank"),
-            "best_accuracy_percent": official.get("best_accuracy_percent"),
-            "mean_accuracy_percent": official.get("mean_accuracy_percent"),
-            "official_row_count": official.get("row_count"),
-            "trajectory_count": row.get("trajectory_count"),
-            "median_total_tokens": row.get("median_total_tokens"),
-            "median_duration_seconds": row.get("median_duration_seconds"),
-            "median_cost_usd": row.get("median_cost_usd"),
-        })
-    scaffold_resource_rows.sort(key=lambda row: row.get("best_accuracy_percent") or -1, reverse=True)
-
-    official_by_model_component = {row.get("model_component"): row for row in exploded_model_groups}
-    model_component_resource_rows: list[dict[str, Any]] = []
-    for row in model_component_efficiency:
-        official = official_by_model_component.get(row.get("model_component"))
-        if not official:
-            continue
-        model_component_resource_rows.append({
-            "model_component": row.get("model_component"),
-            "best_accuracy_percent": official.get("best_accuracy_percent"),
-            "mean_accuracy_percent": official.get("mean_accuracy_percent"),
-            "official_row_count": official.get("row_count"),
-            "trajectory_count": row.get("trajectory_count"),
-            "median_total_tokens": row.get("median_total_tokens"),
-            "median_duration_seconds": row.get("median_duration_seconds"),
-            "median_cost_usd": row.get("median_cost_usd"),
-        })
-    model_component_resource_rows.sort(key=lambda row: row.get("best_accuracy_percent") or -1, reverse=True)
+    figure_lines: list[str] = []
+    for figure in figures:
+        figure_lines.extend(
+            [
+                f"![{figure_caption(figure)}]({markdown_link_path(figure, path)})",
+                "",
+            ]
+        )
 
     lines = [
         "# Superficial Terminal-Bench Leaderboard Analysis",
         "",
         "This report uses the current leaderboard snapshot and stays at submission-row level. "
-        "Accuracy and +/- use scraped official leaderboard fields. "
-        "Local trajectory rows are used only for coverage and resource summaries, not for recalculating leaderboard accuracy.",
+        "Accuracy and +/- use scraped official leaderboard fields.",
         "",
         "## Overall Submission-Level Picture",
         "",
@@ -528,6 +597,11 @@ def write_report(
         "This view is useful for spotting mixed-model or ensemble rows that would otherwise hide under a combined label.",
         "- The eta-squared values below are descriptive only. They are inflated when many groups have one or two rows, so they should guide where to inspect next rather than settle the scaffold-vs-model question.",
         "",
+        "## Visual Diagnostics",
+        "",
+        "These figures are intended as a first-pass visualization of the leaderboard rows. Violin widths show the distribution shape, box plots show the median and interquartile range, and individual dots show the actual submission rows.",
+        "",
+        *figure_lines,
         "## Top Rows by Accuracy",
         "",
         markdown_table(
@@ -611,56 +685,12 @@ def write_report(
         f"- Exact model label eta-squared: {fmt_num(decomposition['leaderboard_model']['eta_squared'], 3)} across {decomposition['leaderboard_model']['groups']} model groups.",
         f"- Exploded model component eta-squared: {fmt_num(decomposition['model_component']['eta_squared'], 3)} across {decomposition['model_component']['groups']} model-component groups.",
         "",
-        "## Trajectory Resource Efficiency",
-        "",
-        "The companion efficiency files use local trajectory rows from the trajectory summary, not the full leaderboard. "
-        "The tables below use scraped leaderboard accuracy for performance columns and local trajectories only for coverage/resource columns.",
-        "",
-        "For model components, multi-model rows are duplicated across components and are not credit-apportioned. "
-        "Component-level token, duration, and cost metrics should be read as association or presence metrics: submissions involving this model component had this resource profile.",
-        "",
-        "Sampled scaffolds with official leaderboard accuracy and local resource coverage:",
-        "",
-        markdown_table(
-            scaffold_resource_rows,
-            [
-                ("scaffold", "Scaffold"),
-                ("best_rank", "Best official rank"),
-                ("best_accuracy_percent", "Best official accuracy"),
-                ("mean_accuracy_percent", "Mean official accuracy"),
-                ("official_row_count", "Official rows"),
-                ("trajectory_count", "Local trajectories"),
-                ("median_total_tokens", "Median tokens"),
-                ("median_duration_seconds", "Median sec."),
-                ("median_cost_usd", "Median cost"),
-            ],
-            12,
-        ),
-        "",
-        "Sampled model components with official leaderboard accuracy and local resource coverage:",
-        "",
-        markdown_table(
-            model_component_resource_rows,
-            [
-                ("model_component", "Model component"),
-                ("best_accuracy_percent", "Best official accuracy"),
-                ("mean_accuracy_percent", "Mean official accuracy"),
-                ("official_row_count", "Official rows"),
-                ("trajectory_count", "Local trajectories"),
-                ("median_total_tokens", "Median tokens"),
-                ("median_duration_seconds", "Median sec."),
-                ("median_cost_usd", "Median cost"),
-            ],
-            12,
-        ),
-        "",
         "## Generated Artifacts",
         "",
-        "- `data/processed/leaderboard_scaffold_variance.csv`",
-        "- `data/processed/leaderboard_model_variance.csv`",
-        "- `data/processed/leaderboard_model_component_variance.csv`",
-        "- `data/processed/trajectory_scaffold_efficiency.csv`",
-        "- `data/processed/trajectory_model_component_efficiency.csv`",
+        f"- `{relative_path(out_dir / 'leaderboard_scaffold_variance.csv')}`",
+        f"- `{relative_path(out_dir / 'leaderboard_model_variance.csv')}`",
+        f"- `{relative_path(out_dir / 'leaderboard_model_component_variance.csv')}`",
+        *[f"- `{relative_path(figure)}`" for figure in figures],
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -668,23 +698,20 @@ def write_report(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, default=INPUT_DEFAULT)
-    parser.add_argument("--trajectory-summary", type=Path, default=TRAJECTORY_SUMMARY_DEFAULT)
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
     parser.add_argument("--report", type=Path, default=REPORT_DEFAULT)
+    parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
     args = parser.parse_args()
 
     rows = load_rows(args.input)
-    trajectory_rows = load_trajectory_rows(args.trajectory_summary)
     args.out.mkdir(parents=True, exist_ok=True)
     args.report.parent.mkdir(parents=True, exist_ok=True)
+    args.figures_dir.mkdir(parents=True, exist_ok=True)
 
     scaffold_groups = group_rows(rows, "scaffold")
     model_groups = group_rows(rows, "leaderboard_model")
     exploded_rows = exploded_model_rows(rows)
     exploded_model_groups = group_rows(exploded_rows, "model_component")
-    scaffold_efficiency = efficiency_rows(trajectory_rows, "scaffold")
-    trajectory_component_rows = exploded_trajectory_model_component_rows(trajectory_rows)
-    model_component_efficiency = efficiency_rows(trajectory_component_rows, "model_component")
     decomposition = {
         "scaffold": one_way_eta_squared(rows, "scaffold"),
         "leaderboard_model": one_way_eta_squared(rows, "leaderboard_model"),
@@ -694,8 +721,14 @@ def main() -> None:
     write_csv(args.out / "leaderboard_scaffold_variance.csv", scaffold_groups)
     write_csv(args.out / "leaderboard_model_variance.csv", model_groups)
     write_csv(args.out / "leaderboard_model_component_variance.csv", exploded_model_groups)
-    write_csv(args.out / "trajectory_scaffold_efficiency.csv", scaffold_efficiency)
-    write_csv(args.out / "trajectory_model_component_efficiency.csv", model_component_efficiency)
+
+    figures = plot_leaderboard_figures(
+        rows,
+        scaffold_groups,
+        exploded_rows,
+        exploded_model_groups,
+        args.figures_dir,
+    )
 
     write_report(
         args.report,
@@ -703,9 +736,9 @@ def main() -> None:
         scaffold_groups,
         model_groups,
         exploded_model_groups,
-        scaffold_efficiency,
-        model_component_efficiency,
         decomposition,
+        figures,
+        args.out,
     )
 
 
