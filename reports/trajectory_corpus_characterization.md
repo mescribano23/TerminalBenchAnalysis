@@ -266,7 +266,7 @@ Recommended pilot sampling strategy:
 - Stratify by scaffold, reward outcome, and coarse task-family hint.
 - Oversample smaller high-performing scaffolds such as `judy`, `nexau`, `terminus-kira-env-bootstrap`, `terminus-3-3`, `deepagent-harbor`, and `hookele` so their workflows are not drowned out by `terminus-2`, `mini-swe-agent`, and `openhands`.
 - Include long-tail failures from the upper step/token/duration quantiles because they likely contain the richest recovery, debugging, and loop-collapse behavior.
-- Include a separate ambiguity-enriched slice from `data/processed_live/representative_snippets.jsonl` and repeated-command cases.
+- Include repeated-command cases from the command-pattern outputs.
 
 Do not use leaderboard aggregate accuracy as a trajectory pass/fail label. Use `reward_outcome` from `data/indexes/trajectory_trials_current.json` for per-run success/failure and treat leaderboard accuracy or task resolution rate as aggregate covariates.
 

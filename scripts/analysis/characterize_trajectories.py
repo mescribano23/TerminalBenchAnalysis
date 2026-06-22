@@ -6,7 +6,6 @@ Outputs:
 - data/processed/leaderboard_submission_summary.csv
 - data/processed/corpus_stats.json
 - data/processed/command_patterns.csv
-- data/processed/representative_snippets.jsonl
 """
 
 from __future__ import annotations
@@ -521,34 +520,6 @@ def quote_snippet(text: str, limit: int = 480) -> str:
     return clean[: limit - 3] + "..."
 
 
-def phase_candidates(step: dict[str, Any], command: str, purpose: str, idx: int, n: int) -> list[str]:
-    text = f"{step.get('message','')}\n{step.get('reasoning_content','')}\n{command}"
-    low = text.lower()
-    phases: list[str] = []
-    if idx <= 2 and ("please solve" in low or "need to" in low or "understand" in low):
-        phases.append("task_understanding")
-    if purpose == "environment_inspection":
-        phases.append("environment_exploration")
-    if purpose in {"file_content_search", "reading_files"} and idx < max(3, n * 0.55):
-        phases.append("problem_localization")
-    if re.search(r"\b(plan|approach|steps|i will|need to)\b", low):
-        phases.append("planning")
-    if purpose == "editing_writing_files":
-        phases.append("implementation_intervention")
-    if purpose == "running_scripts_tests":
-        phases.append("execution_testing")
-    obs = extract_observation_text(step).lower()
-    if any(s in obs for s in ("error", "failed", "traceback", "assert", "exception", "warning")):
-        phases.append("feedback_interpretation")
-    if idx > 2 and purpose in {"editing_writing_files", "running_scripts_tests"} and any(s in low for s in ("fix", "again", "retry", "failed", "error")):
-        phases.append("iterative_repair")
-    if purpose == "final_verification" or idx >= max(1, math.floor(n * 0.8)) and purpose in {"running_scripts_tests", "reading_files"}:
-        phases.append("verification_finalization")
-    if any(s in low for s in ("complete_task_and_submit_final_output", "submit", "bookkeeping", "format")):
-        phases.append("orchestration_bookkeeping")
-    return phases
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, default=ROOT_DEFAULT)
@@ -639,9 +610,6 @@ def main() -> None:
     purpose_counter = Counter()
     purpose_by_scaffold = defaultdict(Counter)
     missing = Counter()
-    command_records: list[dict[str, Any]] = []
-    snippets_by_phase: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    ambiguous: list[dict[str, Any]] = []
     schema_examples: dict[str, str] = {}
 
     for path in paths:
@@ -703,7 +671,6 @@ def main() -> None:
         source_counts = Counter()
         final_message = ""
         has_final_marker = False
-        file_command_heads = Counter()
 
         if not steps:
             missing["steps"] += 1
@@ -755,71 +722,8 @@ def main() -> None:
                 cmd_lines = cmd.strip().splitlines()
                 command_counter[(cmd_lines[0] if cmd_lines else "<blank>")[:240]] += 1
                 command_head_counter[head] += 1
-                if head:
-                    file_command_heads[head] += 1
                 purpose_counter[purpose] += 1
                 purpose_by_scaffold[scaffold][purpose] += 1
-                command_records.append({
-                    "path": display_path(path),
-                    "rel_path": str(rel),
-                    "scaffold": scaffold,
-                    "model_dir": model_dir,
-                    "agent_name": agent_name,
-                    "model_name": model_name,
-                    "task_id": task_id,
-                    "outcome": outcome,
-                    "reward": reward,
-                    "reward_outcome": outcome_from_reward,
-                    "trajectory_json_outcome": trajectory_json_outcome,
-                    "step_id": raw_step.get("step_id", idx),
-                    "step_index": idx,
-                    "source": raw_step.get("source", ""),
-                    "tool": tool,
-                    "command_head": head,
-                    "purpose_candidate": purpose,
-                    "command": cmd[:2000],
-                    "message_snippet": quote_snippet(reasoning or msg, 360),
-                    "observation_snippet": quote_snippet(obs_text, 360),
-                })
-                for phase in phase_candidates(raw_step, cmd, purpose, idx, len(steps)):
-                    if len(snippets_by_phase[phase]) < 8:
-                        snippets_by_phase[phase].append(command_records[-1])
-
-            # Ambiguity probes.
-            if step_commands:
-                cmd_text = "\n".join(cmd for _, cmd in step_commands)
-                msg_low = (msg + "\n" + reasoning).lower()
-                obs_low = obs_text.lower()
-                purpose = classify_command(cmd_text, idx, len(steps))
-                if purpose in {"reading_files", "running_scripts_tests"} and idx >= max(1, math.floor(len(steps) * 0.75)):
-                    ambiguous.append({
-                        "type": "late_read_or_test_could_be_verification_or_diagnosis",
-                        "rel_path": str(rel),
-                        "step_index": idx,
-                        "command": cmd_text[:1000],
-                        "message_snippet": quote_snippet(reasoning or msg, 360),
-                        "observation_snippet": quote_snippet(obs_text, 360),
-                    })
-                if purpose == "dependency_setup" and ("error" in msg_low or "failed" in msg_low or "not found" in obs_low):
-                    ambiguous.append({
-                        "type": "dependency_install_setup_or_repair",
-                        "rel_path": str(rel),
-                        "step_index": idx,
-                        "command": cmd_text[:1000],
-                        "message_snippet": quote_snippet(reasoning or msg, 360),
-                        "observation_snippet": quote_snippet(obs_text, 360),
-                    })
-
-        repeated_heads = [head for head, count in file_command_heads.items() if count >= 4 and head]
-        if repeated_heads:
-            ambiguous.append({
-                "type": "repeated_command_head_confirmation_or_blind_retry",
-                "rel_path": str(rel),
-                "step_index": "",
-                "command": ", ".join(repeated_heads[:8]),
-                "message_snippet": "",
-                "observation_snippet": "",
-            })
 
         row = {
             "path": display_path(path),
@@ -940,18 +844,6 @@ def main() -> None:
                 "example_command": example,
             })
             rank += 1
-
-    selected_snippets: list[dict[str, Any]] = []
-    for phase, examples in snippets_by_phase.items():
-        for ex in examples[:3]:
-            item = dict(ex)
-            item["phase_candidate"] = phase
-            selected_snippets.append(item)
-    for item in ambiguous[:30]:
-        selected_snippets.append({"phase_candidate": "ambiguous_case", **item})
-    with (out / "representative_snippets.jsonl").open("w", encoding="utf-8") as f:
-        for item in selected_snippets:
-            f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
     outcome_by_scaffold_model: list[dict[str, Any]] = []
     grouped_rows: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -1116,13 +1008,10 @@ def main() -> None:
         "purpose_counts": purpose_counter.most_common(),
         "purpose_by_scaffold": {k: v.most_common() for k, v in purpose_by_scaffold.items()},
         "task_family_hints": family_counts.most_common(),
-        "ambiguous_case_count": len(ambiguous),
-        "ambiguous_case_examples": ambiguous[:20],
         "artifacts": {
             "trajectory_summary_csv": display_path(out / "trajectory_summary.csv"),
             "leaderboard_submission_summary_csv": display_path(out / "leaderboard_submission_summary.csv"),
             "command_patterns_csv": display_path(out / "command_patterns.csv"),
-            "representative_snippets_jsonl": display_path(out / "representative_snippets.jsonl"),
             "trajectory_outcome_by_scaffold_model_csv": display_path(out / "trajectory_outcome_by_scaffold_model.csv"),
             "trajectory_features_by_outcome_csv": display_path(out / "trajectory_features_by_outcome.csv"),
         },

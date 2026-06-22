@@ -40,8 +40,7 @@ leaderboard submissions and trajectory traces.
 |       |-- leaderboard_model_variance.csv
 |       |-- leaderboard_model_component_variance.csv
 |       |-- corpus_stats.json
-|       |-- command_patterns.csv
-|       `-- representative_snippets.jsonl
+|       `-- command_patterns.csv
 `-- reports/
     |-- leaderboard_superficial_analysis.md
     |-- trajectory_corpus_characterization.md
@@ -201,8 +200,6 @@ manually.
   after splitting comma-separated multi-model rows.
 - `data/processed/corpus_stats.json`: aggregate corpus statistics.
 - `data/processed/command_patterns.csv`: extracted command-pattern counts.
-- `data/processed/representative_snippets.jsonl`: examples for qualitative
-  inspection.
 - `reports/trajectory_corpus_characterization.md`: narrative corpus summary.
 
 ## Loading The Index
