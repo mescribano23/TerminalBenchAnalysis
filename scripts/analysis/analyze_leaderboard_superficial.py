@@ -126,21 +126,6 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def load_accuracy_by_outcome(path: Path) -> list[tuple[str, list[float]]]:
-    if not path.exists():
-        return []
-
-    values: dict[str, list[float]] = {"fail": [], "pass": []}
-    with path.open(newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            outcome = str(row.get("reward_outcome", "")).strip().lower()
-            accuracy = parse_float(row.get("leaderboard_accuracy_percent"))
-            if outcome in values and accuracy is not None:
-                values[outcome].append(accuracy)
-
-    return [(label, items) for label, items in values.items() if items]
-
-
 def group_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -318,102 +303,14 @@ def plot_violin_box(
     return path
 
 
-def plot_accuracy_by_trajectory_outcome(grouped_values: list[tuple[str, list[float]]], path: Path) -> Path | None:
-    if len(grouped_values) < 2:
-        return None
-
-    labels = [f"{label}\n(n={len(values):,})" for label, values in grouped_values]
-    values = [group_values for _, group_values in grouped_values]
-    positions = np.arange(1, len(values) + 1)
-
-    fig, ax = plt.subplots(figsize=(7.2, 5.8))
-    parts = ax.violinplot(values, positions=positions, showmeans=False, showmedians=False, showextrema=False)
-    colors = ["#c97b63", "#6aa57a"]
-    for body, color in zip(parts["bodies"], colors):
-        body.set_facecolor(color)
-        body.set_edgecolor("#2f3337")
-        body.set_alpha(0.48)
-
-    ax.boxplot(
-        values,
-        positions=positions,
-        widths=0.24,
-        patch_artist=True,
-        showfliers=False,
-        boxprops={"facecolor": "#ffffff", "edgecolor": "#243b4a", "linewidth": 1.1},
-        medianprops={"color": "#1f2d3a", "linewidth": 1.8},
-        whiskerprops={"color": "#243b4a", "linewidth": 1.0},
-        capprops={"color": "#243b4a", "linewidth": 1.0},
-    )
-
-    means = [mean(group_values) for group_values in values]
-    ax.scatter(positions, means, marker="D", s=34, color="#111111", zorder=3, label="Mean")
-    ax.set_xticks(positions)
-    ax.set_xticklabels(labels)
-    ax.set_ylim(0, 100)
-    ax.set_ylabel("Official leaderboard accuracy (%)")
-    ax.set_xlabel("Local trajectory outcome")
-    ax.set_title("Leaderboard accuracy distribution by trajectory outcome")
-    ax.grid(axis="y", alpha=0.25)
-    ax.legend(frameon=False, loc="upper left")
-    fig.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=180)
-    plt.close(fig)
-    return path
-
-
-def plot_accuracy_ranges(
-    scaffold_groups: list[dict[str, Any]],
-    exploded_model_groups: list[dict[str, Any]],
-    path: Path,
-    limit: int = 15,
-) -> Path | None:
-    scaffold_multi = [row for row in scaffold_groups if (row.get("distinct_model_count") or 0) > 1][:limit]
-    model_multi = [row for row in exploded_model_groups if (row.get("distinct_scaffold_count") or 0) > 1][:limit]
-    if not scaffold_multi and not model_multi:
-        return None
-
-    fig, axes = plt.subplots(1, 2, figsize=(13.0, 6.4), sharex=True)
-    panels = [
-        (axes[0], scaffold_multi, "scaffold", "Top same-scaffold ranges"),
-        (axes[1], model_multi, "model_component", "Top model-component ranges"),
-    ]
-    for ax, rows, key, title in panels:
-        labels = [str(row.get(key, "")) for row in rows][::-1]
-        ranges = [float(row.get("accuracy_range_percent") or 0.0) for row in rows][::-1]
-        counts = [int(row.get("row_count") or 0) for row in rows][::-1]
-        y = np.arange(len(labels))
-        ax.barh(y, ranges, color="#8f7ab8")
-        ax.set_yticks(y)
-        ax.set_yticklabels([f"{label} (n={count})" for label, count in zip(labels, counts)], fontsize=8)
-        ax.set_title(title)
-        ax.set_xlabel("Accuracy range (percentage points)")
-        ax.grid(axis="x", alpha=0.25)
-    fig.suptitle("Largest within-label leaderboard accuracy spreads", y=0.995)
-    fig.tight_layout()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=180)
-    plt.close(fig)
-    return path
-
-
 def plot_leaderboard_figures(
     rows: list[dict[str, Any]],
     scaffold_groups: list[dict[str, Any]],
     exploded_rows: list[dict[str, Any]],
     exploded_model_groups: list[dict[str, Any]],
-    outcome_accuracy_values: list[tuple[str, list[float]]],
     figures_dir: Path,
 ) -> list[Path]:
     figures: list[Path] = []
-
-    outcome_plot = plot_accuracy_by_trajectory_outcome(
-        outcome_accuracy_values,
-        figures_dir / "leaderboard_accuracy_by_trajectory_outcome.png",
-    )
-    if outcome_plot is not None:
-        figures.append(outcome_plot)
 
     scaffold_values = grouped_accuracy_values(rows, "scaffold", order_groups_by_leaderboard_rank(scaffold_groups), limit=20)
     scaffold_plot = plot_violin_box(
@@ -440,14 +337,6 @@ def plot_leaderboard_figures(
     if model_plot is not None:
         figures.append(model_plot)
 
-    range_plot = plot_accuracy_ranges(
-        scaffold_groups,
-        exploded_model_groups,
-        figures_dir / "leaderboard_largest_accuracy_ranges.png",
-    )
-    if range_plot is not None:
-        figures.append(range_plot)
-
     return figures
 
 
@@ -455,18 +344,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, default=INPUT_DEFAULT)
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
-    parser.add_argument(
-        "--trajectory-input",
-        type=Path,
-        default=None,
-        help="Trajectory summary CSV used for pass/fail split plots. Defaults to trajectory_summary.csv next to --input.",
-    )
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
     args = parser.parse_args()
 
     rows = load_rows(args.input)
-    trajectory_input = args.trajectory_input or args.input.parent / "trajectory_summary.csv"
-    outcome_accuracy_values = load_accuracy_by_outcome(trajectory_input)
     args.out.mkdir(parents=True, exist_ok=True)
     args.figures_dir.mkdir(parents=True, exist_ok=True)
 
@@ -484,7 +365,6 @@ def main() -> None:
         scaffold_groups,
         exploded_rows,
         exploded_model_groups,
-        outcome_accuracy_values,
         args.figures_dir,
     )
 

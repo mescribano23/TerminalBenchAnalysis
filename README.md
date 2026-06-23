@@ -40,7 +40,7 @@ leaderboard submissions and trajectory traces.
 |       `-- command_patterns.csv
 `-- reports/
     |-- general_characteristics/              # Leaderboard characterization figures
-    `-- figures_live/                         # Other generated analysis figures
+    `-- diminishing_returns/                  # Diminishing-returns analysis figures
 ```
 
 Trajectory files are organized as:
@@ -154,8 +154,8 @@ python -m scripts.analysis.analyze_diminishing_returns --by-scaffold
 python -m scripts.analysis.analyze_diminishing_returns --by-model
 ```
 
-These grouped figures are written under `reports/figures/by_scaffold/` and
-`reports/figures/by_model/`.
+These grouped figures are written under `reports/diminishing_returns/by_scaffold/`
+and `reports/diminishing_returns/by_model/`.
 
 ## Main Outputs
 
