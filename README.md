@@ -10,11 +10,13 @@ leaderboard submissions and trajectory traces.
 |-- scripts/
 |   |-- mining/
 |   |   |-- scrape_tbench_leaderboard.py     # Scrape leaderboard and download trajectories
+|   |   |-- scrape_tbench_benchmarks.py      # Scrape benchmark task metadata from tbench.ai
 |   |   |-- sampling_strategies.py           # Submission sampling strategies
 |   |   `-- build_trajectory_index.py        # Trajectory index loading/checkpointing
 |   `-- analysis/
 |       |-- characterize_trajectories.py     # Build trajectory/corpus summary tables
 |       |-- analyze_leaderboard_superficial.py
+|       |-- analyze_task_domains.py          # Task-category summaries and figures
 |       `-- analyze_diminishing_returns.py
 |-- data/
 |   |-- raw/
@@ -27,9 +29,10 @@ leaderboard submissions and trajectory traces.
 |   |-- trajectories/
 |   |   |-- current_leaderboard/              # Current downloaded trajectory JSON files
 |   |   `-- balanced_12/                     # Historical balanced trajectory sample
-|   `-- processed/
+|   `-- processed_live/
 |       |-- trajectory_summary.csv           # One row per local trajectory
 |       |-- trajectory_features_by_outcome.csv
+|       |-- task_mining/                     # Task-domain/category analysis tables
 |       |-- diminishing_returns_effort_bins.csv
 |       |-- diminishing_returns_variable_coverage.csv
 |       |-- leaderboard_submission_summary.csv
@@ -40,6 +43,7 @@ leaderboard submissions and trajectory traces.
 |       `-- command_patterns.csv
 `-- reports/
     |-- general_characteristics/              # Leaderboard characterization figures
+    |-- category_analysis/                    # Task-domain/category analysis figures
     `-- diminishing_returns/                  # Diminishing-returns analysis figures
 ```
 
@@ -70,7 +74,7 @@ The collection script uses Python, `requests`, and `beautifulsoup4`.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install requests beautifulsoup4
+python -m pip install requests beautifulsoup4 pandas numpy matplotlib
 ```
 
 Run commands from the repository root:
@@ -86,6 +90,22 @@ Refresh leaderboard metadata:
 ```powershell
 python -m scripts.mining.scrape_tbench_leaderboard
 ```
+
+Scrape Terminal-Bench 2.0 task metadata from the benchmark page:
+
+```powershell
+python -m scripts.mining.scrape_tbench_benchmarks
+```
+
+This generates:
+
+- `data/raw/terminal_bench_2_tasks_current.json`
+- `data/processed_live/task_mining/terminal_bench_2_tasks_current.csv`
+
+Each record includes the task `id`, `category`, `difficulty`, full task
+`description`, and `tags`. The script reads the live page at
+`https://www.tbench.ai/benchmarks/terminal-bench-2` and resolves the embedded
+Next.js payload before writing the outputs.
 
 Refresh only the official leaderboard row metrics, without re-fetching every
 submission task page:
@@ -141,6 +161,17 @@ python -m scripts.analysis.analyze_leaderboard_superficial
 This also writes first-pass leaderboard characterization figures under
 `reports/general_characteristics/`.
 
+Regenerate task-domain/category CSVs and figures:
+
+```powershell
+python -m scripts.analysis.analyze_task_domains
+```
+
+This reads `data/processed_live/trajectory_summary.csv` and
+`data/raw/terminal_bench_2_tasks_current.json`, then writes category summaries
+under `data/processed_live/task_mining/` and figures under
+`reports/category_analysis/`.
+
 Regenerate the diminishing-returns CSVs and figures:
 
 ```powershell
@@ -159,33 +190,74 @@ and `reports/diminishing_returns/by_model/`.
 
 ## Main Outputs
 
-- `data/processed/trajectory_summary.csv`: one row per local trajectory with
+Created by `python -m scripts.analysis.characterize_trajectories`:
+
+- `data/processed_live/trajectory_summary.csv`: one row per local trajectory with
   scaffold/model/task metadata, reward-backed pass/fail labels, step counts,
   command counts, token/cost fields, and joined leaderboard metadata.
-- `data/processed/trajectory_features_by_outcome.csv`: passed-vs-failed
+- `data/processed_live/trajectory_features_by_outcome.csv`: passed-vs-failed
   trajectory summaries for length, commands, tool calls, tokens, cost, and
   duration.
-- `data/processed/diminishing_returns_effort_bins.csv`: trajectory success rates
-  with Wilson confidence intervals across effort bins for steps,
-  scaffold-normalized steps, commands, tool calls, tokens, duration, and positive
-  reported cost.
-- `data/processed/diminishing_returns_variable_coverage.csv`: complete-case,
-  positive, zero, and distribution coverage for each effort variable, including
-  the positive-cost subset.
-- `data/processed/leaderboard_submission_summary.csv`: one row per leaderboard
-  submission with official scraped accuracy/error fields and separate computed
-  task-level metrics.
-- `data/processed/leaderboard_scaffold_variance.csv`: same-scaffold,
+- `data/processed_live/corpus_stats.json`: aggregate corpus statistics.
+- `data/processed_live/command_patterns.csv`: extracted command-pattern counts.
+
+Created by `python -m scripts.analysis.analyze_leaderboard_superficial`:
+
+- `data/processed_live/leaderboard_submission_summary.csv`: one row per
+  leaderboard submission with official scraped accuracy/error fields and
+  separate computed task-level metrics.
+- `data/processed_live/leaderboard_scaffold_variance.csv`: same-scaffold,
   different-model comparisons.
-- `data/processed/leaderboard_model_variance.csv`: same-model,
+- `data/processed_live/leaderboard_model_variance.csv`: same-model,
   different-scaffold comparisons.
-- `data/processed/leaderboard_model_component_variance.csv`: model comparison
-  after splitting comma-separated multi-model rows.
+- `data/processed_live/leaderboard_model_component_variance.csv`: model
+  comparison after splitting comma-separated multi-model rows.
 - `reports/general_characteristics/`: first-pass live leaderboard visualizations,
   including accuracy distribution, scaffold/model-component violin-box plots,
   and largest within-label accuracy ranges.
-- `data/processed/corpus_stats.json`: aggregate corpus statistics.
-- `data/processed/command_patterns.csv`: extracted command-pattern counts.
+
+Created by `python -m scripts.mining.scrape_tbench_benchmarks`:
+
+- `data/raw/terminal_bench_2_tasks_current.json`: canonical scraped
+  Terminal-Bench 2.0 task metadata used by the task-domain analysis.
+- `data/processed_live/task_mining/terminal_bench_2_tasks_current.csv`: CSV
+  export of the same task metadata, with task `id`, `category`, `difficulty`,
+  `description`, and `tags`.
+
+Created by `python -m scripts.analysis.analyze_task_domains`:
+
+- `data/processed_live/task_mining/task_domain_outcome.csv`: one row per task
+  category with task counts, trajectory counts, pass/fail counts,
+  trajectory-weighted pass rate, and task-weighted pass rate.
+- `data/processed_live/task_mining/task_domain_effort_summary.csv`: one row per
+  task category and effort variable with median, mean, p75, p90, and max effort
+  values. The `reports/category_analysis/effort_vars/` figures plot medians.
+- `data/processed_live/task_mining/model_scaffold/model_category_pass_rates.csv`:
+  category pass rates grouped by model.
+- `data/processed_live/task_mining/model_scaffold/scaffold_category_pass_rates.csv`:
+  category pass rates grouped by scaffold. The stacked scaffold composition
+  figure derives category shares from this table.
+- `data/processed_live/task_mining/model_scaffold/provider_category_pass_rates.csv`:
+  category pass rates grouped by model provider.
+- `data/processed_live/task_mining/model_scaffold/source_category_pass_rates.csv`:
+  category pass rates grouped by open/closed source classification.
+- `reports/category_analysis/`: task-domain figures, including task-weighted
+  success, pass/fail counts, task coverage, effort-variable median plots, model
+  and scaffold category heatmaps, provider/source heatmaps, and scaffold
+  category composition.
+
+Created by `python -m scripts.analysis.analyze_diminishing_returns`:
+
+- `data/processed_live/diminishing_returns_effort_bins.csv`: trajectory success
+  rates with Wilson confidence intervals across effort bins for steps,
+  scaffold-normalized steps, commands, tool calls, tokens, duration, and positive
+  reported cost.
+- `data/processed_live/diminishing_returns_variable_coverage.csv`:
+  complete-case, positive, zero, and distribution coverage for each effort
+  variable, including the positive-cost subset.
+- `reports/diminishing_returns/`: pass-rate figures by effort bin. With
+  `--by-scaffold` and `--by-model`, this also writes grouped scaffold, model,
+  provider, and provider-facetted heatmaps.
 
 ## Loading The Index
 

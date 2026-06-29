@@ -10,6 +10,8 @@ Outputs:
 - reports/diminishing_returns/by_outcome/stacked/diminishing_returns_outcome_stacked_*.png
 - optional reports/diminishing_returns/by_scaffold/diminishing_returns_*.png heatmaps
 - optional reports/diminishing_returns/by_model/diminishing_returns_*.png heatmaps
+- optional reports/diminishing_returns/by_model/by_provider/diminishing_returns_*.png provider heatmaps
+- optional reports/diminishing_returns/by_model/by_provider_facetted/diminishing_returns_*.png model heatmaps facetted by provider
 """
 
 from __future__ import annotations
@@ -263,7 +265,7 @@ def is_open_source_model(row: pd.Series) -> bool:
 def plot_model_provider_heatmaps(
     df: pd.DataFrame,
     figures_dir: Path,
-    output_name: str = "by_provider",
+    output_name: str = "by_provider_facetted",
     title_suffix: str = "",
 ) -> list[Path]:
     if "leaderboard_model_organization" not in df.columns:
@@ -371,6 +373,32 @@ def plot_model_provider_heatmaps(
             colorbar = fig.colorbar(image, cax=colorbar_ax)
             colorbar.set_label("Success rate")
 
+        path = output_dir / f"diminishing_returns_{variable}.png"
+        fig.savefig(path, dpi=180)
+        plt.close(fig)
+        paths.append(path)
+
+    return paths
+
+
+def plot_provider_heatmaps(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
+    if "leaderboard_model_organization" not in df.columns:
+        return []
+
+    output_dir = figures_dir / "by_model" / "by_provider"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    provider_bins = build_effort_bins(df, group_column="leaderboard_model_organization")
+
+    for variable in EFFORT_VARIABLES:
+        subset = provider_bins[(provider_bins["variable"] == variable) & (provider_bins["n"] > 0)].sort_values(
+            "bin_order"
+        )
+        if subset.empty:
+            continue
+
+        fig = plot_grouped_heatmap(subset, variable, "provider")
+        fig.tight_layout()
         path = output_dir / f"diminishing_returns_{variable}.png"
         fig.savefig(path, dpi=180)
         plt.close(fig)
@@ -745,6 +773,7 @@ def main() -> None:
     if args.by_model:
         model_bins = build_effort_bins(df, group_column="model_dir")
         grouped_figures.extend(plot_effort_bins(model_bins, args.figures_dir, "model_dir"))
+        grouped_figures.extend(plot_provider_heatmaps(df, args.figures_dir))
         grouped_figures.extend(plot_model_provider_heatmaps(df, args.figures_dir))
         grouped_figures.extend(plot_model_provider_source_heatmaps(df, args.figures_dir))
 
