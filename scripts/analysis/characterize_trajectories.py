@@ -596,21 +596,17 @@ def main() -> None:
     leaderboard_success_total = sum(int(item.get("successCount") or 0) for item in leaderboard_cells)
     leaderboard_trial_total = sum(int(item.get("nTrials") or 0) for item in leaderboard_cells)
     rows: list[dict[str, Any]] = []
-    all_key_paths = Counter()
-    top_keys = Counter()
-    agent_names = Counter()
     model_names = Counter()
     scaffolds = Counter()
     scaffold_models = Counter()
-    original_formats = Counter()
     outcomes = Counter()
-    task_ids = Counter()
-    command_counter = Counter()
+    file_task_ids = Counter()
+    task_names = Counter()
     command_head_counter = Counter()
+    command_head_examples: dict[str, str] = {}
     purpose_counter = Counter()
     purpose_by_scaffold = defaultdict(Counter)
     missing = Counter()
-    schema_examples: dict[str, str] = {}
 
     for path in paths:
         try:
@@ -674,10 +670,6 @@ def main() -> None:
 
         if not steps:
             missing["steps"] += 1
-        for key in data.keys():
-            top_keys[key] += 1
-        for kp in collect_key_paths(data, max_depth=4):
-            all_key_paths[kp] += 1
 
         for idx, raw_step in enumerate(steps, start=1):
             if not isinstance(raw_step, dict):
@@ -719,9 +711,10 @@ def main() -> None:
                 command_count += 1
                 purpose = classify_command(cmd, idx, len(steps))
                 head = shell_head(cmd)
-                cmd_lines = cmd.strip().splitlines()
-                command_counter[(cmd_lines[0] if cmd_lines else "<blank>")[:240]] += 1
                 command_head_counter[head] += 1
+                if head not in command_head_examples:
+                    cmd_lines = cmd.strip().splitlines()
+                    command_head_examples[head] = (cmd_lines[0] if cmd_lines else "<blank>")[:240]
                 purpose_counter[purpose] += 1
                 purpose_by_scaffold[scaffold][purpose] += 1
 
@@ -789,15 +782,13 @@ def main() -> None:
             if "total_cost_usd" in final_metrics:
                 row["cost_usd"] = final_metrics.get("total_cost_usd", row["cost_usd"])
         rows.append(row)
-        agent_names[agent_name] += 1
         model_names[model_name] += 1
         scaffolds[scaffold] += 1
         scaffold_models[f"{scaffold}/{model_dir}"] += 1
-        original_formats[original_format] += 1
         outcomes[outcome] += 1
-        task_ids[task_id] += 1
-        if original_format and original_format not in schema_examples:
-            schema_examples[original_format] = str(rel)
+        file_task_ids[file_task_id] += 1
+        if task_name:
+            task_names[task_name] += 1
 
     csv_fields = [
         "rel_path", "path", "file_size_bytes", "schema_version", "session_id", "scaffold", "model_dir",
@@ -830,17 +821,16 @@ def main() -> None:
         writer.writerows(leaderboard_submissions)
 
     with (out / "command_patterns.csv").open("w", newline="", encoding="utf-8") as f:
-        fields = ["rank", "count", "command_head", "purpose_candidate", "example_command"]
+        fields = ["rank", "count", "command_head", "example_command"]
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         rank = 1
-        for example, count in command_counter.most_common(300):
-            purpose = classify_command(example, 0, 0)
+        for head, count in command_head_counter.most_common(300):
+            example = command_head_examples.get(head, head)
             writer.writerow({
                 "rank": rank,
                 "count": count,
-                "command_head": shell_head(example),
-                "purpose_candidate": purpose,
+                "command_head": head,
                 "example_command": example,
             })
             rank += 1
@@ -880,100 +870,66 @@ def main() -> None:
     tokens = [float(r["total_tokens"]) for r in rows if r.get("total_tokens") not in {"", None}]
     durations = [float(r["duration_seconds_from_timestamps"]) for r in rows if r.get("duration_seconds_from_timestamps") not in {"", None}]
     leaderboard_rates = [float(r["leaderboard_avg_resolution_rate"]) for r in rows if r.get("leaderboard_avg_resolution_rate") not in {"", None}]
-    submission_accuracies = [
-        float(s["computed_submission_accuracy"])
-        for s in leaderboard_submissions
-        if s.get("computed_submission_accuracy") not in {"", None}
-    ]
     leaderboard_accuracies = [
         float(s["leaderboard_accuracy"])
         for s in leaderboard_submissions
         if s.get("leaderboard_accuracy") not in {"", None}
     ]
-    leaderboard_accuracy_pms = [
-        float(s["leaderboard_accuracy_ci95_pm_percent"])
-        for s in leaderboard_submissions
-        if s.get("leaderboard_accuracy_ci95_pm_percent") not in {"", None}
-    ]
-    submission_accuracy_pms = [
-        float(s["computed_submission_accuracy_pm_percent"])
-        for s in leaderboard_submissions
-        if s.get("computed_submission_accuracy_pm_percent") not in {"", None}
-    ]
-    submission_task_rate_variances = [
-        float(s["computed_submission_task_rate_variance"])
-        for s in leaderboard_submissions
-        if s.get("computed_submission_task_rate_variance") not in {"", None}
-    ]
     reward_values = [parse_float(r.get("reward")) for r in rows]
     reward_values = [value for value in reward_values if value is not None]
     reward_outcome_counts = Counter(str(r.get("reward_outcome", "")) for r in rows)
 
-    # Coarse task-family hints from task ids and user prompt text.
-    family_patterns = {
-        "polyglot/compiler": re.compile(r"\b(polyglot|rustc|g\+\+|gcc|compiler|compile)\b", re.I),
-        "python/data": re.compile(r"\b(python|pandas|numpy|csv|json|parquet|dataframe)\b", re.I),
-        "web/api": re.compile(r"\b(http|api|server|flask|fastapi|express|request|curl)\b", re.I),
-        "shell/filesystem": re.compile(r"\b(bash|shell|file|directory|path|chmod|tar|grep|sed|awk)\b", re.I),
-        "ml/math": re.compile(r"\b(model|tensor|torch|sklearn|matrix|fibonacci|algorithm|numeric)\b", re.I),
-        "database": re.compile(r"\b(sql|sqlite|postgres|database|query)\b", re.I),
-        "build/test": re.compile(r"\b(make|cmake|pytest|test|package|dependency|install)\b", re.I),
-        "security/crypto": re.compile(r"\b(crypto|hash|password|rsa|aes|decrypt|encrypt|vulnerab)\b", re.I),
-    }
-    family_counts = Counter()
-    for row in rows:
-        text = f"{row.get('task_id','')} {row.get('final_message_snippet','')}"
-        matched = False
-        for fam, pat in family_patterns.items():
-            if pat.search(text):
-                family_counts[fam] += 1
-                matched = True
-        if not matched:
-            family_counts["unclassified_from_available_text"] += 1
-
     stats = {
-        "root": display_path(root),
-        "leaderboard": display_path(args.leaderboard) if args.leaderboard.exists() else "",
-        "trajectory_index": index_stats,
-        "trajectory_index_matched_rows": sum(1 for row in rows if row.get("reward") not in {"", None}),
-        "trajectory_index_unmatched_rows": sum(1 for row in rows if row.get("reward") in {"", None}),
-        "reward_distribution": summarize_numeric(reward_values),
-        "reward_outcome_counts": reward_outcome_counts.most_common(),
-        "leaderboard_task_checksum_count": len(leaderboard_by_checksum),
-        "leaderboard_scaffold_model_task_cells": len(leaderboard_cells),
-        "leaderboard_aggregate_success_count": leaderboard_success_total,
-        "leaderboard_aggregate_trial_count": leaderboard_trial_total,
-        "leaderboard_aggregate_resolution_rate": (leaderboard_success_total / leaderboard_trial_total) if leaderboard_trial_total else None,
-        "leaderboard_submission_count": len(leaderboard_submissions),
-        "leaderboard_official_accuracy_distribution": summarize_numeric(leaderboard_accuracies),
-        "leaderboard_official_accuracy_ci95_pm_percent_distribution": summarize_numeric(leaderboard_accuracy_pms),
-        "computed_submission_accuracy_distribution": summarize_numeric(submission_accuracies),
-        "computed_submission_accuracy_pm_percent_distribution": summarize_numeric(submission_accuracy_pms),
-        "computed_submission_task_rate_variance_distribution": summarize_numeric(submission_task_rate_variances),
-        "trajectory_count": len(rows),
-        "unique_task_count": len(task_ids),
-        "top_level_keys": top_keys.most_common(),
-        "common_key_paths": all_key_paths.most_common(120),
-        "scaffolds": scaffolds.most_common(),
-        "scaffold_models": scaffold_models.most_common(),
-        "agent_names": agent_names.most_common(),
-        "model_names": model_names.most_common(),
-        "original_formats": original_formats.most_common(),
-        "schema_examples_by_original_format": schema_examples,
-        "outcomes": outcomes.most_common(),
-        "step_count_distribution": summarize_numeric(step_counts),
-        "command_count_distribution": summarize_numeric(command_counts),
-        "tool_call_count_distribution": summarize_numeric(tool_counts),
-        "cost_usd_distribution": summarize_numeric(costs),
-        "total_token_distribution": summarize_numeric(tokens),
-        "duration_seconds_distribution": summarize_numeric(durations),
-        "leaderboard_avg_resolution_rate_distribution_for_matched_rows": summarize_numeric(leaderboard_rates),
-        "metric_presence_count": len(costs),
-        "missing_or_inconsistent": missing.most_common(),
-        "command_head_counts": command_head_counter.most_common(100),
-        "purpose_counts": purpose_counter.most_common(),
-        "purpose_by_scaffold": {k: v.most_common() for k, v in purpose_by_scaffold.items()},
-        "task_family_hints": family_counts.most_common(),
+        "inputs": {
+            "trajectory_root": display_path(root),
+            "leaderboard": display_path(args.leaderboard) if args.leaderboard.exists() else "",
+            "trajectory_index": display_path(args.trajectory_index) if args.trajectory_index.exists() else "",
+        },
+        "corpus": {
+            "trajectory_count": len(rows),
+            "unique_task_count": len(file_task_ids),
+            "unique_file_task_id_count": len(file_task_ids),
+            "unique_task_name_count": len(task_names),
+            "leaderboard_task_checksum_count": len(leaderboard_by_checksum),
+            "leaderboard_submission_count": len(leaderboard_submissions),
+        },
+        "outcomes": {
+            "reward_outcome_counts": reward_outcome_counts.most_common(),
+            "trajectory_outcome_counts": outcomes.most_common(),
+            "reward_distribution": summarize_numeric(reward_values),
+        },
+        "reward_index_diagnostics": {
+            "trajectory_index": index_stats,
+            "matched_rows": sum(1 for row in rows if row.get("reward") not in {"", None}),
+            "unmatched_rows": sum(1 for row in rows if row.get("reward") in {"", None}),
+            "missing_or_inconsistent": missing.most_common(),
+        },
+        "leaderboard": {
+            "scaffold_model_task_cells": len(leaderboard_cells),
+            "aggregate_success_count": leaderboard_success_total,
+            "aggregate_trial_count": leaderboard_trial_total,
+            "aggregate_resolution_rate": (leaderboard_success_total / leaderboard_trial_total) if leaderboard_trial_total else None,
+            "official_accuracy_distribution": summarize_numeric(leaderboard_accuracies),
+        },
+        "entity_counts": {
+            "scaffolds": scaffolds.most_common(),
+            "scaffold_models": scaffold_models.most_common(),
+            "model_names": model_names.most_common(),
+        },
+        "effort_distributions": {
+            "step_count": summarize_numeric(step_counts),
+            "command_count": summarize_numeric(command_counts),
+            "tool_call_count": summarize_numeric(tool_counts),
+            "total_tokens": summarize_numeric(tokens),
+            "cost_usd": summarize_numeric(costs),
+            "duration_seconds_from_timestamps": summarize_numeric(durations),
+            "leaderboard_avg_resolution_rate_for_matched_rows": summarize_numeric(leaderboard_rates),
+        },
+        "command_summary": {
+            "top_command_heads": command_head_counter.most_common(50),
+            "purpose_counts": purpose_counter.most_common(),
+            "purpose_by_scaffold": {k: v.most_common() for k, v in purpose_by_scaffold.items()},
+        },
         "artifacts": {
             "trajectory_summary_csv": display_path(out / "trajectory_summary.csv"),
             "leaderboard_submission_summary_csv": display_path(out / "leaderboard_submission_summary.csv"),

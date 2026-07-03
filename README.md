@@ -16,8 +16,14 @@ leaderboard submissions and trajectory traces.
 |   `-- analysis/
 |       |-- characterize_trajectories.py     # Build trajectory/corpus summary tables
 |       |-- analyze_leaderboard_superficial.py
-|       |-- analyze_task_domains.py          # Task-category summaries and figures
-|       `-- analyze_diminishing_returns.py
+|       |-- diminishing_returns/
+|       |   `-- analyze_diminishing_returns.py
+|       `-- tasks/
+|           |-- analyze_task_domains.py      # Task category/difficulty summaries and figures
+|           `-- tags/
+|               |-- analyze_task_tags.py
+|               |-- analyze_tag_effort.py
+|               `-- cluster_task_tags.py
 |-- data/
 |   |-- raw/
 |   |   |-- leaderboard_submissions_current.json
@@ -32,9 +38,8 @@ leaderboard submissions and trajectory traces.
 |   `-- processed_live/
 |       |-- trajectory_summary.csv           # One row per local trajectory
 |       |-- trajectory_features_by_outcome.csv
-|       |-- task_mining/                     # Task-domain/category analysis tables
-|       |-- diminishing_returns_effort_bins.csv
-|       |-- diminishing_returns_variable_coverage.csv
+|       |-- task_mining/                     # Task category/difficulty analysis tables
+|       |-- diminishing_returns/             # Diminishing-returns analysis tables
 |       |-- leaderboard_submission_summary.csv
 |       |-- leaderboard_scaffold_variance.csv
 |       |-- leaderboard_model_variance.csv
@@ -43,7 +48,7 @@ leaderboard submissions and trajectory traces.
 |       `-- command_patterns.csv
 `-- reports/
     |-- general_characteristics/              # Leaderboard characterization figures
-    |-- category_analysis/                    # Task-domain/category analysis figures
+    |-- tasks/                                # Task category, difficulty, and tag figures
     `-- diminishing_returns/                  # Diminishing-returns analysis figures
 ```
 
@@ -161,28 +166,29 @@ python -m scripts.analysis.analyze_leaderboard_superficial
 This also writes first-pass leaderboard characterization figures under
 `reports/general_characteristics/`.
 
-Regenerate task-domain/category CSVs and figures:
+Regenerate task-domain category and difficulty CSVs and figures:
 
 ```powershell
-python -m scripts.analysis.analyze_task_domains
+python -m scripts.analysis.tasks.analyze_task_domains
 ```
 
 This reads `data/processed_live/trajectory_summary.csv` and
-`data/raw/terminal_bench_2_tasks_current.json`, then writes category summaries
-under `data/processed_live/task_mining/` and figures under
-`reports/category_analysis/`.
+`data/raw/terminal_bench_2_tasks_current.json`, then writes category and
+difficulty summaries under `data/processed_live/task_mining/category/` and
+`data/processed_live/task_mining/difficulty/`, and figures under
+`reports/tasks/`.
 
 Regenerate the diminishing-returns CSVs and figures:
 
 ```powershell
-python -m scripts.analysis.analyze_diminishing_returns
+python -m scripts.analysis.diminishing_returns.analyze_diminishing_returns
 ```
 
 Optionally add grouped appendix-style figures:
 
 ```powershell
-python -m scripts.analysis.analyze_diminishing_returns --by-scaffold
-python -m scripts.analysis.analyze_diminishing_returns --by-model
+python -m scripts.analysis.diminishing_returns.analyze_diminishing_returns --by-scaffold
+python -m scripts.analysis.diminishing_returns.analyze_diminishing_returns --by-model
 ```
 
 These grouped figures are written under `reports/diminishing_returns/by_scaffold/`
@@ -224,35 +230,58 @@ Created by `python -m scripts.mining.scrape_tbench_benchmarks`:
   export of the same task metadata, with task `id`, `category`, `difficulty`,
   `description`, and `tags`.
 
-Created by `python -m scripts.analysis.analyze_task_domains`:
+Created by `python -m scripts.analysis.tasks.analyze_task_domains`:
 
-- `data/processed_live/task_mining/task_domain_outcome.csv`: one row per task
+- `data/processed_live/task_mining/category/task_domain_outcome.csv`: one row per task
   category with task counts, trajectory counts, pass/fail counts,
   trajectory-weighted pass rate, and task-weighted pass rate.
-- `data/processed_live/task_mining/task_domain_effort_summary.csv`: one row per
+- `data/processed_live/task_mining/category/task_domain_effort_summary.csv`: one row per
   task category and effort variable with median, mean, p75, p90, and max effort
-  values. The `reports/category_analysis/effort_vars/` figures plot medians.
-- `data/processed_live/task_mining/model_scaffold/model_category_pass_rates.csv`:
+  values. The `reports/tasks/category/effort_vars/` heatmap plots medians.
+- `data/processed_live/task_mining/difficulty/task_difficulty_outcome.csv`: one row per
+  task difficulty with task counts, trajectory counts, pass/fail counts,
+  trajectory-weighted pass rate, and task-weighted pass rate.
+- `data/processed_live/task_mining/difficulty/task_difficulty_effort_summary.csv`: one row
+  per task difficulty and effort variable with median, mean, p75, p90, and max
+  effort values.
+- `data/processed_live/task_mining/category/model_scaffold/model_category_pass_rates.csv`:
   category pass rates grouped by model.
-- `data/processed_live/task_mining/model_scaffold/scaffold_category_pass_rates.csv`:
+- `data/processed_live/task_mining/category/model_scaffold/scaffold_category_pass_rates.csv`:
   category pass rates grouped by scaffold. The stacked scaffold composition
   figure derives category shares from this table.
-- `data/processed_live/task_mining/model_scaffold/provider_category_pass_rates.csv`:
+- `data/processed_live/task_mining/category/model_scaffold/provider_category_pass_rates.csv`:
   category pass rates grouped by model provider.
-- `data/processed_live/task_mining/model_scaffold/source_category_pass_rates.csv`:
+- `data/processed_live/task_mining/category/model_scaffold/source_category_pass_rates.csv`:
   category pass rates grouped by open/closed source classification.
-- `reports/category_analysis/`: task-domain figures, including task-weighted
-  success, pass/fail counts, task coverage, effort-variable median plots, model
-  and scaffold category heatmaps, provider/source heatmaps, and scaffold
-  category composition.
+- `data/processed_live/task_mining/difficulty/model_scaffold/model_difficulty_pass_rates.csv`:
+  difficulty pass rates grouped by model.
+- `data/processed_live/task_mining/difficulty/model_scaffold/scaffold_difficulty_pass_rates.csv`:
+  difficulty pass rates grouped by scaffold.
+- `data/processed_live/task_mining/difficulty/model_scaffold/provider_difficulty_pass_rates.csv`:
+  difficulty pass rates grouped by model provider.
+- `data/processed_live/task_mining/difficulty/model_scaffold/source_difficulty_pass_rates.csv`:
+  difficulty pass rates grouped by open/closed source classification.
+- `data/processed_live/task_mining/category_difficulty/category_difficulty.csv`:
+  combined table with the easy/medium/hard mix within each task category (with task
+  and trajectory shares), and pass rates for each category/difficulty pair (with
+  pass/fail counts).
+- `reports/tasks/category/`: task-category figures, including
+  task-weighted success, pass/fail counts, task coverage, effort-variable median
+  plots, model and scaffold category heatmaps, provider/source heatmaps, and
+  scaffold category composition.
+- `reports/tasks/difficulty/`: the same outcome, effort,
+  model/scaffold, provider/source, and composition views stratified by task
+  difficulty.
+- `reports/tasks/category_difficulty/`: difficulty composition by
+  category and category/difficulty pass-rate heatmap.
 
-Created by `python -m scripts.analysis.analyze_diminishing_returns`:
+Created by `python -m scripts.analysis.diminishing_returns.analyze_diminishing_returns`:
 
-- `data/processed_live/diminishing_returns_effort_bins.csv`: trajectory success
+- `data/processed_live/diminishing_returns/diminishing_returns_effort_bins.csv`: trajectory success
   rates with Wilson confidence intervals across effort bins for steps,
   scaffold-normalized steps, commands, tool calls, tokens, duration, and positive
   reported cost.
-- `data/processed_live/diminishing_returns_variable_coverage.csv`:
+- `data/processed_live/diminishing_returns/diminishing_returns_variable_coverage.csv`:
   complete-case, positive, zero, and distribution coverage for each effort
   variable, including the positive-cost subset.
 - `reports/diminishing_returns/`: pass-rate figures by effort bin. With

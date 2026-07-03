@@ -13,9 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import io
 import math
-import sys
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, median
@@ -195,30 +193,6 @@ def exploded_model_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return exploded
 
 
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        return
-    fields: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fields:
-                fields.append(key)
-    buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore")
-    writer.writeheader()
-    writer.writerows(rows)
-    content = buffer.getvalue()
-    if path.exists() and path.read_text(encoding="utf-8") == content:
-        return
-    try:
-        path.write_text(content, encoding="utf-8")
-    except PermissionError:
-        if path.exists():
-            print(f"warning: could not update locked file: {path}", file=sys.stderr)
-            return
-        raise
-
-
 def slugify(value: str) -> str:
     chars = [char.lower() if char.isalnum() else "_" for char in value]
     return "_".join("".join(chars).strip("_").split("_")) or "unknown"
@@ -352,13 +326,8 @@ def main() -> None:
     args.figures_dir.mkdir(parents=True, exist_ok=True)
 
     scaffold_groups = group_rows(rows, "scaffold")
-    model_groups = group_rows(rows, "leaderboard_model")
     exploded_rows = exploded_model_rows(rows)
     exploded_model_groups = group_rows(exploded_rows, "model_component")
-
-    write_csv(args.out / "leaderboard_scaffold_variance.csv", scaffold_groups)
-    write_csv(args.out / "leaderboard_model_variance.csv", model_groups)
-    write_csv(args.out / "leaderboard_model_component_variance.csv", exploded_model_groups)
 
     plot_leaderboard_figures(
         rows,
