@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib
 import json
 import re
 import sys
@@ -22,8 +23,12 @@ from urllib.parse import quote, unquote, urljoin, urlsplit
 import requests
 from bs4 import BeautifulSoup
 
-from .build_trajectory_index import TrajectoryIndexWriter
-from .sampling_strategies import sample_submissions, submission_score
+_trajectory_index = importlib.import_module(".02_build_trajectory_index", __package__)
+_sampling_strategies = importlib.import_module(".03_sampling_strategies", __package__)
+
+TrajectoryIndexWriter = _trajectory_index.TrajectoryIndexWriter
+sample_submissions = _sampling_strategies.sample_submissions
+submission_score = _sampling_strategies.submission_score
 
 
 BASE_URL = "https://www.tbench.ai"
