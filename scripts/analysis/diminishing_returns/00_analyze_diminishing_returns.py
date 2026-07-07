@@ -512,7 +512,7 @@ def plot_effort_bins_by_outcome(bins: pd.DataFrame, figures_dir: Path) -> list[P
 
 
 def plot_effort_performance_box_plots(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
-    if "leaderboard_accuracy_percent" not in df.columns:
+    if "leaderboard_accuracy" not in df.columns:
         return []
 
     paths: list[Path] = []
@@ -520,7 +520,7 @@ def plot_effort_performance_box_plots(df: pd.DataFrame, figures_dir: Path) -> li
     output_dir.mkdir(parents=True, exist_ok=True)
 
     work = df.copy()
-    work["performance_percent"] = pd.to_numeric(work["leaderboard_accuracy_percent"], errors="coerce")
+    work["performance_percent"] = pd.to_numeric(work["leaderboard_accuracy"], errors="coerce") * 100.0
     work = work.dropna(subset=["performance_percent", "passed"])
     if work.empty:
         return []

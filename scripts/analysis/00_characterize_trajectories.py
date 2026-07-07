@@ -32,14 +32,11 @@ INDEX_DEFAULT = DATA_DIR / "indexes" / "trajectory_trials_current.json"
 
 BASH_FENCE_RE = re.compile(r"```(?:bash|sh|shell)?\s*\n(.*?)```", re.IGNORECASE | re.DOTALL)
 COMPLETE_RE = re.compile(r"\bCOMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\b")
+COMMAND_ARGUMENT_KEYS = ("command", "cmd", "keystrokes", "action", "input", "code")
 
 OFFICIAL_LEADERBOARD_FIELDS = [
     "leaderboard_accuracy",
-    "leaderboard_accuracy_percent",
     "leaderboard_stderr",
-    "leaderboard_stderr_percent",
-    "leaderboard_accuracy_ci95_pm_percent",
-    "leaderboard_accuracy_display",
     "leaderboard_date",
     "leaderboard_agent_display_name",
     "leaderboard_model_display",
@@ -48,63 +45,9 @@ OFFICIAL_LEADERBOARD_FIELDS = [
 ]
 
 COMPUTED_SUBMISSION_FIELDS = [
-    "computed_submission_task_count",
     "computed_submission_success_count",
     "computed_submission_trial_count",
-    "computed_submission_accuracy",
-    "computed_submission_accuracy_percent",
-    "computed_submission_weighted_trial_accuracy",
-    "computed_submission_weighted_trial_accuracy_percent",
     "computed_submission_task_rate_variance",
-    "computed_submission_accuracy_pm_percent",
-    "computed_submission_binomial_accuracy_variance",
-    "computed_submission_accuracy_display",
-]
-
-
-def leaderboard_display_name(entry: dict[str, Any]) -> str:
-    agent_display_name = str(entry.get("agent") or entry.get("leaderboard_agent_display_name") or "").strip()
-    if agent_display_name:
-        return agent_display_name
-    model_display_name = str(entry.get("model") or entry.get("leaderboard_model_display") or "").strip()
-    if model_display_name:
-        return model_display_name
-    return str(entry.get("scaffold") or "").strip()
-
-
-PURPOSE_PATTERNS: list[tuple[str, list[re.Pattern[str]]]] = [
-    ("environment_inspection", [
-        re.compile(r"^(ls|pwd|tree|find\b.*(?:-maxdepth|/app|\.)|du\b|df\b|whoami|env\b|printenv\b|uname\b)", re.I),
-        re.compile(r"\b(ls -|pwd|tree|find\s+\.)\b", re.I),
-    ]),
-    ("file_content_search", [
-        re.compile(r"^(rg|grep|ack|ag)\b", re.I),
-        re.compile(r"\b(rg|grep|ack|ag)\b", re.I),
-    ]),
-    ("reading_files", [
-        re.compile(r"^(cat|sed\s+-n|nl\b|head\b|tail\b|less\b|more\b|jq\b)", re.I),
-        re.compile(r"\b(cat|sed\s+-n|nl\s+-ba|head|tail|jq)\b", re.I),
-    ]),
-    ("editing_writing_files", [
-        re.compile(r"\b(cat\s+<<.*>|apply_patch|python\s+- <<|python3\s+- <<|perl\s+-pi|sed\s+-i|tee\b|echo\b.*>|printf\b.*>|touch\b|mkdir\b|mv\b|cp\b|rm\b)", re.I),
-        re.compile(r"\b(vim|nano|ed)\b", re.I),
-    ]),
-    ("dependency_setup", [
-        re.compile(r"\b(pip|pip3|uv|poetry|npm|pnpm|yarn|apt-get|apt|apk|cargo\s+(add|fetch|install)|go\s+mod|bundle\s+install|gem\s+install|conda|mamba)\b", re.I),
-    ]),
-    ("running_scripts_tests", [
-        re.compile(r"\b(pytest|unittest|go\s+test|cargo\s+test|npm\s+test|pnpm\s+test|yarn\s+test|make\s+test|bats|rspec|mvn\s+test|gradle\s+test)\b", re.I),
-        re.compile(r"^(python|python3|node|ruby|perl|bash|sh|Rscript|julia)\b", re.I),
-        re.compile(r"\b(rustc|g\+\+|gcc|javac|java|tsc|mypy|ruff|eslint)\b", re.I),
-    ]),
-    ("debugging_diagnostics", [
-        re.compile(r"\b(strace|gdb|lldb|pdb|ipdb|valgrind|lsof|ps\b|top\b|kill\b|curl\b|wget\b|diff\b|git\s+diff|git\s+status|git\s+log)\b", re.I),
-        re.compile(r"\b(print|debug|trace|diagnos|repro|inspect)\b", re.I),
-    ]),
-    ("final_verification", [
-        COMPLETE_RE,
-        re.compile(r"\b(final|verify|verification|validate|all tests|submit)\b", re.I),
-    ]),
 ]
 
 
@@ -113,21 +56,18 @@ def load_json(path: Path) -> Any:
         return json.load(f)
 
 
-def load_trajectory_index(path: Path, root: Path) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+def load_trajectory_index(path: Path, root: Path) -> dict[str, dict[str, Any]]:
     """Load the trajectory index and key it by corpus-relative path."""
     if not path.exists():
-        return {}, {"path": display_path(path), "exists": False}
+        return {}
 
     text = path.read_text(encoding="utf-8")
-    normalized_file_paths = False
     try:
         entries = json.loads(text)
     except json.JSONDecodeError:
         # Some older generated indexes used Windows paths with invalid JSON
         # escapes in filePath. Normalize only filePath strings and retry.
         def fix_filepath(match: re.Match[str]) -> str:
-            nonlocal normalized_file_paths
-            normalized_file_paths = True
             value = match.group(1).replace("\\", "/")
             value = re.sub(r"/+", "/", value)
             return f'"filePath": "{value}"'
@@ -136,31 +76,14 @@ def load_trajectory_index(path: Path, root: Path) -> tuple[dict[str, dict[str, A
         entries = json.loads(fixed)
 
     if not isinstance(entries, list):
-        return {}, {"path": display_path(path), "exists": True, "entry_count": 0, "error": "index root is not a list"}
+        return {}
 
     root_key = display_path(root).replace("\\", "/").rstrip("/")
     by_rel: dict[str, dict[str, Any]] = {}
-    reward_counts: Counter[str] = Counter()
-    missing_reward = 0
-    invalid_reward = 0
 
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        reward = entry.get("reward")
-        if reward in {"", None}:
-            missing_reward += 1
-        else:
-            try:
-                reward_float = float(reward)
-                if reward_float in {0.0, 1.0}:
-                    reward_counts[str(int(reward_float))] += 1
-                else:
-                    invalid_reward += 1
-                    reward_counts[str(reward_float)] += 1
-            except (TypeError, ValueError):
-                invalid_reward += 1
-                reward_counts[str(reward)] += 1
 
         file_path = str(entry.get("filePath", "")).replace("\\", "/")
         file_path = re.sub(r"/+", "/", file_path)
@@ -174,16 +97,7 @@ def load_trajectory_index(path: Path, root: Path) -> tuple[dict[str, dict[str, A
         if rel_key:
             by_rel[rel_key] = entry
 
-    return by_rel, {
-        "path": display_path(path),
-        "exists": True,
-        "entry_count": len(entries),
-        "matched_path_key_count": len(by_rel),
-        "reward_counts": dict(reward_counts),
-        "missing_reward_count": missing_reward,
-        "invalid_reward_count": invalid_reward,
-        "normalized_file_paths_on_load": normalized_file_paths,
-    }
+    return by_rel
 
 
 def reward_outcome(reward: Any) -> str:
@@ -262,6 +176,13 @@ def textish(value: Any, max_len: int = 20000) -> str:
         return str(value)[:max_len]
 
 
+def command_text(value: Any, max_len: int = 5000) -> str:
+    """Normalize command-like tool arguments across scaffold schemas."""
+    if isinstance(value, list) and all(isinstance(part, (str, int, float, bool)) for part in value):
+        return " ".join(shlex.quote(str(part)) for part in value)[:max_len]
+    return textish(value, max_len)
+
+
 def extract_observation_text(step: dict[str, Any]) -> str:
     chunks: list[str] = []
     obs = step.get("observation")
@@ -317,14 +238,14 @@ def extract_tool_calls(step: dict[str, Any]) -> list[dict[str, str]]:
                 pass
         command = ""
         if isinstance(args, dict):
-            for key in ("command", "cmd", "action", "input", "code"):
+            for key in COMMAND_ARGUMENT_KEYS:
                 if key in args:
-                    command = textish(args[key], 5000)
+                    command = command_text(args[key], 5000)
                     break
         if not command:
-            for key in ("command", "cmd", "action", "input", "code"):
+            for key in COMMAND_ARGUMENT_KEYS:
                 if key in call:
-                    command = textish(call[key], 5000)
+                    command = command_text(call[key], 5000)
                     break
         calls.append({"tool": tool, "command": command, "raw": textish(call, 5000)})
     return calls
@@ -344,26 +265,6 @@ def shell_head(command: str) -> str:
     return parts[0]
 
 
-def classify_command(command: str, step_index: int, step_count: int) -> str:
-    text = (command or "").strip()
-    if not text:
-        return "unknown"
-    if COMPLETE_RE.search(text):
-        return "final_verification"
-    if step_count and step_index >= max(1, math.floor(step_count * 0.8)):
-        if re.search(r"\b(pytest|test|check|verify|validate|rustc|g\+\+|gcc|make|npm\s+test|go\s+test|cargo\s+test)\b", text, re.I):
-            return "final_verification"
-    for label, patterns in PURPOSE_PATTERNS:
-        if label == "editing_writing_files" and any(p.search(text) for p in patterns):
-            return label
-    for label, patterns in PURPOSE_PATTERNS:
-        if label in {"final_verification", "editing_writing_files"}:
-            continue
-        if any(p.search(text) for p in patterns):
-            return label
-    return "other"
-
-
 def percentile(values: list[float], p: float) -> float | None:
     if not values:
         return None
@@ -381,14 +282,8 @@ def summarize_numeric(values: list[float]) -> dict[str, Any]:
         return {"count": 0}
     return {
         "count": len(values),
-        "min": min(values),
-        "p25": percentile(values, 0.25),
         "median": median(values),
-        "mean": mean(values),
-        "p75": percentile(values, 0.75),
         "p90": percentile(values, 0.90),
-        "p95": percentile(values, 0.95),
-        "max": max(values),
     }
 
 
@@ -424,36 +319,12 @@ def submission_accuracy_summary(entry: dict[str, Any], rank: int | None = None) 
         for task in tasks
         if "avgResolutionRate" in task
     ]
-    weighted_trial_accuracy = (total_successes / total_trials) if total_trials else None
-    accuracy = mean(rates) if rates else weighted_trial_accuracy
     task_rate_variance = sample_variance(rates)
-    task_rate_std_error = math.sqrt(task_rate_variance / len(rates)) if task_rate_variance is not None and rates else None
-    binomial_p = weighted_trial_accuracy if weighted_trial_accuracy is not None else accuracy
-    binomial_variance = (
-        binomial_p * (1.0 - binomial_p) / total_trials
-        if binomial_p is not None and total_trials
-        else None
-    )
-    accuracy_percent = accuracy * 100.0 if accuracy is not None else None
-    accuracy_pm_percent = task_rate_std_error * 100.0 if task_rate_std_error is not None else None
-    accuracy_display = (
-        f"{accuracy_percent:.1f}%+/- {accuracy_pm_percent:.1f}"
-        if accuracy_percent is not None and accuracy_pm_percent is not None
-        else (f"{accuracy_percent:.1f}%+/- N/A" if accuracy_percent is not None else "")
-    )
     computed = {
         "leaderboard_rank": rank if rank is not None else "",
-        "computed_submission_task_count": len(tasks),
         "computed_submission_success_count": total_successes,
         "computed_submission_trial_count": total_trials,
-        "computed_submission_accuracy": accuracy if accuracy is not None else "",
-        "computed_submission_accuracy_percent": accuracy_percent if accuracy_percent is not None else "",
-        "computed_submission_weighted_trial_accuracy": weighted_trial_accuracy if weighted_trial_accuracy is not None else "",
-        "computed_submission_weighted_trial_accuracy_percent": weighted_trial_accuracy * 100.0 if weighted_trial_accuracy is not None else "",
         "computed_submission_task_rate_variance": task_rate_variance if task_rate_variance is not None else "",
-        "computed_submission_accuracy_pm_percent": accuracy_pm_percent if accuracy_pm_percent is not None else "",
-        "computed_submission_binomial_accuracy_variance": binomial_variance if binomial_variance is not None else "",
-        "computed_submission_accuracy_display": accuracy_display,
     }
     return computed
 
@@ -513,13 +384,6 @@ def duration_seconds(steps: list[dict[str, Any]]) -> float | None:
     return None
 
 
-def quote_snippet(text: str, limit: int = 480) -> str:
-    clean = re.sub(r"\s+", " ", (text or "").strip())
-    if len(clean) <= limit:
-        return clean
-    return clean[: limit - 3] + "..."
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, default=ROOT_DEFAULT)
@@ -533,7 +397,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     paths = sorted(root.rglob("*.json"))
-    index_by_rel, index_stats = load_trajectory_index(args.trajectory_index, root)
+    index_by_rel = load_trajectory_index(args.trajectory_index, root)
     leaderboard_by_checksum: dict[str, list[dict[str, Any]]] = defaultdict(list)
     leaderboard_task_names: dict[str, str] = {}
     leaderboard_submissions: list[dict[str, Any]] = []
@@ -551,7 +415,6 @@ def main() -> None:
                         "leaderboard_model": entry.get("model", ""),
                         "provider": entry.get("provider", ""),
                         "has_trajectories": entry.get("has_trajectories", ""),
-                        "display_name": leaderboard_display_name(entry),
                         "submission_url": entry.get("submission_url", ""),
                         **official_leaderboard_summary(entry),
                         **submission_accuracy_summary(entry, rank),
@@ -565,26 +428,12 @@ def main() -> None:
                             continue
                         merged = {
                             "scaffold": entry.get("scaffold", ""),
-                            "scaffold_version": entry.get("scaffold_version", ""),
                             "leaderboard_model": entry.get("model", ""),
-                            "provider": entry.get("provider", ""),
-                            "display_name": leaderboard_display_name(entry),
-                            "submission_url": entry.get("submission_url", ""),
                             "taskName": task.get("taskName", ""),
-                            "taskChecksum": checksum,
                             "nTrials": task.get("nTrials", ""),
-                            "avgResolutionRate": task.get("avgResolutionRate", ""),
                             "successCount": task.get("successCount", ""),
-                            **{
-                                field: submission_summary[field]
-                                for field in OFFICIAL_LEADERBOARD_FIELDS
-                            },
-                            "trialUrl": task.get("trialUrl", ""),
-                            **{
-                                field: submission_summary[field]
-                                for field in COMPUTED_SUBMISSION_FIELDS
-                            },
-                            "leaderboard_rank": submission_summary["leaderboard_rank"],
+                            "leaderboard_accuracy": submission_summary["leaderboard_accuracy"],
+                            "leaderboard_model_organization": submission_summary["leaderboard_model_organization"],
                         }
                         leaderboard_by_checksum[str(checksum)].append(merged)
                         if task.get("taskName"):
@@ -596,17 +445,10 @@ def main() -> None:
     leaderboard_success_total = sum(int(item.get("successCount") or 0) for item in leaderboard_cells)
     leaderboard_trial_total = sum(int(item.get("nTrials") or 0) for item in leaderboard_cells)
     rows: list[dict[str, Any]] = []
-    model_names = Counter()
-    scaffolds = Counter()
-    scaffold_models = Counter()
-    outcomes = Counter()
-    file_task_ids = Counter()
-    task_names = Counter()
+    file_task_ids: set[str] = set()
+    task_names: set[str] = set()
     command_head_counter = Counter()
     command_head_examples: dict[str, str] = {}
-    purpose_counter = Counter()
-    purpose_by_scaffold = defaultdict(Counter)
-    missing = Counter()
 
     for path in paths:
         try:
@@ -626,7 +468,6 @@ def main() -> None:
         file_task_id = filename.split("_", 1)[0] if "_" in filename else filename
         file_run_id = filename.split("_", 1)[1] if "_" in filename else ""
         agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
-        agent_name = textish(agent.get("name") or scaffold, 200)
         model_name = textish(agent.get("model_name") or model_dir, 300)
         version = textish(agent.get("version") or "", 100)
         extra = agent.get("extra") if isinstance(agent.get("extra"), dict) else {}
@@ -648,11 +489,10 @@ def main() -> None:
             if exactish:
                 leaderboard_matches = exactish
         leaderboard_meta = leaderboard_matches[0] if leaderboard_matches else {}
-        trajectory_json_outcome = outcome_label(data)
         index_meta = index_by_rel.get(rel_key, {})
         reward = index_meta.get("reward", "")
         outcome_from_reward = reward_outcome(reward)
-        outcome = outcome_from_reward or trajectory_json_outcome
+        outcome = outcome_from_reward or outcome_label(data)
         dur = duration_seconds([s for s in steps if isinstance(s, dict)])
 
         prompt_tokens = 0
@@ -665,11 +505,7 @@ def main() -> None:
         tool_call_count = 0
         command_count = 0
         source_counts = Counter()
-        final_message = ""
         has_final_marker = False
-
-        if not steps:
-            missing["steps"] += 1
 
         for idx, raw_step in enumerate(steps, start=1):
             if not isinstance(raw_step, dict):
@@ -681,8 +517,6 @@ def main() -> None:
             message_chars += len(msg)
             reasoning_chars += len(reasoning)
             obs_chars += len(obs_text)
-            if msg:
-                final_message = msg
             if COMPLETE_RE.search(msg) or COMPLETE_RE.search(obs_text):
                 has_final_marker = True
 
@@ -709,24 +543,16 @@ def main() -> None:
 
             for tool, cmd in step_commands:
                 command_count += 1
-                purpose = classify_command(cmd, idx, len(steps))
                 head = shell_head(cmd)
                 command_head_counter[head] += 1
                 if head not in command_head_examples:
                     cmd_lines = cmd.strip().splitlines()
                     command_head_examples[head] = (cmd_lines[0] if cmd_lines else "<blank>")[:240]
-                purpose_counter[purpose] += 1
-                purpose_by_scaffold[scaffold][purpose] += 1
 
         row = {
-            "path": display_path(path),
             "rel_path": str(rel),
-            "file_size_bytes": path.stat().st_size,
-            "schema_version": data.get("schema_version", ""),
-            "session_id": data.get("session_id", ""),
             "scaffold": scaffold,
             "model_dir": model_dir,
-            "agent_name": agent_name,
             "agent_version": version,
             "model_name": model_name,
             "original_format": original_format,
@@ -734,26 +560,11 @@ def main() -> None:
             "task_name": task_name,
             "file_task_id": file_task_id,
             "file_run_id": file_run_id,
-            "outcome": outcome,
             "reward": reward,
-            "reward_outcome": outcome_from_reward,
-            "trajectory_json_outcome": trajectory_json_outcome,
-            "leaderboard_avg_resolution_rate": leaderboard_meta.get("avgResolutionRate", ""),
-            "leaderboard_success_count": leaderboard_meta.get("successCount", ""),
-            "leaderboard_n_trials": leaderboard_meta.get("nTrials", ""),
-            "leaderboard_task_name": leaderboard_meta.get("taskName", ""),
+            "reward_outcome": outcome,
             "leaderboard_model": leaderboard_meta.get("leaderboard_model", ""),
-            "display_name": leaderboard_meta.get("display_name", ""),
-            "submission_url": leaderboard_meta.get("submission_url", ""),
-            "leaderboard_rank": leaderboard_meta.get("leaderboard_rank", ""),
-            **{
-                field: leaderboard_meta.get(field, "")
-                for field in OFFICIAL_LEADERBOARD_FIELDS
-            },
-            **{
-                field: leaderboard_meta.get(field, "")
-                for field in COMPUTED_SUBMISSION_FIELDS
-            },
+            "leaderboard_accuracy": leaderboard_meta.get("leaderboard_accuracy", ""),
+            "leaderboard_model_organization": leaderboard_meta.get("leaderboard_model_organization", ""),
             "step_count": len(steps),
             "agent_step_count": source_counts.get("agent", 0),
             "user_step_count": source_counts.get("user", 0),
@@ -770,8 +581,6 @@ def main() -> None:
             "cost_usd": round(cost_usd, 8) if metric_steps else "",
             "duration_seconds_from_timestamps": dur if dur is not None else "",
             "has_final_marker": has_final_marker,
-            "final_message_snippet": quote_snippet(final_message, 500),
-            "top_level_keys": ",".join(data.keys()),
         }
         final_metrics = data.get("final_metrics") if isinstance(data.get("final_metrics"), dict) else {}
         if final_metrics:
@@ -782,27 +591,18 @@ def main() -> None:
             if "total_cost_usd" in final_metrics:
                 row["cost_usd"] = final_metrics.get("total_cost_usd", row["cost_usd"])
         rows.append(row)
-        model_names[model_name] += 1
-        scaffolds[scaffold] += 1
-        scaffold_models[f"{scaffold}/{model_dir}"] += 1
-        outcomes[outcome] += 1
-        file_task_ids[file_task_id] += 1
+        file_task_ids.add(file_task_id)
         if task_name:
-            task_names[task_name] += 1
+            task_names.add(task_name)
 
     csv_fields = [
-        "rel_path", "path", "file_size_bytes", "schema_version", "session_id", "scaffold", "model_dir",
-        "agent_name", "agent_version", "model_name", "original_format", "task_id", "file_task_id",
-        "task_name", "file_run_id", "outcome", "reward", "reward_outcome", "trajectory_json_outcome",
-        "leaderboard_avg_resolution_rate", "leaderboard_success_count",
-        "leaderboard_n_trials", "leaderboard_task_name", "leaderboard_model", "submission_url",
-        "leaderboard_rank", "display_name",
-        *OFFICIAL_LEADERBOARD_FIELDS,
-        *COMPUTED_SUBMISSION_FIELDS,
+        "rel_path", "scaffold", "model_dir", "agent_version", "model_name", "original_format",
+        "task_id", "file_task_id", "task_name", "file_run_id", "reward", "reward_outcome",
+        "leaderboard_model", "leaderboard_accuracy", "leaderboard_model_organization",
         "step_count", "agent_step_count", "user_step_count", "system_step_count",
         "tool_call_count", "command_count", "message_chars", "reasoning_chars", "observation_chars",
         "metric_step_count", "prompt_tokens", "completion_tokens", "total_tokens", "cost_usd",
-        "duration_seconds_from_timestamps", "has_final_marker", "final_message_snippet", "top_level_keys",
+        "duration_seconds_from_timestamps", "has_final_marker",
     ]
     with (out / "trajectory_summary.csv").open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
@@ -811,7 +611,7 @@ def main() -> None:
 
     submission_fields = [
         "leaderboard_rank", "scaffold", "scaffold_version", "leaderboard_model", "provider", "submission_url",
-        "has_trajectories", "display_name",
+        "has_trajectories",
         *OFFICIAL_LEADERBOARD_FIELDS,
         *COMPUTED_SUBMISSION_FIELDS,
     ]
@@ -840,8 +640,6 @@ def main() -> None:
         "step_count",
         "command_count",
         "tool_call_count",
-        "message_chars",
-        "observation_chars",
         "total_tokens",
         "cost_usd",
         "duration_seconds_from_timestamps",
@@ -853,7 +651,7 @@ def main() -> None:
             values = [parse_float(row.get(field)) for row in items]
             values = [value for value in values if value is not None]
             summary = summarize_numeric(values)
-            for stat in ("median", "mean", "p75", "p90", "max"):
+            for stat in ("median", "p90"):
                 summary_row[f"{field}_{stat}"] = summary.get(stat, "")
         outcome_feature_rows.append(summary_row)
 
@@ -869,7 +667,6 @@ def main() -> None:
     costs = [float(r["cost_usd"]) for r in rows if r.get("cost_usd") not in {"", None}]
     tokens = [float(r["total_tokens"]) for r in rows if r.get("total_tokens") not in {"", None}]
     durations = [float(r["duration_seconds_from_timestamps"]) for r in rows if r.get("duration_seconds_from_timestamps") not in {"", None}]
-    leaderboard_rates = [float(r["leaderboard_avg_resolution_rate"]) for r in rows if r.get("leaderboard_avg_resolution_rate") not in {"", None}]
     leaderboard_accuracies = [
         float(s["leaderboard_accuracy"])
         for s in leaderboard_submissions
@@ -878,6 +675,9 @@ def main() -> None:
     reward_values = [parse_float(r.get("reward")) for r in rows]
     reward_values = [value for value in reward_values if value is not None]
     reward_outcome_counts = Counter(str(r.get("reward_outcome", "")) for r in rows)
+    pass_count = reward_outcome_counts.get("pass", 0)
+    fail_count = reward_outcome_counts.get("fail", 0)
+    binary_outcome_count = pass_count + fail_count
 
     stats = {
         "inputs": {
@@ -888,33 +688,20 @@ def main() -> None:
         "corpus": {
             "trajectory_count": len(rows),
             "unique_task_count": len(file_task_ids),
-            "unique_file_task_id_count": len(file_task_ids),
             "unique_task_name_count": len(task_names),
-            "leaderboard_task_checksum_count": len(leaderboard_by_checksum),
             "leaderboard_submission_count": len(leaderboard_submissions),
         },
         "outcomes": {
-            "reward_outcome_counts": reward_outcome_counts.most_common(),
-            "trajectory_outcome_counts": outcomes.most_common(),
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "pass_rate": pass_count / binary_outcome_count if binary_outcome_count else None,
             "reward_distribution": summarize_numeric(reward_values),
         },
-        "reward_index_diagnostics": {
-            "trajectory_index": index_stats,
-            "matched_rows": sum(1 for row in rows if row.get("reward") not in {"", None}),
-            "unmatched_rows": sum(1 for row in rows if row.get("reward") in {"", None}),
-            "missing_or_inconsistent": missing.most_common(),
-        },
         "leaderboard": {
-            "scaffold_model_task_cells": len(leaderboard_cells),
             "aggregate_success_count": leaderboard_success_total,
             "aggregate_trial_count": leaderboard_trial_total,
             "aggregate_resolution_rate": (leaderboard_success_total / leaderboard_trial_total) if leaderboard_trial_total else None,
             "official_accuracy_distribution": summarize_numeric(leaderboard_accuracies),
-        },
-        "entity_counts": {
-            "scaffolds": scaffolds.most_common(),
-            "scaffold_models": scaffold_models.most_common(),
-            "model_names": model_names.most_common(),
         },
         "effort_distributions": {
             "step_count": summarize_numeric(step_counts),
@@ -923,12 +710,6 @@ def main() -> None:
             "total_tokens": summarize_numeric(tokens),
             "cost_usd": summarize_numeric(costs),
             "duration_seconds_from_timestamps": summarize_numeric(durations),
-            "leaderboard_avg_resolution_rate_for_matched_rows": summarize_numeric(leaderboard_rates),
-        },
-        "command_summary": {
-            "top_command_heads": command_head_counter.most_common(50),
-            "purpose_counts": purpose_counter.most_common(),
-            "purpose_by_scaffold": {k: v.most_common() for k, v in purpose_by_scaffold.items()},
         },
         "artifacts": {
             "trajectory_summary_csv": display_path(out / "trajectory_summary.csv"),

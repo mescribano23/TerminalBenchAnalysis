@@ -40,8 +40,6 @@ DEFAULT_OUTPUT_PATH = DATA_DIR / "raw" / "leaderboard_submissions_current.json"
 DEFAULT_TRAJECTORIES_DIR = DATA_DIR / "trajectories" / "sample"
 DEFAULT_TRAJECTORY_INDEX = DATA_DIR / "indexes" / "trajectory_index.json"
 REQUEST_DELAY_SECONDS = 0.5
-NORMAL_95_CI_MULTIPLIER = 1.96
-
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -665,21 +663,9 @@ def extract_trajectory(html_text: str) -> dict[str, Any]:
 def leaderboard_accuracy_record(submission: Submission) -> dict[str, object]:
     accuracy = submission.leaderboard_accuracy
     stderr = submission.leaderboard_stderr
-    accuracy_percent = accuracy * 100.0 if accuracy is not None else None
-    stderr_percent = stderr * 100.0 if stderr is not None else None
-    ci95_pm_percent = stderr * NORMAL_95_CI_MULTIPLIER * 100.0 if stderr is not None else None
-    accuracy_display = (
-        f"{accuracy_percent:.1f}%+/- {ci95_pm_percent:.1f}"
-        if accuracy_percent is not None and ci95_pm_percent is not None
-        else ""
-    )
     return {
         "leaderboard_accuracy": accuracy if accuracy is not None else "",
-        "leaderboard_accuracy_percent": accuracy_percent if accuracy_percent is not None else "",
         "leaderboard_stderr": stderr if stderr is not None else "",
-        "leaderboard_stderr_percent": stderr_percent if stderr_percent is not None else "",
-        "leaderboard_accuracy_ci95_pm_percent": ci95_pm_percent if ci95_pm_percent is not None else "",
-        "leaderboard_accuracy_display": accuracy_display,
         "leaderboard_date": submission.leaderboard_date,
         "leaderboard_agent_display_name": submission.leaderboard_agent_display_name,
         "leaderboard_model_display": submission.leaderboard_model_display,

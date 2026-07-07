@@ -32,24 +32,14 @@ INPUT_DEFAULT = DATA_PROCESSED_DIR / "leaderboard_submission_summary.csv"
 OUT_DEFAULT = DATA_PROCESSED_DIR
 
 INT_FIELDS = (
-    "computed_submission_task_count",
     "computed_submission_success_count",
     "computed_submission_trial_count",
 )
 
 FLOAT_FIELDS = (
     "leaderboard_accuracy",
-    "leaderboard_accuracy_percent",
     "leaderboard_stderr",
-    "leaderboard_stderr_percent",
-    "leaderboard_accuracy_ci95_pm_percent",
-    "computed_submission_accuracy",
-    "computed_submission_accuracy_percent",
-    "computed_submission_weighted_trial_accuracy",
-    "computed_submission_weighted_trial_accuracy_percent",
     "computed_submission_task_rate_variance",
-    "computed_submission_accuracy_pm_percent",
-    "computed_submission_binomial_accuracy_variance",
 )
 
 
@@ -117,8 +107,18 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
             row[key] = parse_int(row.get(key))
         for key in FLOAT_FIELDS:
             row[key] = parse_float(row.get(key))
-        row["analysis_accuracy_percent"] = row.get("leaderboard_accuracy_percent")
-        row["analysis_pm_percent"] = row.get("leaderboard_accuracy_ci95_pm_percent")
+        leaderboard_accuracy = row.get("leaderboard_accuracy")
+        leaderboard_stderr = row.get("leaderboard_stderr")
+        row["analysis_accuracy_percent"] = (
+            leaderboard_accuracy * 100.0
+            if leaderboard_accuracy is not None
+            else None
+        )
+        row["analysis_pm_percent"] = (
+            leaderboard_stderr * 1.96 * 100.0
+            if leaderboard_stderr is not None
+            else None
+        )
         row["analysis_task_rate_variance"] = row.get("computed_submission_task_rate_variance")
         rows.append(row)
     return rows
