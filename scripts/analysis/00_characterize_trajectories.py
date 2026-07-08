@@ -499,6 +499,7 @@ def main() -> None:
         completion_tokens = 0
         cost_usd = 0.0
         metric_steps = 0
+        cost_metric_steps = 0
         message_chars = 0
         reasoning_chars = 0
         obs_chars = 0
@@ -525,10 +526,12 @@ def main() -> None:
                 metric_steps += 1
                 prompt_tokens += int(metrics.get("prompt_tokens") or 0)
                 completion_tokens += int(metrics.get("completion_tokens") or 0)
-                try:
-                    cost_usd += float(metrics.get("cost_usd") or 0.0)
-                except (TypeError, ValueError):
-                    pass
+                if metrics.get("cost_usd") not in {"", None}:
+                    try:
+                        cost_usd += float(metrics.get("cost_usd"))
+                        cost_metric_steps += 1
+                    except (TypeError, ValueError):
+                        pass
 
             calls = extract_tool_calls(raw_step)
             tool_call_count += len([c for c in calls if c.get("raw")])
@@ -578,7 +581,7 @@ def main() -> None:
             "prompt_tokens": prompt_tokens if metric_steps else "",
             "completion_tokens": completion_tokens if metric_steps else "",
             "total_tokens": prompt_tokens + completion_tokens if metric_steps else "",
-            "cost_usd": round(cost_usd, 8) if metric_steps else "",
+            "cost_usd": round(cost_usd, 8) if cost_metric_steps else "",
             "duration_seconds_from_timestamps": dur if dur is not None else "",
             "has_final_marker": has_final_marker,
         }
@@ -588,7 +591,7 @@ def main() -> None:
             row["completion_tokens"] = final_metrics.get("total_completion_tokens", row["completion_tokens"])
             if row["prompt_tokens"] != "" and row["completion_tokens"] != "":
                 row["total_tokens"] = int(row["prompt_tokens"] or 0) + int(row["completion_tokens"] or 0)
-            if "total_cost_usd" in final_metrics:
+            if final_metrics.get("total_cost_usd") not in {"", None}:
                 row["cost_usd"] = final_metrics.get("total_cost_usd", row["cost_usd"])
         rows.append(row)
         file_task_ids.add(file_task_id)
