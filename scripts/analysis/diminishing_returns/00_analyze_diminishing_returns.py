@@ -4,25 +4,28 @@
 Outputs:
 - data/processed_live/diminishing_returns/diminishing_returns_effort_bins.csv
 - data/processed_live/diminishing_returns/diminishing_returns_variable_coverage.csv
+- data/processed_live/diminishing_returns/task_step_median_per_task.csv
+- data/processed_live/diminishing_returns/task_step_median_by_difficulty.csv
 - reports/diminishing_returns/diminishing_returns_*.png
-- reports/diminishing_returns/by_outcome/barcharts/diminishing_returns_by_outcome_*.png
+- reports/diminishing_returns/diminishing_returns_combined_effort_variables.png
+- reports/diminishing_returns/by_scaffold_reduced/diminishing_returns_*_reduced_heatmap.png reduced scaffold heatmaps
 - reports/diminishing_returns/by_outcome/box_plots/diminishing_returns_performance_box_*.png
 - reports/diminishing_returns/by_outcome/stacked/diminishing_returns_outcome_stacked_*.png
-- optional reports/diminishing_returns/by_scaffold/diminishing_returns_*.png heatmaps
-- optional reports/diminishing_returns/by_model/diminishing_returns_*.png heatmaps
-- optional reports/diminishing_returns/by_model/by_provider/diminishing_returns_*.png provider heatmaps
-- optional reports/diminishing_returns/by_model/by_provider_facetted/diminishing_returns_*.png model heatmaps facetted by provider
+- optional reports/diminishing_returns/by_scaffold/diminishing_returns_*_heatmap.png heatmaps
+- optional reports/diminishing_returns/by_model/diminishing_returns_*_heatmap.png heatmaps
+- optional reports/diminishing_returns/by_model/by_provider/diminishing_returns_*_heatmap.png provider heatmaps
+- optional reports/diminishing_returns/by_model/by_provider_facetted/diminishing_returns_*_heatmap.png model heatmaps facetted by provider
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
 
@@ -36,12 +39,18 @@ def find_repo_root(start: Path) -> Path:
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = find_repo_root(SCRIPT_DIR)
-DATA_PROCESSED_LIVE_DIR = REPO_ROOT / "data" / "processed_live"
+DATA_DIR = REPO_ROOT / "data"
+DATA_PROCESSED_LIVE_DIR = DATA_DIR / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "diminishing_returns"
 
 INPUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "trajectory_summary.csv"
+TASKS_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "terminal_bench_2_tasks_current.csv"
+TASKS_JSON_FALLBACK = DATA_DIR / "raw" / "terminal_bench_2_tasks_current.json"
 OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "diminishing_returns"
+DIFFICULTY_ORDER = ["easy", "medium", "hard"]
+MIN_PASSING_TRAJECTORIES = 5
+MIN_FAILING_TRAJECTORIES = 5
 
 EFFORT_VARIABLES = [
     "step_count",
@@ -51,6 +60,15 @@ EFFORT_VARIABLES = [
     "total_tokens",
     "duration_seconds_from_timestamps",
     "cost_usd_positive",
+]
+
+REDUCED_SCAFFOLDS = [
+    "terminus-2",
+    "mini-swe-agent",
+    "openhands",
+    "claude-code",
+    "codex",
+    "gemini-cli",
 ]
 
 MODEL_PROVIDER_HEATMAPS = ["OpenAI", "Anthropic", "Google", "DeepSeek"]
@@ -152,12 +170,32 @@ def load_data(path: Path) -> pd.DataFrame:
     df["scaffold"] = df["scaffold"].fillna("unknown").astype(str)
     if "model_dir" in df.columns:
         df["model_dir"] = df["model_dir"].fillna("unknown").astype(str)
+    if "leaderboard_model_organization" in df.columns:
+        df["leaderboard_model_organization"] = (
+            df["leaderboard_model_organization"].fillna("unknown").astype(str).replace({"Minimax": "MiniMax"})
+        )
 
     scaffold_medians = df.groupby("scaffold")["step_count"].transform("median")
     df["step_count_scaffold_ratio"] = df["step_count"] / scaffold_medians.replace(0, np.nan)
     df["cost_usd_positive"] = df["cost_usd"].where(df["cost_usd"] > 0)
 
     return df
+
+
+def load_task_difficulties(path: Path) -> pd.DataFrame:
+    if path.suffix.lower() == ".json":
+        with path.open(encoding="utf-8") as f:
+            task_rows: list[dict[str, Any]] = json.load(f)
+        tasks = pd.DataFrame(task_rows)
+    else:
+        tasks = pd.read_csv(path)
+
+    required = {"id", "difficulty"}
+    missing = required.difference(tasks.columns)
+    if missing:
+        raise ValueError(f"{path} is missing required task fields: {', '.join(sorted(missing))}")
+
+    return tasks[["id", "difficulty"]].rename(columns={"id": "task_name"}).drop_duplicates("task_name")
 
 
 def build_variable_coverage(df: pd.DataFrame) -> pd.DataFrame:
@@ -179,6 +217,86 @@ def build_variable_coverage(df: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def difficulty_sort_key(series: pd.Series) -> pd.Series:
+    order = {value: index for index, value in enumerate(DIFFICULTY_ORDER)}
+    return series.astype(str).map(order).fillna(len(order))
+
+
+def comparison_label(row: pd.Series) -> str:
+    if row["median_steps_pass"] > row["median_steps_fail"]:
+        return "pass_higher"
+    if row["median_steps_fail"] > row["median_steps_pass"]:
+        return "fail_higher"
+    return "tie"
+
+
+def build_task_step_median_outputs(
+    df: pd.DataFrame,
+    tasks: pd.DataFrame,
+    min_passing: int = MIN_PASSING_TRAJECTORIES,
+    min_failing: int = MIN_FAILING_TRAJECTORIES,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    required = {"task_name", "passed", "step_count"}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Trajectory data is missing required columns: {', '.join(sorted(missing))}")
+
+    work = df[["task_name", "passed", "step_count"]].dropna(subset=["task_name", "step_count"]).copy()
+    merged = work.merge(tasks, on="task_name", how="left", validate="many_to_one")
+    missing_difficulty = merged["difficulty"].isna()
+    if missing_difficulty.any():
+        missing_preview = ", ".join(sorted(merged.loc[missing_difficulty, "task_name"].unique())[:8])
+        raise ValueError(
+            f"Task difficulty is missing for {int(missing_difficulty.sum())} trajectory rows. "
+            f"Examples: {missing_preview}"
+        )
+
+    grouped = (
+        merged.groupby(["task_name", "difficulty", "passed"], as_index=False)["step_count"]
+        .agg(trajectory_count="size", median_steps="median")
+    )
+    counts = grouped.pivot(index=["task_name", "difficulty"], columns="passed", values="trajectory_count").fillna(0)
+    medians = grouped.pivot(index=["task_name", "difficulty"], columns="passed", values="median_steps")
+
+    per_task = pd.DataFrame(
+        {
+            "fail_count": counts.get(0, pd.Series(dtype=float)),
+            "pass_count": counts.get(1, pd.Series(dtype=float)),
+            "median_steps_fail": medians.get(0, pd.Series(dtype=float)),
+            "median_steps_pass": medians.get(1, pd.Series(dtype=float)),
+        }
+    ).reset_index()
+    per_task["fail_count"] = per_task["fail_count"].astype(int)
+    per_task["pass_count"] = per_task["pass_count"].astype(int)
+    per_task = per_task[
+        (per_task["pass_count"] >= min_passing) & (per_task["fail_count"] >= min_failing)
+    ].copy()
+    per_task["median_step_difference_pass_minus_fail"] = (
+        per_task["median_steps_pass"] - per_task["median_steps_fail"]
+    )
+    per_task["comparison"] = per_task.apply(comparison_label, axis=1)
+    per_task = per_task.sort_values(
+        ["difficulty", "task_name"],
+        key=lambda column: difficulty_sort_key(column) if column.name == "difficulty" else column,
+    )
+
+    summary_rows: list[dict[str, Any]] = []
+    for difficulty, group in per_task.groupby("difficulty", sort=False):
+        summary_rows.append(
+            {
+                "difficulty": difficulty,
+                "eligible_task_count": int(len(group)),
+                "pass_higher_task_count": int((group["comparison"] == "pass_higher").sum()),
+                "fail_higher_task_count": int((group["comparison"] == "fail_higher").sum()),
+                "tie_task_count": int((group["comparison"] == "tie").sum()),
+                "mean_difference": float(group["median_step_difference_pass_minus_fail"].mean()),
+                "median_difference": float(group["median_step_difference_pass_minus_fail"].median()),
+            }
+        )
+
+    return per_task, pd.DataFrame(summary_rows)
 
 
 def bin_series(series: pd.Series, variable: str) -> pd.Categorical:
@@ -253,12 +371,84 @@ def plot_effort_bins(
             fig = plot_grouped_heatmap(subset, variable, group_label)
         fig.tight_layout()
 
-        path = output_dir / f"diminishing_returns_{variable}.png"
+        heatmap_suffix = "_heatmap" if group_label is not None else ""
+        path = output_dir / f"diminishing_returns_{variable}{heatmap_suffix}.png"
         fig.savefig(path, dpi=180)
         plt.close(fig)
         paths.append(path)
 
     return paths
+
+
+def plot_reduced_scaffold_heatmaps(scaffold_bins: pd.DataFrame, figures_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    output_dir = figures_dir / "by_scaffold_reduced"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    reduced_bins = scaffold_bins[scaffold_bins["group_value"].isin(REDUCED_SCAFFOLDS)].copy()
+    if reduced_bins.empty:
+        return []
+
+    for variable in EFFORT_VARIABLES:
+        subset = reduced_bins[(reduced_bins["variable"] == variable) & (reduced_bins["n"] > 0)].sort_values("bin_order")
+        if subset.empty:
+            continue
+
+        fig = plot_grouped_heatmap(subset, variable, "scaffold", annotation_fontsize=9.0)
+        fig.tight_layout()
+
+        path = output_dir / f"diminishing_returns_{variable}_reduced_heatmap.png"
+        fig.savefig(path, dpi=180)
+        plt.close(fig)
+        paths.append(path)
+
+    return paths
+
+
+def plot_combined_effort_bins(bins: pd.DataFrame, figures_dir: Path) -> Path | None:
+    output_dir = figures_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    plot_data = bins[bins["n"] > 0].copy()
+    if plot_data.empty:
+        return None
+
+    fig, ax = plt.subplots(figsize=(10.2, 5.8))
+    colors = plt.get_cmap("tab10").colors
+    markers = ["o", "s", "^", "D", "P", "X", "v"]
+
+    for index, variable in enumerate(EFFORT_VARIABLES):
+        subset = plot_data[plot_data["variable"] == variable].sort_values("bin_order")
+        if subset.empty:
+            continue
+        x = subset["bin_order"].to_numpy(dtype=float)
+        y = subset["success_rate"].to_numpy(dtype=float)
+        color = colors[index % len(colors)]
+        ax.plot(
+            x,
+            y,
+            marker=markers[index % len(markers)],
+            linewidth=1.9,
+            markersize=5.5,
+            color=color,
+            label=DISPLAY_NAMES[variable],
+        )
+
+    max_bin_order = int(plot_data["bin_order"].max())
+    ax.set_xticks(range(1, max_bin_order + 1))
+    ax.set_xticklabels([f"Bin {number}" for number in range(1, max_bin_order + 1)])
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Effort bin order, low to high within each variable")
+    ax.set_ylabel("Success rate")
+    ax.set_title("Terminal-Bench success rate by effort variable")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(title="Effort variable", loc="center left", bbox_to_anchor=(1.01, 0.5), frameon=False)
+    fig.tight_layout()
+
+    path = output_dir / "diminishing_returns_combined_effort_variables.png"
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+    return path
 
 
 def is_open_source_model(row: pd.Series) -> bool:
@@ -380,7 +570,7 @@ def plot_model_provider_heatmaps(
             colorbar = fig.colorbar(image, cax=colorbar_ax)
             colorbar.set_label("Success rate")
 
-        path = output_dir / f"diminishing_returns_{variable}.png"
+        path = output_dir / f"diminishing_returns_{variable}_heatmap.png"
         fig.savefig(path, dpi=180)
         plt.close(fig)
         paths.append(path)
@@ -406,7 +596,7 @@ def plot_provider_heatmaps(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
 
         fig = plot_grouped_heatmap(subset, variable, "provider")
         fig.tight_layout()
-        path = output_dir / f"diminishing_returns_{variable}.png"
+        path = output_dir / f"diminishing_returns_{variable}_heatmap.png"
         fig.savefig(path, dpi=180)
         plt.close(fig)
         paths.append(path)
@@ -436,137 +626,36 @@ def plot_model_provider_source_heatmaps(df: pd.DataFrame, figures_dir: Path) -> 
     return paths
 
 
-def plot_effort_bins_by_outcome(bins: pd.DataFrame, figures_dir: Path) -> list[Path]:
-    paths: list[Path] = []
-    output_dir = figures_dir / "by_outcome" / "barcharts"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for variable in EFFORT_VARIABLES:
-        subset = bins[(bins["variable"] == variable) & (bins["n"] > 0)].sort_values("bin_order")
-        if subset.empty:
-            continue
-
-        _, labels = BIN_SPECS[variable]
-        x = subset["bin_order"].to_numpy(dtype=float)
-        success_rate = subset["success_rate"].to_numpy(dtype=float)
-        pass_count = subset["pass_count"].to_numpy(dtype=float)
-        fail_count = subset["n"].to_numpy(dtype=float) - pass_count
-
-        fig, ax_count = plt.subplots(figsize=(8.8, 4.9))
-        bar_width = 0.34
-        ax_count.bar(
-            x - bar_width / 2,
-            fail_count,
-            width=bar_width,
-            color="#c97b63",
-            alpha=0.78,
-            label="Failed trajectories",
-        )
-        ax_count.bar(
-            x + bar_width / 2,
-            pass_count,
-            width=bar_width,
-            color="#6aa57a",
-            alpha=0.78,
-            label="Passed trajectories",
-        )
-        ax_count.set_ylabel("Trajectory count")
-        ax_count.set_xlabel(DISPLAY_NAMES[variable])
-        ax_count.set_xticks(range(1, len(labels) + 1))
-        ax_count.set_xticklabels(labels, rotation=25, ha="right")
-        max_count = max(float(pass_count.max()), float(fail_count.max()))
-        if max_count > 0:
-            ax_count.set_ylim(0, max_count * 1.28)
-        ax_count.grid(axis="y", alpha=0.2)
-
-        ax_rate = ax_count.twinx()
-        ax_rate.plot(
-            x,
-            success_rate,
-            marker="o",
-            linewidth=1.8,
-            color="#1f2d3a",
-            label="Success rate",
-        )
-        ax_rate.set_ylim(0, 1)
-        ax_rate.set_ylabel("Success rate")
-
-        count_handles, count_labels = ax_count.get_legend_handles_labels()
-        rate_handles, rate_labels = ax_rate.get_legend_handles_labels()
-        ax_count.legend(
-            count_handles + rate_handles,
-            count_labels + rate_labels,
-            frameon=False,
-            loc="upper left",
-            bbox_to_anchor=(0.0, 1.0),
-        )
-        ax_count.set_title(f"Terminal-Bench outcomes and success rate by {DISPLAY_NAMES[variable].lower()}")
-        fig.tight_layout()
-
-        path = output_dir / f"diminishing_returns_by_outcome_{variable}.png"
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
-        paths.append(path)
-
-    return paths
-
-
 def plot_effort_performance_box_plots(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
-    if "leaderboard_accuracy" not in df.columns:
-        return []
-
     paths: list[Path] = []
     output_dir = figures_dir / "by_outcome" / "box_plots"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    work = df.copy()
-    work["performance_percent"] = pd.to_numeric(work["leaderboard_accuracy"], errors="coerce") * 100.0
-    work = work.dropna(subset=["performance_percent", "passed"])
-    if work.empty:
-        return []
-
     for variable in EFFORT_VARIABLES:
-        subset = work[[variable, "passed", "performance_percent"]].dropna().copy()
+        subset = df[[variable, "passed"]].dropna().copy()
         if subset.empty:
             continue
 
-        _, labels = BIN_SPECS[variable]
-        subset["effort_bin"] = bin_series(subset[variable], variable)
-        grouped_values: dict[int, list[np.ndarray]] = {}
-        for outcome_value in [0, 1]:
-            values: list[np.ndarray] = []
-            outcome_subset = subset[subset["passed"] == outcome_value]
-            for label in labels:
-                bin_values = outcome_subset.loc[
-                    outcome_subset["effort_bin"].astype(str) == label,
-                    "performance_percent",
-                ].to_numpy(dtype=float)
-                values.append(bin_values)
-            grouped_values[outcome_value] = values
-
-        if not any(len(values) for outcome_values in grouped_values.values() for values in outcome_values):
+        grouped_values = {
+            0: subset.loc[subset["passed"] == 0, variable].to_numpy(dtype=float),
+            1: subset.loc[subset["passed"] == 1, variable].to_numpy(dtype=float),
+        }
+        if not any(len(values) for values in grouped_values.values()):
             continue
 
-        fig, ax = plt.subplots(figsize=(11.2, 5.8))
-        positions = np.arange(1, len(labels) + 1)
+        fig, ax = plt.subplots(figsize=(6.8, 5.4))
         panels = [
-            (0, "Failed trajectories", "#c97b63", -0.18),
-            (1, "Passed trajectories", "#6aa57a", 0.18),
+            (0, "Fail", "#c97b63", 1),
+            (1, "Pass", "#6aa57a", 2),
         ]
-        for outcome_value, _title, color, offset in panels:
+        for outcome_value, _label, color, position in panels:
             values = grouped_values[outcome_value]
-            plot_positions = positions + offset
-            non_empty_positions = [
-                position for position, bin_values in zip(plot_positions, values) if len(bin_values)
-            ]
-            non_empty_values = [bin_values for bin_values in values if len(bin_values)]
-
-            if non_empty_values:
+            if len(values):
                 parts = ax.violinplot(
-                    non_empty_values,
-                    positions=non_empty_positions,
-                    vert=True,
-                    widths=0.34,
+                    [values],
+                    positions=[position],
+                    orientation="vertical",
+                    widths=0.58,
                     showmeans=False,
                     showmedians=False,
                     showextrema=False,
@@ -577,9 +666,9 @@ def plot_effort_performance_box_plots(df: pd.DataFrame, figures_dir: Path) -> li
                     body.set_alpha(0.42)
 
                 ax.boxplot(
-                    non_empty_values,
-                    positions=non_empty_positions,
-                    widths=0.15,
+                    [values],
+                    positions=[position],
+                    widths=0.25,
                     patch_artist=True,
                     showfliers=False,
                     boxprops={"facecolor": "#ffffff", "edgecolor": "#243b4a", "linewidth": 1.1},
@@ -588,28 +677,14 @@ def plot_effort_performance_box_plots(df: pd.DataFrame, figures_dir: Path) -> li
                     capprops={"color": "#243b4a", "linewidth": 1.0},
                 )
 
-        fail_values = grouped_values[0]
-        pass_values = grouped_values[1]
-        tick_labels = [
-            f"{label}\nF={len(fail_bin):,} P={len(pass_bin):,}"
-            for label, fail_bin, pass_bin in zip(labels, fail_values, pass_values)
-        ]
-        ax.set_xticks(positions)
-        ax.set_xticklabels(tick_labels, rotation=30, ha="right", fontsize=8)
-        ax.set_xlim(0.45, len(labels) + 0.55)
-        ax.set_ylim(0, 100)
-        ax.set_ylabel("Leaderboard performance (%)")
-        ax.set_xlabel(DISPLAY_NAMES[variable])
-        ax.set_title(f"Leaderboard performance by {DISPLAY_NAMES[variable].lower()} and trajectory outcome")
+        tick_labels = [f"Fail\nn={len(grouped_values[0]):,}", f"Pass\nn={len(grouped_values[1]):,}"]
+        ax.set_xticks([1, 2])
+        ax.set_xticklabels(tick_labels)
+        ax.set_xlim(0.45, 2.55)
+        ax.set_ylabel(DISPLAY_NAMES[variable])
+        ax.set_xlabel("Trajectory outcome")
+        ax.set_title(f"{DISPLAY_NAMES[variable]} by trajectory outcome")
         ax.grid(axis="y", alpha=0.25)
-        ax.legend(
-            handles=[
-                Patch(facecolor="#c97b63", edgecolor="#2f3337", alpha=0.42, label="Failed trajectories"),
-                Patch(facecolor="#6aa57a", edgecolor="#2f3337", alpha=0.42, label="Passed trajectories"),
-            ],
-            frameon=False,
-            loc="upper right",
-        )
         fig.tight_layout()
 
         path = output_dir / f"diminishing_returns_performance_box_{variable}.png"
@@ -635,41 +710,20 @@ def plot_effort_outcome_stacked_bars(bins: pd.DataFrame, figures_dir: Path) -> l
         total = subset["n"].to_numpy(dtype=float)
         pass_count = subset["pass_count"].to_numpy(dtype=float)
         fail_count = total - pass_count
-        pass_share = pass_count / total
-        fail_share = fail_count / total
 
         fig, ax = plt.subplots(figsize=(8.5, 4.8))
-        ax.bar(x, pass_share, width=0.74, color="#6aa57a", alpha=0.82, label="Passed trajectories")
-        ax.bar(x, fail_share, width=0.74, bottom=pass_share, color="#c97b63", alpha=0.82, label="Failed trajectories")
-        for position, fail_value, pass_value in zip(x, fail_share, pass_share):
-            if pass_value >= 0.04:
-                ax.text(
-                    position,
-                    pass_value / 2,
-                    f"{pass_value:.0%}",
-                    ha="center",
-                    va="center",
-                    fontsize=10,
-                    color="#1f2d3a",
-                )
-            if fail_value >= 0.04:
-                ax.text(
-                    position,
-                    pass_value + fail_value / 2,
-                    f"{fail_value:.0%}",
-                    ha="center",
-                    va="center",
-                    fontsize=10,
-                    color="#1f2d3a",
-                )
+        ax.bar(x, pass_count, width=0.74, color="#6aa57a", alpha=0.82, label="Passed trajectories")
+        ax.bar(x, fail_count, width=0.74, bottom=pass_count, color="#c97b63", alpha=0.82, label="Failed trajectories")
 
         tick_labels = [f"{label}\n(n={int(n):,})" for label, n in zip(labels, total)]
         ax.set_xticks(range(1, len(labels) + 1))
         ax.set_xticklabels(tick_labels, rotation=25, ha="right")
-        ax.set_ylim(0, 1.18)
-        ax.set_ylabel("Share of trajectories in bin")
+        max_total = float(total.max()) if len(total) else 0.0
+        if max_total > 0:
+            ax.set_ylim(0, max_total * 1.12)
+        ax.set_ylabel("Trajectory count")
         ax.set_xlabel(DISPLAY_NAMES[variable])
-        ax.set_title(f"Terminal-Bench outcome composition by {DISPLAY_NAMES[variable].lower()}")
+        ax.set_title(f"Terminal-Bench outcome counts by {DISPLAY_NAMES[variable].lower()}")
         ax.grid(axis="y", alpha=0.25)
         ax.legend(frameon=False, loc="upper right", bbox_to_anchor=(1.0, 1.02))
         fig.tight_layout()
@@ -682,7 +736,12 @@ def plot_effort_outcome_stacked_bars(bins: pd.DataFrame, figures_dir: Path) -> l
     return paths
 
 
-def plot_grouped_heatmap(subset: pd.DataFrame, variable: str, group_label: str) -> plt.Figure:
+def plot_grouped_heatmap(
+    subset: pd.DataFrame,
+    variable: str,
+    group_label: str,
+    annotation_fontsize: float = 6.5,
+) -> plt.Figure:
     _, labels = BIN_SPECS[variable]
     order_frame = (
         subset.groupby("group_value", as_index=False)
@@ -743,7 +802,7 @@ def plot_grouped_heatmap(subset: pd.DataFrame, variable: str, group_label: str) 
                     f"{rate:.0%}\nn={n}",
                     ha="center",
                     va="center",
-                    fontsize=6.5,
+                    fontsize=annotation_fontsize,
                     color=text_color,
                 )
 
@@ -767,15 +826,19 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     df = load_data(args.input)
+    tasks_path = TASKS_DEFAULT if TASKS_DEFAULT.exists() else TASKS_JSON_FALLBACK
+    tasks = load_task_difficulties(tasks_path)
     coverage = build_variable_coverage(df)
+    task_step_medians, task_step_summary = build_task_step_median_outputs(df, tasks)
     bins = build_effort_bins(df)
     figures = plot_effort_bins(bins, args.figures_dir)
-    outcome_figures = plot_effort_bins_by_outcome(bins, args.figures_dir)
+    combined_figure = plot_combined_effort_bins(bins, args.figures_dir)
     outcome_box_figures = plot_effort_performance_box_plots(df, args.figures_dir)
     outcome_stacked_figures = plot_effort_outcome_stacked_bars(bins, args.figures_dir)
+    scaffold_bins = build_effort_bins(df, group_column="scaffold")
+    reduced_scaffold_figures = plot_reduced_scaffold_heatmaps(scaffold_bins, args.figures_dir)
     grouped_figures: list[Path] = []
     if args.by_scaffold:
-        scaffold_bins = build_effort_bins(df, group_column="scaffold")
         grouped_figures.extend(plot_effort_bins(scaffold_bins, args.figures_dir, "scaffold"))
     if args.by_model:
         model_bins = build_effort_bins(df, group_column="model_dir")
@@ -786,15 +849,23 @@ def main() -> None:
 
     bins_path = args.out / "diminishing_returns_effort_bins.csv"
     coverage_path = args.out / "diminishing_returns_variable_coverage.csv"
+    task_step_medians_path = args.out / "task_step_median_per_task.csv"
+    task_step_summary_path = args.out / "task_step_median_by_difficulty.csv"
     bins.to_csv(bins_path, index=False)
     coverage.to_csv(coverage_path, index=False)
+    task_step_medians.to_csv(task_step_medians_path, index=False)
+    task_step_summary.to_csv(task_step_summary_path, index=False)
 
     print(f"Wrote {bins_path}")
     print(f"Wrote {coverage_path}")
+    print(f"Wrote {task_step_medians_path}")
+    print(f"Wrote {task_step_summary_path}")
     print(f"Wrote {len(figures)} figures to {args.figures_dir}")
-    print(f"Wrote {len(outcome_figures)} by-outcome figures to {args.figures_dir / 'by_outcome' / 'barcharts'}")
+    if combined_figure is not None:
+        print(f"Wrote combined effort-variable figure to {combined_figure}")
     print(f"Wrote {len(outcome_box_figures)} by-outcome box plots to {args.figures_dir / 'by_outcome' / 'box_plots'}")
     print(f"Wrote {len(outcome_stacked_figures)} by-outcome stacked plots to {args.figures_dir / 'by_outcome' / 'stacked'}")
+    print(f"Wrote {len(reduced_scaffold_figures)} reduced scaffold heatmaps to {args.figures_dir / 'by_scaffold_reduced'}")
     if grouped_figures:
         print(f"Wrote {len(grouped_figures)} optional grouped figures to {args.figures_dir}")
 
