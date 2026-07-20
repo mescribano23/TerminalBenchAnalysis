@@ -59,6 +59,13 @@ Scrape Terminal-Bench 2.0 task metadata:
 python -m scripts.mining.01_scrape_tbench_benchmarks
 ```
 
+Scrape Terminal-Bench 2.0 `task.toml` metadata from GitHub, including
+expert and junior time estimates:
+
+```powershell
+python -m scripts.mining.04_scrape_tbench_task_toml_metadata
+```
+
 ### 2. Collect Trajectories
 
 Collect the balanced trajectory sample used by the analysis:
@@ -124,6 +131,12 @@ Analyze effort by tag group and semantic tag cluster:
 
 ```powershell
 python -m scripts.analysis.tasks.tags.02_analyze_tag_effort
+```
+
+Compare trajectory durations with expert and junior task time estimates:
+
+```powershell
+python -m scripts.analysis.tasks.01_analyze_time_estimates
 ```
 
 ### 5. Analyze Diminishing Returns

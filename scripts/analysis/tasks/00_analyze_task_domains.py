@@ -62,7 +62,7 @@ EFFORT_DISPLAY_NAMES = {
     "command_count": "Command count",
     "tool_call_count": "Tool call count",
     "total_tokens": "Total tokens",
-    "duration_seconds_from_timestamps": "Duration seconds",
+    "duration_seconds": "Duration seconds",
     "cost_usd_positive": "Positive cost USD",
 }
 EFFORT_SOURCE_COLUMNS = set(EFFORT_DISPLAY_NAMES) - {"cost_usd_positive"} | {"cost_usd"}
@@ -417,6 +417,11 @@ def format_success_rate_axis(ax: plt.Axes) -> None:
     ax.grid(axis="x", alpha=0.25)
 
 
+def format_success_rate_y_axis(ax: plt.Axes) -> None:
+    ax.set_ylim(0, 1)
+    ax.grid(axis="y", alpha=0.25)
+
+
 def plot_task_weighted_success(
     domain_table: pd.DataFrame,
     figures_dir: Path,
@@ -425,13 +430,27 @@ def plot_task_weighted_success(
     output_prefix: str = "task_domain",
 ) -> Path:
     plot_df = domain_table.sort_values("task_mean_pass_rate", ascending=False).copy()
-    plot_df["category_label"] = plot_df.apply(lambda row: category_count_label(row, dimension_column), axis=1)
-    fig, ax = plt.subplots(figsize=(9.5, figure_height(len(plot_df))))
-    ax.barh(plot_df["category_label"], plot_df["task_mean_pass_rate"])
-    ax.invert_yaxis()
-    format_success_rate_axis(ax)
-    ax.set_xlabel("Task-weighted pass rate")
-    ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
+    if dimension_column == "category":
+        plot_df["category_label"] = plot_df.apply(
+            lambda row: category_count_label_multiline(row, dimension_column),
+            axis=1,
+        )
+        fig, ax = plt.subplots(figsize=(12.5, 6.2))
+        ax.bar(plot_df["category_label"], plot_df["task_mean_pass_rate"], width=0.78)
+        format_success_rate_y_axis(ax)
+        format_category_axis(ax)
+        ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:])
+        ax.set_ylabel("Task-weighted pass rate")
+    else:
+        plot_df["category_label"] = plot_df.apply(lambda row: category_count_label(row, dimension_column), axis=1)
+        bar_height = 0.8
+        plot_height = 2.5 if dimension_column == "difficulty" else figure_height(len(plot_df))
+        fig, ax = plt.subplots(figsize=(9.5, plot_height))
+        ax.barh(plot_df["category_label"], plot_df["task_mean_pass_rate"], height=bar_height)
+        ax.invert_yaxis()
+        format_success_rate_axis(ax)
+        ax.set_xlabel("Task-weighted pass rate")
+        ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
     ax.set_title(f"Task-weighted pass rate by {dimension_label}")
     note = (
         "Note: Bars show the mean pass rate across tasks.\n"
@@ -604,40 +623,54 @@ def plot_effort_heatmap(
         else:
             normalized[column] = (values - min_value) / (max_value - min_value)
 
-    labels = [
-        f"{category} (tasks={int(domain_lookup.loc[category, 'n_tasks'])}, "
-        f"traj={int(domain_lookup.loc[category, 'n_trajectories']):,})"
-        f"{'*' if domain_lookup.loc[category, 'low_task_count'] else ''}"
-        for category in heatmap.index
-    ]
+    if dimension_column == "category":
+        plot_values = heatmap.T
+        plot_normalized = normalized.T
+        x_labels = plot_values.columns.tolist()
+        y_labels = plot_values.index.tolist()
+        figsize = (figure_width(len(x_labels)), 5.8)
+    else:
+        plot_values = heatmap
+        plot_normalized = normalized
+        x_labels = plot_values.columns.tolist()
+        if dimension_column == "difficulty":
+            y_labels = plot_values.index.tolist()
+        else:
+            y_labels = [
+                f"{category} (tasks={int(domain_lookup.loc[category, 'n_tasks'])}, "
+                f"traj={int(domain_lookup.loc[category, 'n_trajectories']):,})"
+                f"{'*' if domain_lookup.loc[category, 'low_task_count'] else ''}"
+                for category in plot_values.index
+            ]
+        figsize = (11.5, figure_height(len(plot_values)))
 
-    fig, ax = plt.subplots(figsize=(11.5, figure_height(len(heatmap))))
-    cmap = plt.get_cmap("YlOrRd").copy()
+    fig, ax = plt.subplots(figsize=figsize)
+    cmap = plt.get_cmap("Blues").copy()
     cmap.set_bad("#f2f2f2")
-    matrix = np.ma.masked_invalid(normalized.to_numpy(dtype=float))
+    matrix = np.ma.masked_invalid(plot_normalized.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
 
-    ax.set_xticks(range(len(heatmap.columns)))
-    ax.set_xticklabels(heatmap.columns, rotation=35, ha="right")
-    ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels)
-    ax.set_xlabel("Effort variable")
-    ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
+    ax.set_xticks(range(len(x_labels)))
+    ax.set_xticklabels(x_labels, rotation=40 if dimension_column == "category" else 35, ha="right")
+    ax.set_yticks(range(len(y_labels)))
+    ax.set_yticklabels(y_labels)
+    ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:] if dimension_column == "category" else "Effort variable")
+    ax.set_ylabel("Effort variable" if dimension_column == "category" else dimension_label[:1].upper() + dimension_label[1:])
     ax.set_title(f"Median trajectory effort by {dimension_label}, ordered by task coverage")
 
-    for row_index in range(heatmap.shape[0]):
-        for column_index in range(heatmap.shape[1]):
-            value = heatmap.iat[row_index, column_index]
+    for row_index in range(plot_values.shape[0]):
+        for column_index in range(plot_values.shape[1]):
+            value = plot_values.iat[row_index, column_index]
             if pd.isna(value):
                 continue
-            text_color = "white" if normalized.iat[row_index, column_index] > 0.55 else "black"
+            text_color = "white" if plot_normalized.iat[row_index, column_index] > 0.55 else "black"
             ax.text(
                 column_index,
                 row_index,
                 format_cell_value(float(value)),
                 ha="center",
                 va="center",
-                fontsize=7,
+                fontsize=12,
                 color=text_color,
             )
 
@@ -832,48 +865,41 @@ def plot_category_difficulty_pass_rate_heatmap(
     path.parent.mkdir(parents=True, exist_ok=True)
     category_order = ordered_dimension_values(domain_table, "category")
     difficulty_order = [value for value in DIFFICULTY_ORDER if value in pass_rates["difficulty"].unique()]
-    category_lookup = domain_table.set_index("category")[["n_tasks", "n_trajectories", "low_task_count"]]
 
     heatmap = (
-        pass_rates.pivot(index="category", columns="difficulty", values="pass_rate")
-        .reindex(index=category_order, columns=difficulty_order)
+        pass_rates.pivot(index="difficulty", columns="category", values="pass_rate")
+        .reindex(index=difficulty_order, columns=category_order)
         .astype(float)
     )
     counts = (
-        pass_rates.pivot(index="category", columns="difficulty", values="n_trajectories")
-        .reindex(index=category_order, columns=difficulty_order)
+        pass_rates.pivot(index="difficulty", columns="category", values="n_trajectories")
+        .reindex(index=difficulty_order, columns=category_order)
         .fillna(0)
         .astype(int)
     )
-    row_labels = [
-        f"{category} (tasks={int(category_lookup.loc[category, 'n_tasks'])}, "
-        f"traj={int(category_lookup.loc[category, 'n_trajectories']):,})"
-        f"{'*' if category_lookup.loc[category, 'low_task_count'] else ''}"
-        for category in heatmap.index
-    ]
 
-    fig, ax = plt.subplots(figsize=(10.5, figure_height(len(heatmap))))
+    fig, ax = plt.subplots(figsize=(figure_width(len(category_order)), 5.2))
     cmap = plt.get_cmap("RdYlGn").copy()
     cmap.set_bad("#f2f2f2")
     matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
 
-    ax.set_xticks(range(len(difficulty_order)))
-    ax.set_xticklabels(difficulty_order, rotation=30, ha="right")
-    ax.set_yticks(range(len(row_labels)))
-    ax.set_yticklabels(row_labels, fontsize=8 if len(row_labels) > 18 else 9)
-    ax.set_xlabel("Task difficulty")
-    ax.set_ylabel("Task category")
+    ax.set_xticks(range(len(category_order)))
+    ax.set_xticklabels(category_order, rotation=40, ha="right", fontsize=10)
+    ax.set_yticks(range(len(difficulty_order)))
+    ax.set_yticklabels(difficulty_order)
+    ax.set_xlabel("Task category")
+    ax.set_ylabel("Task difficulty")
     ax.set_title("Pass rate by task category and difficulty")
-    ax.set_xticks(np.arange(-0.5, len(difficulty_order), 1), minor=True)
-    ax.set_yticks(np.arange(-0.5, len(row_labels), 1), minor=True)
+    ax.set_xticks(np.arange(-0.5, len(category_order), 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, len(difficulty_order), 1), minor=True)
     ax.grid(which="minor", color="white", linewidth=1.0)
     ax.tick_params(which="minor", bottom=False, left=False)
 
-    for row_index, category in enumerate(heatmap.index):
-        for column_index, difficulty in enumerate(difficulty_order):
-            rate = heatmap.loc[category, difficulty]
-            count = counts.loc[category, difficulty]
+    for row_index, difficulty in enumerate(difficulty_order):
+        for column_index, category in enumerate(category_order):
+            rate = heatmap.loc[difficulty, category]
+            count = counts.loc[difficulty, category]
             if pd.isna(rate) or count == 0:
                 continue
             text_color = "white" if rate < 0.35 else "black"
@@ -883,7 +909,7 @@ def plot_category_difficulty_pass_rate_heatmap(
                 f"{rate:.2f}\nn={count}",
                 ha="center",
                 va="center",
-                fontsize=6.5,
+                fontsize=9,
                 color=text_color,
             )
 
