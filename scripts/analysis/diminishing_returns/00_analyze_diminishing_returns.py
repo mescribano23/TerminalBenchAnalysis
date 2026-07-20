@@ -58,7 +58,7 @@ EFFORT_VARIABLES = [
     "command_count",
     "tool_call_count",
     "total_tokens",
-    "duration_seconds_from_timestamps",
+    "duration_seconds",
     "cost_usd_positive",
 ]
 
@@ -87,7 +87,7 @@ DISPLAY_NAMES = {
     "command_count": "Command count",
     "tool_call_count": "Tool call count",
     "total_tokens": "Total tokens",
-    "duration_seconds_from_timestamps": "Duration seconds",
+    "duration_seconds": "Duration seconds",
     "cost_usd_positive": "Positive cost USD",
 }
 
@@ -100,7 +100,7 @@ BIN_SPECS = {
         [-0.5, 10_000, 100_000, 500_000, 1_000_000, 3_000_000, 10_000_000, math.inf],
         ["0-10k", "10k-100k", "100k-500k", "500k-1M", "1M-3M", "3M-10M", ">10M"],
     ),
-    "duration_seconds_from_timestamps": (
+    "duration_seconds": (
         [-0.000001, 10, 60, 300, 900, 1800, 3600, math.inf],
         ["0-10s", "10-60s", "1-5m", "5-15m", "15-30m", "30-60m", ">60m"],
     ),
@@ -156,7 +156,7 @@ def load_data(path: Path) -> pd.DataFrame:
         "command_count",
         "tool_call_count",
         "total_tokens",
-        "duration_seconds_from_timestamps",
+        "duration_seconds",
         "cost_usd",
     ]
     missing = [column for column in required_numeric if column not in df.columns]
@@ -705,7 +705,6 @@ def plot_effort_outcome_stacked_bars(bins: pd.DataFrame, figures_dir: Path) -> l
         if subset.empty:
             continue
 
-        _, labels = BIN_SPECS[variable]
         x = subset["bin_order"].to_numpy(dtype=float)
         total = subset["n"].to_numpy(dtype=float)
         pass_count = subset["pass_count"].to_numpy(dtype=float)
@@ -715,8 +714,11 @@ def plot_effort_outcome_stacked_bars(bins: pd.DataFrame, figures_dir: Path) -> l
         ax.bar(x, pass_count, width=0.74, color="#6aa57a", alpha=0.82, label="Passed trajectories")
         ax.bar(x, fail_count, width=0.74, bottom=pass_count, color="#c97b63", alpha=0.82, label="Failed trajectories")
 
-        tick_labels = [f"{label}\n(n={int(n):,})" for label, n in zip(labels, total)]
-        ax.set_xticks(range(1, len(labels) + 1))
+        tick_labels = [
+            f"{row.effort_bin}\n(n={int(row.n):,})"
+            for row in subset.itertuples(index=False)
+        ]
+        ax.set_xticks(x)
         ax.set_xticklabels(tick_labels, rotation=25, ha="right")
         max_total = float(total.max()) if len(total) else 0.0
         if max_total > 0:

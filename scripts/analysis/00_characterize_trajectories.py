@@ -367,23 +367,6 @@ def outcome_label(data: dict[str, Any]) -> str:
     return "missing"
 
 
-def duration_seconds(steps: list[dict[str, Any]]) -> float | None:
-    from datetime import datetime
-
-    times = []
-    for step in steps:
-        ts = step.get("timestamp")
-        if not isinstance(ts, str):
-            continue
-        try:
-            times.append(datetime.fromisoformat(ts.replace("Z", "+00:00")))
-        except ValueError:
-            pass
-    if len(times) >= 2:
-        return (max(times) - min(times)).total_seconds()
-    return None
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path, default=ROOT_DEFAULT)
@@ -493,7 +476,7 @@ def main() -> None:
         reward = index_meta.get("reward", "")
         outcome_from_reward = reward_outcome(reward)
         outcome = outcome_from_reward or outcome_label(data)
-        dur = duration_seconds([s for s in steps if isinstance(s, dict)])
+        duration_seconds = parse_float(index_meta.get("duration"))
 
         prompt_tokens = 0
         completion_tokens = 0
@@ -582,7 +565,7 @@ def main() -> None:
             "completion_tokens": completion_tokens if metric_steps else "",
             "total_tokens": prompt_tokens + completion_tokens if metric_steps else "",
             "cost_usd": round(cost_usd, 8) if cost_metric_steps else "",
-            "duration_seconds_from_timestamps": dur if dur is not None else "",
+            "duration_seconds": duration_seconds if duration_seconds is not None else "",
             "has_final_marker": has_final_marker,
         }
         final_metrics = data.get("final_metrics") if isinstance(data.get("final_metrics"), dict) else {}
@@ -605,7 +588,7 @@ def main() -> None:
         "step_count", "agent_step_count", "user_step_count", "system_step_count",
         "tool_call_count", "command_count", "message_chars", "reasoning_chars", "observation_chars",
         "metric_step_count", "prompt_tokens", "completion_tokens", "total_tokens", "cost_usd",
-        "duration_seconds_from_timestamps", "has_final_marker",
+        "duration_seconds", "has_final_marker",
     ]
     with (out / "trajectory_summary.csv").open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
@@ -645,7 +628,7 @@ def main() -> None:
         "tool_call_count",
         "total_tokens",
         "cost_usd",
-        "duration_seconds_from_timestamps",
+        "duration_seconds",
     ]
     for outcome_name in ("pass", "fail"):
         items = [row for row in rows if row.get("reward_outcome") == outcome_name]
@@ -669,7 +652,7 @@ def main() -> None:
     tool_counts = [int(r["tool_call_count"]) for r in rows if r.get("tool_call_count") != ""]
     costs = [float(r["cost_usd"]) for r in rows if r.get("cost_usd") not in {"", None}]
     tokens = [float(r["total_tokens"]) for r in rows if r.get("total_tokens") not in {"", None}]
-    durations = [float(r["duration_seconds_from_timestamps"]) for r in rows if r.get("duration_seconds_from_timestamps") not in {"", None}]
+    durations = [float(r["duration_seconds"]) for r in rows if r.get("duration_seconds") not in {"", None}]
     leaderboard_accuracies = [
         float(s["leaderboard_accuracy"])
         for s in leaderboard_submissions
@@ -712,7 +695,7 @@ def main() -> None:
             "tool_call_count": summarize_numeric(tool_counts),
             "total_tokens": summarize_numeric(tokens),
             "cost_usd": summarize_numeric(costs),
-            "duration_seconds_from_timestamps": summarize_numeric(durations),
+            "duration_seconds": summarize_numeric(durations),
         },
         "artifacts": {
             "trajectory_summary_csv": display_path(out / "trajectory_summary.csv"),

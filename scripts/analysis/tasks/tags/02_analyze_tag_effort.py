@@ -47,7 +47,7 @@ EFFORT_DISPLAY_NAMES = {
     "tool_call_count": "Tool call count",
     "command_count": "Command count",
     "total_tokens": "Total tokens",
-    "duration_seconds_from_timestamps": "Duration seconds",
+    "duration_seconds": "Duration seconds",
     "cost_usd_positive": "Positive cost USD",
 }
 EFFORT_SOURCE_COLUMNS = set(EFFORT_DISPLAY_NAMES) - {"cost_usd_positive"} | {"cost_usd"}
@@ -57,7 +57,7 @@ HEATMAP_VARIABLES = [
     "tool_call_count",
     "command_count",
     "total_tokens",
-    "duration_seconds_from_timestamps",
+    "duration_seconds",
     "cost_usd_positive",
 ]
 
@@ -302,7 +302,7 @@ def format_heatmap_value(value: float, variable: str) -> str:
         return f"${value:.2f}"
     if variable in {"prompt_tokens", "completion_tokens", "total_tokens"}:
         return f"{value / 1000:.0f}k"
-    if variable == "duration_seconds_from_timestamps":
+    if variable == "duration_seconds":
         return f"{value:.0f}s"
     if abs(value) >= 100:
         return f"{value:.0f}"
