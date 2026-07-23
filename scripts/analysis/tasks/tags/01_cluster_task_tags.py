@@ -9,17 +9,12 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 from sklearn.cluster import AgglomerativeClustering
 
-
-def find_repo_root(start: Path) -> Path:
-    for path in (start, *start.parents):
-        if (path / "data").exists() and (path / "reports").exists() and (path / "scripts").exists():
-            return path
-    raise ValueError(f"Could not find repository root from {start}")
+from scripts.benchmark_paths import find_repo_root
 
 
 ROOT = find_repo_root(Path(__file__).resolve().parent)
 
-TASKS_JSON = ROOT / "data/raw/terminal_bench_2_tasks_current.json"
+TASKS_JSON = ROOT / "data/raw/terminal_bench_2_0/terminal_bench_2_tasks.json"
 OUT_DIR = ROOT / "data/processed_live/task_mining/tags/semantic_clusters"
 MODEL_NAME = "all-MiniLM-L6-v2"
 

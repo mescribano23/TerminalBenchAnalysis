@@ -21,14 +21,16 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
+from scripts.benchmark_paths import SUPPORTED_BENCHMARKS, paths_for_benchmark
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 DATA_DIR = REPO_ROOT / "data"
-ROOT_DEFAULT = DATA_DIR / "trajectories" / "current_leaderboard"
+ROOT_DEFAULT = DATA_DIR / "trajectories" / "terminal_bench_2_0"
 OUT_DEFAULT = DATA_DIR / "processed"
-LEADERBOARD_DEFAULT = DATA_DIR / "raw" / "leaderboard_submissions_current.json"
-INDEX_DEFAULT = DATA_DIR / "indexes" / "trajectory_trials_current.json"
+LEADERBOARD_DEFAULT = DATA_DIR / "raw" / "terminal_bench_2_0" / "leaderboard_submissions.json"
+INDEX_DEFAULT = DATA_DIR / "indexes" / "terminal_bench_2_0" / "trajectory_trials.json"
 
 BASH_FENCE_RE = re.compile(r"```(?:bash|sh|shell)?\s*\n(.*?)```", re.IGNORECASE | re.DOTALL)
 COMPLETE_RE = re.compile(r"\bCOMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\b")
@@ -90,10 +92,6 @@ def load_trajectory_index(path: Path, root: Path) -> dict[str, dict[str, Any]]:
         rel_key = ""
         if root_key and file_path.startswith(f"{root_key}/"):
             rel_key = file_path[len(root_key) + 1 :]
-        else:
-            marker = "data/trajectories/balanced_12/"
-            if marker in file_path:
-                rel_key = file_path.split(marker, 1)[1]
         if rel_key:
             by_rel[rel_key] = entry
 
@@ -369,24 +367,47 @@ def outcome_label(data: dict[str, Any]) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--root", type=Path, default=ROOT_DEFAULT)
-    ap.add_argument("--out", type=Path, default=OUT_DEFAULT)
-    ap.add_argument("--leaderboard", type=Path, default=LEADERBOARD_DEFAULT)
-    ap.add_argument("--trajectory-index", type=Path, default=INDEX_DEFAULT)
+    ap.add_argument(
+        "--benchmark",
+        choices=SUPPORTED_BENCHMARKS,
+        default=None,
+        help=(
+            "Resolve root/out/leaderboard/index paths for a benchmark. "
+            "Omit to use the Terminal-Bench 2.0 defaults."
+        ),
+    )
+    ap.add_argument("--root", type=Path, default=None)
+    ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--leaderboard", type=Path, default=None)
+    ap.add_argument("--trajectory-index", type=Path, default=None)
     args = ap.parse_args()
 
-    root = args.root
-    out = args.out
+    benchmark_paths = (
+        paths_for_benchmark(REPO_ROOT, args.benchmark)
+        if args.benchmark is not None
+        else None
+    )
+    root = args.root or (benchmark_paths.trajectories_dir if benchmark_paths else ROOT_DEFAULT)
+    out = args.out or (benchmark_paths.processed_dir if benchmark_paths else OUT_DEFAULT)
+    leaderboard_path = (
+        args.leaderboard
+        or (benchmark_paths.leaderboard_submissions if benchmark_paths else LEADERBOARD_DEFAULT)
+    )
+    trajectory_index = (
+        args.trajectory_index
+        or (benchmark_paths.trajectory_index if benchmark_paths else INDEX_DEFAULT)
+    )
+
     out.mkdir(parents=True, exist_ok=True)
 
     paths = sorted(root.rglob("*.json"))
-    index_by_rel = load_trajectory_index(args.trajectory_index, root)
+    index_by_rel = load_trajectory_index(trajectory_index, root)
     leaderboard_by_checksum: dict[str, list[dict[str, Any]]] = defaultdict(list)
     leaderboard_task_names: dict[str, str] = {}
     leaderboard_submissions: list[dict[str, Any]] = []
-    if args.leaderboard.exists():
+    if leaderboard_path.exists():
         try:
-            leaderboard = load_json(args.leaderboard)
+            leaderboard = load_json(leaderboard_path)
             if isinstance(leaderboard, list):
                 for rank, entry in enumerate(leaderboard, start=1):
                     if not isinstance(entry, dict):

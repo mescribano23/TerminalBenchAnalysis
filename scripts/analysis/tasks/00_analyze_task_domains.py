@@ -35,12 +35,7 @@ from matplotlib.ticker import StrMethodFormatter
 import numpy as np
 import pandas as pd
 
-
-def find_repo_root(start: Path) -> Path:
-    for path in (start, *start.parents):
-        if (path / "data").exists() and (path / "reports").exists() and (path / "scripts").exists():
-            return path
-    raise ValueError(f"Could not find repository root from {start}")
+from scripts.benchmark_paths import find_repo_root
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -50,7 +45,7 @@ DATA_PROCESSED_LIVE_DIR = DATA_DIR / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
 
 TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "trajectory_summary.csv"
-TASKS_DEFAULT = DATA_DIR / "raw" / "terminal_bench_2_tasks_current.json"
+TASKS_DEFAULT = DATA_DIR / "raw" / "terminal_bench_2_0" / "terminal_bench_2_tasks.json"
 OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining"
 FIGURES_DEFAULT = REPORTS_DIR / "tasks"
 

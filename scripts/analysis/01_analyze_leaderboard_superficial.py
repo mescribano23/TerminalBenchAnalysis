@@ -22,6 +22,8 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
+from scripts.benchmark_paths import SUPPORTED_BENCHMARKS, paths_for_benchmark
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -316,14 +318,41 @@ def plot_leaderboard_figures(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=Path, default=INPUT_DEFAULT)
-    parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
-    parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
+    parser.add_argument(
+        "--benchmark",
+        choices=SUPPORTED_BENCHMARKS,
+        default=None,
+        help=(
+            "Resolve input/out/figure paths for a benchmark. Omit to use "
+            "the Terminal-Bench 2.0 defaults."
+        ),
+    )
+    parser.add_argument("--input", type=Path, default=None)
+    parser.add_argument("--out", type=Path, default=None)
+    parser.add_argument("--figures-dir", type=Path, default=None)
     args = parser.parse_args()
 
-    rows = load_rows(args.input)
-    args.out.mkdir(parents=True, exist_ok=True)
-    args.figures_dir.mkdir(parents=True, exist_ok=True)
+    benchmark_paths = (
+        paths_for_benchmark(REPO_ROOT, args.benchmark)
+        if args.benchmark is not None
+        else None
+    )
+    input_path = (
+        args.input
+        or (
+            benchmark_paths.processed_dir / "leaderboard_submission_summary.csv"
+            if benchmark_paths
+            else INPUT_DEFAULT
+        )
+    )
+    out = args.out or (benchmark_paths.processed_dir if benchmark_paths else OUT_DEFAULT)
+    figures_dir = args.figures_dir or (
+        benchmark_paths.figures_dir if benchmark_paths else FIGURES_DIR
+    )
+
+    rows = load_rows(input_path)
+    out.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
 
     scaffold_groups = group_rows(rows, "scaffold")
     exploded_rows = exploded_model_rows(rows)
@@ -334,7 +363,7 @@ def main() -> None:
         scaffold_groups,
         exploded_rows,
         exploded_model_groups,
-        args.figures_dir,
+        figures_dir,
     )
 
 

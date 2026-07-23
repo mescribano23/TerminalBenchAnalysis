@@ -17,12 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-
-def find_repo_root(start: Path) -> Path:
-    for path in (start, *start.parents):
-        if (path / "data").exists() and (path / "reports").exists() and (path / "scripts").exists():
-            return path
-    raise ValueError(f"Could not find repository root from {start}")
+from scripts.benchmark_paths import find_repo_root
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent

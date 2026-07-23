@@ -3,6 +3,7 @@
 
 Outputs:
 - data/processed_live/task_mining/time_estimates/trajectory_time_estimate_comparison.csv
+- data/processed_live/task_mining/time_estimates/task_average_duration_comparison.csv
 - data/processed_live/task_mining/time_estimates/task_time_estimate_distribution_summary.csv
 - reports/tasks/time_estimates/distribution_task_time_estimates.png
 """
@@ -16,12 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-
-def find_repo_root(start: Path) -> Path:
-    for path in (start, *start.parents):
-        if (path / "data").exists() and (path / "reports").exists() and (path / "scripts").exists():
-            return path
-    raise ValueError(f"Could not find repository root from {start}")
+from scripts.benchmark_paths import find_repo_root
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -31,7 +27,7 @@ DATA_PROCESSED_LIVE_DIR = DATA_DIR / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
 
 TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "trajectory_summary.csv"
-ESTIMATES_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "terminal_bench_2_task_toml_metadata_current.csv"
+ESTIMATES_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "terminal_bench_2_task_toml_metadata.csv"
 OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "time_estimates"
 FIGURES_DEFAULT = REPORTS_DIR / "tasks" / "time_estimates"
 
@@ -64,6 +60,20 @@ TIME_ESTIMATE_COLORS = {
     "expert_time_estimate_min": "#4f8f63",
     "junior_time_estimate_min": "#73a6c8",
 }
+TASK_DURATION_OUTPUT_COLUMNS = [
+    "task_name",
+    "n_trajectories",
+    "n_passed",
+    "pass_rate",
+    "mean_duration_min",
+    "median_duration_min",
+    "expert_time_estimate_min",
+    "junior_time_estimate_min",
+    "mean_duration_vs_expert_estimate",
+    "mean_duration_vs_junior_estimate",
+]
+OBSERVED_MEAN_DURATION_LABEL = "Observed mean duration"
+OBSERVED_MEAN_DURATION_COLOR = "#c65d4a"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -161,7 +171,10 @@ def valid_task_estimates(estimates: pd.DataFrame) -> pd.DataFrame:
     ].copy()
 
 
-def summarize_task_time_estimates(estimates: pd.DataFrame) -> pd.DataFrame:
+def summarize_task_time_distributions(
+    estimates: pd.DataFrame,
+    task_duration_comparison: pd.DataFrame,
+) -> pd.DataFrame:
     work = valid_task_estimates(estimates)
     rows: list[dict[str, object]] = []
     percentiles = {
@@ -185,7 +198,50 @@ def summarize_task_time_estimates(estimates: pd.DataFrame) -> pd.DataFrame:
         }
         row.update({name: float(values.quantile(q)) for name, q in percentiles.items()})
         rows.append(row)
+    if not task_duration_comparison.empty:
+        values = task_duration_comparison["mean_duration_min"].dropna()
+        if not values.empty:
+            row = {
+                "estimate_type": OBSERVED_MEAN_DURATION_LABEL,
+                "n_tasks": int(values.shape[0]),
+                "min_min": float(values.min()),
+                "mean_min": float(values.mean()),
+                "max_min": float(values.max()),
+            }
+            row.update({name: float(values.quantile(q)) for name, q in percentiles.items()})
+            rows.append(row)
     return pd.DataFrame(rows)
+
+
+def build_task_average_duration_comparison(comparison: pd.DataFrame) -> pd.DataFrame:
+    duration_df = comparison[
+        comparison["has_valid_time_comparison"]
+        & comparison["duration_min"].notna()
+        & comparison["duration_seconds"].ge(0)
+    ].copy()
+    if duration_df.empty:
+        return pd.DataFrame(columns=TASK_DURATION_OUTPUT_COLUMNS)
+
+    grouped = (
+        duration_df.groupby("task_name", as_index=False)
+        .agg(
+            n_trajectories=("duration_min", "size"),
+            n_passed=("passed", "sum"),
+            mean_duration_min=("duration_min", "mean"),
+            median_duration_min=("duration_min", "median"),
+            expert_time_estimate_min=("expert_time_estimate_min", "first"),
+            junior_time_estimate_min=("junior_time_estimate_min", "first"),
+        )
+        .sort_values("task_name")
+    )
+    grouped["pass_rate"] = grouped["n_passed"] / grouped["n_trajectories"]
+    grouped["mean_duration_vs_expert_estimate"] = (
+        grouped["mean_duration_min"] / grouped["expert_time_estimate_min"]
+    )
+    grouped["mean_duration_vs_junior_estimate"] = (
+        grouped["mean_duration_min"] / grouped["junior_time_estimate_min"]
+    )
+    return grouped.loc[:, TASK_DURATION_OUTPUT_COLUMNS]
 
 
 def format_minutes(value: float) -> str:
@@ -207,23 +263,42 @@ def format_minutes(value: float) -> str:
 
 def plot_task_time_estimate_distribution(
     estimates: pd.DataFrame,
-    comparison: pd.DataFrame,
+    task_duration_comparison: pd.DataFrame,
     path: Path,
 ) -> Path | None:
     plot_df = valid_task_estimates(estimates)
     if plot_df.empty:
         return None
 
-    duration_df = comparison[
-        comparison["has_valid_time_comparison"]
-        & comparison["duration_min"].notna()
-        & (comparison["duration_seconds"] >= 0)
+    duration_df = task_duration_comparison[
+        task_duration_comparison["mean_duration_min"].notna()
+        & task_duration_comparison["mean_duration_min"].ge(0)
     ].copy()
     if duration_df.empty:
         return None
 
-    estimate_values = pd.concat([plot_df[column] for column in TIME_ESTIMATE_LABELS], ignore_index=True)
-    estimate_max = float(estimate_values.max())
+    distribution_series = [
+        (
+            TIME_ESTIMATE_LABELS["expert_time_estimate_min"],
+            plot_df["expert_time_estimate_min"],
+            TIME_ESTIMATE_COLORS["expert_time_estimate_min"],
+            0.44,
+        ),
+        (
+            TIME_ESTIMATE_LABELS["junior_time_estimate_min"],
+            plot_df["junior_time_estimate_min"],
+            TIME_ESTIMATE_COLORS["junior_time_estimate_min"],
+            0.44,
+        ),
+        (
+            OBSERVED_MEAN_DURATION_LABEL,
+            duration_df["mean_duration_min"],
+            OBSERVED_MEAN_DURATION_COLOR,
+            0.54,
+        ),
+    ]
+    all_values = pd.concat([series for _, series, _, _ in distribution_series], ignore_index=True).dropna()
+    axis_max = float(all_values.max())
     shared_bins = np.array(
         [
             0,
@@ -248,126 +323,79 @@ def plot_task_time_estimate_distribution(
         ],
         dtype=float,
     )
-    shared_bins = shared_bins[shared_bins <= estimate_max]
-    if shared_bins[-1] < estimate_max:
-        shared_bins = np.append(shared_bins, estimate_max)
+    shared_bins = shared_bins[shared_bins <= axis_max]
+    if shared_bins[-1] < axis_max:
+        shared_bins = np.append(shared_bins, axis_max)
 
-    fig, (hist_ax, duration_ax) = plt.subplots(
-        2,
-        1,
-        figsize=(10.8, 8.2),
-        sharex=True,
-        gridspec_kw={"height_ratios": [1.05, 1.0]},
-    )
+    fig, ax = plt.subplots(figsize=(10.8, 5.9))
+    median_annotations: list[tuple[float, str, str]] = []
 
-    for column, label in TIME_ESTIMATE_LABELS.items():
-        values = plot_df[column].dropna().to_numpy(dtype=float)
-        weights = np.ones_like(values) / len(values)
-        hist_ax.hist(
-            values,
-            bins=shared_bins,
-            weights=weights,
-            alpha=0.52,
-            color=TIME_ESTIMATE_COLORS[column],
-            edgecolor="white",
-            linewidth=0.7,
-            label=label,
-        )
-
-        median_value = float(np.median(values))
-        hist_ax.axvline(
-            median_value,
-            color=TIME_ESTIMATE_COLORS[column],
-            linestyle="--",
-            linewidth=1.1,
-            alpha=0.8,
-        )
-        hist_ax.text(
-            median_value,
-            hist_ax.get_ylim()[1] * 0.92,
-            f"median {format_minutes(median_value)}",
-            rotation=90,
-            va="top",
-            ha="right",
-            fontsize=8,
-            color=TIME_ESTIMATE_COLORS[column],
-        )
-
-    hist_ax.set_xscale("symlog", linthresh=1)
-    hist_ax.set_xlim(0, estimate_max)
-    hist_ax.set_ylabel("Share of tasks per bin")
-    hist_ax.set_title("Distribution of task-level human time estimates")
-    hist_ax.grid(axis="y", alpha=0.25)
-    hist_ax.legend(frameon=False, loc="upper right")
-    estimate_tick_values = [0, 1, 5, 10, 15, 30, 60, 120, 240, 480, 960, 2880, 7920, 19200]
-    estimate_tick_values = [value for value in estimate_tick_values if 0 <= value <= estimate_max]
-    hist_ax.set_xticks(estimate_tick_values)
-    hist_ax.set_xticklabels([format_minutes(value) for value in estimate_tick_values])
-
-    duration_groups = [
-        ("All covered trajectories", duration_df["duration_min"], "#9aa0a6", 0.50),
-        ("Passed trajectories", duration_df.loc[duration_df["passed"].eq(1), "duration_min"], "#d9822b", 0.58),
-    ]
-    for label, values, color, alpha in duration_groups:
-        values = values.dropna().to_numpy(dtype=float)
+    for label, series, color, alpha in distribution_series:
+        values = series.dropna().to_numpy(dtype=float)
         if len(values) == 0:
             continue
-        duration_ax.hist(
+        ax.hist(
             values,
             bins=shared_bins,
             weights=np.ones_like(values) / len(values),
             alpha=alpha,
             color=color,
-            edgecolor="white",
-            linewidth=0.7,
+            edgecolor=color,
+            linewidth=1.0,
             label=f"{label} (n={len(values):,})",
         )
         median_value = float(np.median(values))
-        duration_ax.axvline(
+        ax.axvline(
             median_value,
             color=color,
             linestyle="--",
             linewidth=1.1,
-            alpha=0.9,
+            alpha=0.85,
+        )
+        median_annotations.append(
+            (median_value, f"{label} median: {format_minutes(median_value)}", color)
         )
 
-    duration_count = int(duration_df.shape[0])
-    above_axis_count = int(duration_df["duration_min"].gt(estimate_max).sum())
-    outside_note = "X-axis starts at 0; symlog scale preserves short durations and long tails."
-    if above_axis_count:
-        outside_note += f" Outside shown range: {above_axis_count:,} above {format_minutes(estimate_max)} ({above_axis_count / duration_count:.1%})."
-    duration_ax.text(
+    note = "Observed mean uses one averaged value per task; distributions are normalized by task count."
+    ax.text(
         0.012,
         0.96,
-        outside_note,
-        transform=duration_ax.transAxes,
+        note,
+        transform=ax.transAxes,
         ha="left",
         va="top",
         fontsize=8.5,
         color="#333333",
     )
-    duration_ax.set_xscale("symlog", linthresh=1)
-    duration_ax.set_xlim(0, estimate_max)
-    duration_ax.set_xlabel("Observed trajectory duration (minutes, symlog scale)")
-    duration_ax.set_ylabel("Share of trajectories per bin")
-    duration_ax.set_title("Observed trajectory duration distribution on the same x-axis")
-    duration_ax.grid(axis="y", alpha=0.25)
-    duration_ax.legend(frameon=False, loc="upper right")
-    duration_ax.set_xticks(estimate_tick_values)
-    duration_ax.set_xticklabels([format_minutes(value) for value in estimate_tick_values])
-
-    fig.text(
-        0.5,
-        0.01,
-        "Top panel uses task-level human estimates; bottom panel uses observed trajectory durations from covered runs.",
-        ha="center",
-        va="bottom",
-        fontsize=8.5,
-        color="#333333",
-    )
+    ax.set_xscale("symlog", linthresh=1)
+    ax.set_xlim(0, axis_max)
+    ax.set_xlabel("Time per task (minutes, symlog scale)")
+    ax.set_ylabel("Share of tasks per bin")
+    ax.set_title("Task-level distributions of estimates and observed mean duration")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(frameon=False, loc="upper right")
+    for label_y, (median_value, label, color) in zip(
+        [0.78, 0.68, 0.58],
+        median_annotations,
+    ):
+        ax.text(
+            median_value,
+            label_y,
+            label,
+            transform=ax.get_xaxis_transform(),
+            rotation=90,
+            ha="right",
+            va="top",
+            fontsize=8.5,
+            color=color,
+        )
+    tick_values = [0, 1, 5, 10, 15, 30, 60, 120, 240, 480, 960, 2880, 7920, 19200]
+    tick_values = [value for value in tick_values if 0 <= value <= axis_max]
+    ax.set_xticks(tick_values)
+    ax.set_xticklabels([format_minutes(value) for value in tick_values])
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.tight_layout()
     fig.savefig(path, dpi=180)
     plt.close(fig)
     return path
@@ -383,14 +411,20 @@ def main() -> None:
     comparison = build_trajectory_comparison(trajectories, estimates)
 
     comparison_path = args.out / "trajectory_time_estimate_comparison.csv"
+    task_duration_comparison_path = args.out / "task_average_duration_comparison.csv"
     estimate_distribution_summary_path = args.out / "task_time_estimate_distribution_summary.csv"
 
     comparison.loc[:, COMPARISON_OUTPUT_COLUMNS].to_csv(comparison_path, index=False)
-    summarize_task_time_estimates(estimates).to_csv(estimate_distribution_summary_path, index=False)
+    task_duration_comparison = build_task_average_duration_comparison(comparison)
+    task_duration_comparison.to_csv(task_duration_comparison_path, index=False)
+    summarize_task_time_distributions(estimates, task_duration_comparison).to_csv(
+        estimate_distribution_summary_path,
+        index=False,
+    )
 
     distribution_path = plot_task_time_estimate_distribution(
         estimates,
-        comparison,
+        task_duration_comparison,
         args.figures_dir / "distribution_task_time_estimates.png",
     )
 
@@ -398,7 +432,9 @@ def main() -> None:
     print(f"Loaded {len(trajectories)} pass/fail trajectories")
     print(f"Loaded {len(estimates)} task estimate rows")
     print(f"Valid trajectory/time-estimate comparisons: {complete_cases}")
+    print(f"Task-level average duration rows: {len(task_duration_comparison)}")
     print(f"Wrote {comparison_path}")
+    print(f"Wrote {task_duration_comparison_path}")
     print(f"Wrote {estimate_distribution_summary_path}")
     for figure_path in [distribution_path]:
         if figure_path is not None:
