@@ -27,11 +27,11 @@ from scripts.benchmark_paths import SUPPORTED_BENCHMARKS, paths_for_benchmark
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
-DATA_PROCESSED_DIR = REPO_ROOT / "data" / "processed"
+DATA_PROCESSED_LIVE_DIR = REPO_ROOT / "data" / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "general_characteristics"
-INPUT_DEFAULT = DATA_PROCESSED_DIR / "leaderboard_submission_summary.csv"
-OUT_DEFAULT = DATA_PROCESSED_DIR
+INPUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0" / "leaderboard_submission_summary.csv"
+OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0"
 
 INT_FIELDS = (
     "computed_submission_success_count",

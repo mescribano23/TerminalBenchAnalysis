@@ -26,7 +26,7 @@ DATA_DIR = REPO_ROOT / "data"
 DATA_PROCESSED_LIVE_DIR = DATA_DIR / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
 
-TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "trajectory_summary.csv"
+TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0" / "trajectory_summary.csv"
 TAGS_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "tags" / "task_tag_counts.csv"
 TAG_GROUPS_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "tags" / "tag_groups.csv"
 SEMANTIC_CLUSTERS_DEFAULT = (

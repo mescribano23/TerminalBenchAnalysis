@@ -44,7 +44,7 @@ DATA_DIR = REPO_ROOT / "data"
 DATA_PROCESSED_LIVE_DIR = DATA_DIR / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
 
-TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "trajectory_summary.csv"
+TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0" / "trajectory_summary.csv"
 TASKS_DEFAULT = DATA_DIR / "raw" / "terminal_bench_2_0" / "terminal_bench_2_tasks.json"
 OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining"
 FIGURES_DEFAULT = REPORTS_DIR / "tasks"

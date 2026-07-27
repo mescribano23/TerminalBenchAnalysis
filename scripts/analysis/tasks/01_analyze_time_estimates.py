@@ -26,7 +26,7 @@ DATA_DIR = REPO_ROOT / "data"
 DATA_PROCESSED_LIVE_DIR = DATA_DIR / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
 
-TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "trajectory_summary.csv"
+TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0" / "trajectory_summary.csv"
 ESTIMATES_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "terminal_bench_2_task_toml_metadata.csv"
 OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "time_estimates"
 FIGURES_DEFAULT = REPORTS_DIR / "tasks" / "time_estimates"

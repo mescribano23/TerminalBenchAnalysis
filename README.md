@@ -168,6 +168,43 @@ python -m scripts.analysis.diminishing_returns.00_analyze_diminishing_returns --
 python -m scripts.analysis.diminishing_returns.00_analyze_diminishing_returns --by-model
 ```
 
+### 6. Analyze Terminal-Bench 2.0 vs 2.1 Trajectory Drift
+
+First make sure each benchmark has its own characterized trajectory table:
+
+```powershell
+python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_0
+python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_1
+```
+
+Build the combined, version-labelled trajectory table:
+
+```powershell
+python -m scripts.analysis.longitudinal.00_build_longitudinal_dataset
+```
+
+Run descriptive comparisons: raw metric shifts, task overlap, task-matched
+differences, task-mix reweighting, overlapping agent-key checks, and
+command-pattern drift:
+
+```powershell
+python -m scripts.analysis.longitudinal.01_compare_versions
+```
+
+Fit adjusted version models to test whether 2.1 differences remain after
+task, scaffold, model, and agent-key controls:
+
+```powershell
+python -m scripts.analysis.longitudinal.02_fit_adjusted_version_models
+```
+
+The main outputs are written under:
+
+```text
+data/processed_live/longitudinal/
+reports/longitudinal/
+```
+
 ## Useful Maintenance Commands
 
 Refresh only official leaderboard row metrics without re-fetching every

@@ -389,6 +389,7 @@ def main() -> None:
     )
     root = args.root or (benchmark_paths.trajectories_dir if benchmark_paths else ROOT_DEFAULT)
     out = args.out or (benchmark_paths.processed_dir if benchmark_paths else OUT_DEFAULT)
+    benchmark_name = benchmark_paths.benchmark if benchmark_paths else "terminal_bench_2_0"
     leaderboard_path = (
         args.leaderboard
         or (benchmark_paths.leaderboard_submissions if benchmark_paths else LEADERBOARD_DEFAULT)
@@ -557,6 +558,7 @@ def main() -> None:
                     command_head_examples[head] = (cmd_lines[0] if cmd_lines else "<blank>")[:240]
 
         row = {
+            "benchmark": benchmark_name,
             "rel_path": str(rel),
             "scaffold": scaffold,
             "model_dir": model_dir,
@@ -603,6 +605,7 @@ def main() -> None:
             task_names.add(task_name)
 
     csv_fields = [
+        "benchmark",
         "rel_path", "scaffold", "model_dir", "agent_version", "model_name", "original_format",
         "task_id", "file_task_id", "task_name", "file_run_id", "reward", "reward_outcome",
         "leaderboard_model", "leaderboard_accuracy", "leaderboard_model_organization",
@@ -689,8 +692,8 @@ def main() -> None:
     stats = {
         "inputs": {
             "trajectory_root": display_path(root),
-            "leaderboard": display_path(args.leaderboard) if args.leaderboard.exists() else "",
-            "trajectory_index": display_path(args.trajectory_index) if args.trajectory_index.exists() else "",
+            "leaderboard": display_path(leaderboard_path) if leaderboard_path.exists() else "",
+            "trajectory_index": display_path(trajectory_index) if trajectory_index.exists() else "",
         },
         "corpus": {
             "trajectory_count": len(rows),
