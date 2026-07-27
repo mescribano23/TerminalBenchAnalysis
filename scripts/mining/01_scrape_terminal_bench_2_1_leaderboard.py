@@ -747,13 +747,13 @@ def parse_args() -> argparse.Namespace:
         "--page-limit",
         type=int,
         default=None,
-        help="Only fetch the first N trial pages per row; useful for smoke tests.",
+        help="Only fetch the first N trial pages per row.",
     )
     parser.add_argument(
         "--trial-limit",
         type=int,
         default=None,
-        help="Only fetch/download the first N trials per row; useful for smoke tests.",
+        help="Only fetch/download the first N trials per row.",
     )
     parser.add_argument(
         "--skip-trajectories",

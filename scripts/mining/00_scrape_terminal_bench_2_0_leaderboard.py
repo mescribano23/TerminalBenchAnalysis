@@ -1153,13 +1153,13 @@ def parse_args() -> argparse.Namespace:
         "--task-limit",
         type=int,
         default=None,
-        help="Only fetch the first N tasks per sampled submission; useful for smoke tests.",
+        help="Only fetch the first N tasks per sampled submission.",
     )
     parser.add_argument(
         "--trial-limit",
         type=int,
         default=None,
-        help="Only download the first N trials per task; useful for smoke tests.",
+        help="Only download the first N trials per task.",
     )
     parser.add_argument(
         "--availability-limit",
@@ -1171,7 +1171,7 @@ def parse_args() -> argparse.Namespace:
         "--limit",
         type=int,
         default=None,
-        help="Only fetch the first N submissions; useful for smoke tests.",
+        help="Only fetch the first N submissions.",
     )
     return parser.parse_args()
 

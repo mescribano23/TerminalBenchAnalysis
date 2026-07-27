@@ -80,30 +80,6 @@ Collect all Terminal-Bench 2.1 Harbor leaderboard trajectories:
 python -m scripts.mining.01_scrape_terminal_bench_2_1_leaderboard --benchmark terminal_bench_2_1
 ```
 
-For a quick smoke test, use a smaller debug collection instead:
-
-```powershell
-python -m scripts.mining.00_scrape_terminal_bench_2_0_leaderboard `
-  --collect-trajectories `
-  --sample-n 3 `
-  --task-limit 5 `
-  --trial-limit 2 `
-  --trajectories-dir data\trajectories\terminal_bench_2_0_debug `
-  --trajectory-index data\indexes\terminal_bench_2_0\trajectory_trials_debug.json
-```
-
-For a quick Terminal-Bench 2.1 smoke test:
-
-```powershell
-python -m scripts.mining.01_scrape_terminal_bench_2_1_leaderboard `
-  --benchmark terminal_bench_2_1 `
-  --limit 1 `
-  --trial-limit 2 `
-  --trajectories-dir data\trajectories\terminal_bench_2_1_debug `
-  --trajectory-index data\indexes\terminal_bench_2_1\trajectory_trials_debug_2_1.json `
-  --output data\raw\terminal_bench_2_1\leaderboard_submissions_debug_2_1.json
-```
-
 ### 3. Build Core Analysis Tables
 
 Build trajectory-level summaries from the downloaded trajectories and trial
@@ -191,7 +167,7 @@ command-pattern drift:
 python -m scripts.analysis.longitudinal.01_compare_versions
 ```
 
-Fit adjusted version models to test whether 2.1 differences remain after
+Fit adjusted version models to estimate whether 2.1 differences remain after
 task, scaffold, model, and agent-key controls:
 
 ```powershell
