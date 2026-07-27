@@ -50,13 +50,16 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 Scrape Terminal-Bench 2.0 leaderboard metadata:
 
 ```powershell
-python -m scripts.mining.00_scrape_terminal_bench_2_0_leaderboard --benchmark terminal_bench_2_0
+python -m scripts.mining.00_scrape_terminal_bench_2_0_leaderboard
 ```
+
+The Terminal-Bench 2.0 metadata scrape also resolves and saves the complete
+trial metadata cache, so it is slower than a leaderboard-table-only refresh.
 
 Scrape Terminal-Bench 2.1 leaderboard metadata from Harbor Hub:
 
 ```powershell
-python -m scripts.mining.01_scrape_terminal_bench_2_1_leaderboard --benchmark terminal_bench_2_1 --skip-trajectories
+python -m scripts.mining.01_scrape_terminal_bench_2_1_leaderboard
 ```
 
 Scrape Terminal-Bench 2.0 task metadata:
@@ -74,11 +77,18 @@ python -m scripts.mining.03_scrape_terminal_bench_2_0_task_toml_metadata
 
 ### 2. Collect Trajectories
 
-Collect all Terminal-Bench 2.1 Harbor leaderboard trajectories:
+Collect all available Terminal-Bench 2.0 and 2.1 trajectories after refreshing
+leaderboard and trial metadata:
 
 ```powershell
-python -m scripts.mining.01_scrape_terminal_bench_2_1_leaderboard --benchmark terminal_bench_2_1
+python -m scripts.mining.00_scrape_terminal_bench_2_0_leaderboard --download-trajectories
+python -m scripts.mining.01_scrape_terminal_bench_2_1_leaderboard --download-trajectories
 ```
+
+Terminal-Bench 2.0 trajectories are resolved from the trial pages exposed by
+tbench.ai. Some pages may explicitly report that no trajectory data is
+available; those records are reported as failures instead of being silently
+skipped.
 
 ### 3. Build Core Analysis Tables
 
@@ -183,17 +193,12 @@ reports/longitudinal/
 
 ## Useful Maintenance Commands
 
-Refresh only official leaderboard row metrics without re-fetching every
-submission task page:
+Retry missing, empty, or malformed trajectory files from saved trial metadata
+without refreshing the leaderboard:
 
 ```powershell
-python -m scripts.mining.00_scrape_terminal_bench_2_0_leaderboard --refresh-row-metrics-only
-```
-
-Check which leaderboard submissions expose trajectory pages:
-
-```powershell
-python -m scripts.mining.00_scrape_terminal_bench_2_0_leaderboard --check-trajectory-availability
+python -m scripts.mining.00_scrape_terminal_bench_2_0_leaderboard --retry-trajectories
+python -m scripts.mining.01_scrape_terminal_bench_2_1_leaderboard --retry-trajectories
 ```
 
 With `--benchmark`, generated analysis tables are written under

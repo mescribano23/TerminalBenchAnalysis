@@ -27,13 +27,11 @@ import requests
 from scripts.benchmark_paths import paths_for_benchmark
 
 _trajectory_index = importlib.import_module(".04_trajectory_index_helpers", __package__)
-_tbench_scraper = importlib.import_module(
-    ".00_scrape_terminal_bench_2_0_leaderboard",
-    __package__,
-)
 
 TrajectoryIndexWriter = _trajectory_index.TrajectoryIndexWriter
-safe_path_component = _tbench_scraper.safe_path_component
+safe_path_component = _trajectory_index.safe_path_component
+trajectory_file_status = _trajectory_index.trajectory_file_status
+trajectory_payload_status = _trajectory_index.trajectory_payload_status
 
 
 BASE_URL = "https://hub.harborframework.com"
@@ -47,8 +45,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 
 DEFAULT_BENCHMARK = "terminal_bench_2_1"
-BENCHMARK_TRIALS_SENTINEL = Path("__benchmark_trials__")
 REQUEST_DELAY_SECONDS = 0.2
+INDEX_CHECKPOINT_INTERVAL = 250
 
 HEADERS = {
     "User-Agent": (
@@ -201,8 +199,6 @@ def iter_row_trials(
     session: requests.Session,
     row_id: str,
     action_id: str,
-    page_limit: int | None = None,
-    trial_limit: int | None = None,
 ) -> list[dict[str, Any]]:
     trials: list[dict[str, Any]] = []
     page = 1
@@ -214,13 +210,9 @@ def iter_row_trials(
             action_id=action_id,
         )
         trials.extend(data["items"])
-        if trial_limit is not None and len(trials) >= trial_limit:
-            return trials[:trial_limit]
 
         total_pages = int(data.get("total_pages") or page)
         if page >= total_pages:
-            return trials
-        if page_limit is not None and page >= page_limit:
             return trials
         page += 1
 
@@ -299,11 +291,7 @@ def leaderboard_metrics(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def task_records(
-    row_id: str,
-    trials: list[dict[str, Any]],
-    include_harbor_metadata: bool = False,
-) -> list[dict[str, Any]]:
+def task_records(row_id: str, trials: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_task: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for trial in trials:
         task_name = str(trial.get("task_name") or trial.get("name") or "unknown")
@@ -325,19 +313,13 @@ def task_records(
                 f"?tab=results&task={quote(harbor_task_name, safe='')}"
             ),
         }
-        if include_harbor_metadata:
-            record["harborTaskName"] = harbor_task_name
         records.append(record)
     return records
 
 
-def submission_record(
-    row: dict[str, Any],
-    trials: list[dict[str, Any]],
-    include_harbor_metadata: bool = False,
-) -> dict[str, Any]:
+def submission_record(row: dict[str, Any], trials: list[dict[str, Any]]) -> dict[str, Any]:
     identity = row_identity(row, trials)
-    record = {
+    return {
         "scaffold": identity["scaffold"],
         "scaffold_version": identity["scaffold_version"],
         "model": identity["model"],
@@ -351,22 +333,8 @@ def submission_record(
         "leaderboard_model_display": identity["leaderboard_model_display"],
         "leaderboard_agent_organization": identity["leaderboard_agent_organization"],
         "leaderboard_model_organization": identity["leaderboard_model_organization"],
-        "tasks": task_records(
-            str(row["id"]),
-            trials,
-            include_harbor_metadata=include_harbor_metadata,
-        ),
+        "tasks": task_records(str(row["id"]), trials),
     }
-    if include_harbor_metadata:
-        record.update(
-            {
-                "harbor_leaderboard_row_id": row.get("id"),
-                "harbor_leaderboard_rank": row.get("rank"),
-                "harbor_leaderboard_metrics": row.get("metrics") or {},
-                "harbor_leaderboard_metadata": row.get("metadata") or {},
-            }
-        )
-    return record
 
 
 def trajectory_url(trial: dict[str, Any]) -> str:
@@ -444,12 +412,14 @@ def download_trajectories(
     trajectories_dir: Path,
     index_path: Path,
     index_checkpoint_interval: int,
-) -> tuple[int, list[tuple[str, str]]]:
+) -> tuple[int, int, list[tuple[str, str]]]:
     index_writer = TrajectoryIndexWriter(
         index_path=index_path,
         checkpoint_interval=index_checkpoint_interval,
     )
-    downloaded = 0
+    pruned = index_writer.prune_invalid_file_entries(REPO_ROOT)
+    indexed = 0
+    fetched = 0
     failures: list[tuple[str, str]] = []
 
     for row_id, submission in submissions_by_row_id.items():
@@ -467,17 +437,32 @@ def download_trajectories(
             )
             entry = trial_index_entry(submission, trial, output_path)
 
-            if output_path.exists():
+            is_valid, reason = trajectory_file_status(output_path)
+            if is_valid:
                 index_writer.upsert(entry)
                 index_writer.checkpoint()
-                downloaded += 1
+                indexed += 1
                 continue
+            index_writer.remove(entry)
+            if reason != "missing":
+                print(
+                    f"  warning: retrying invalid trajectory file {output_path}: {reason}",
+                    file=sys.stderr,
+                )
 
             try:
                 trajectory = fetch_trajectory(session, trial)
             except (requests.RequestException, json.JSONDecodeError) as exc:
                 failures.append((trial_id, str(exc)))
                 print(f"  warning: trajectory failed for {trial_id}: {exc}", file=sys.stderr)
+                continue
+            payload_is_valid, payload_reason = trajectory_payload_status(trajectory)
+            if not payload_is_valid:
+                failures.append((trial_id, payload_reason))
+                print(
+                    f"  warning: trajectory failed for {trial_id}: {payload_reason}",
+                    file=sys.stderr,
+                )
                 continue
 
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -487,27 +472,28 @@ def download_trajectories(
             )
             index_writer.upsert(entry)
             index_writer.checkpoint()
-            downloaded += 1
+            indexed += 1
+            fetched += 1
 
     index_writer.checkpoint(force=True)
-    return downloaded, failures
+    if pruned:
+        print(f"Removed {pruned} stale trajectory index entries")
+    return indexed, fetched, failures
 
 
 def download_trajectories_from_trials_file(
     trials_path: Path,
     trajectories_dir: Path,
     trajectory_index: Path,
-    index_checkpoint_interval: int,
-    trial_id_filter: list[str] | None = None,
 ) -> int:
-    trials = json.loads(trials_path.read_text(encoding="utf-8"))
+    try:
+        trials = json.loads(trials_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Could not read {trials_path}: {exc}", file=sys.stderr)
+        return 1
     if not isinstance(trials, list):
         print(f"{trials_path} does not contain a JSON list", file=sys.stderr)
         return 1
-
-    wanted = set(trial_id_filter or [])
-    if wanted:
-        trials = [trial for trial in trials if str(trial.get("id")) in wanted]
 
     submissions_by_row_id: dict[str, dict[str, Any]] = {}
     trials_by_row_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -525,25 +511,16 @@ def download_trajectories_from_trials_file(
         )
         trials_by_row_id[row_id].append(trial)
 
-    if wanted and len(trials) != len(wanted):
-        found = {str(trial.get("id")) for trial in trials}
-        missing = sorted(wanted - found)
-        print(
-            f"  warning: {len(missing)} requested trial ids were not in {trials_path}: "
-            f"{', '.join(missing)}",
-            file=sys.stderr,
-        )
-
     session = requests.Session()
-    total, failures = download_trajectories(
+    indexed, fetched, failures = download_trajectories(
         session=session,
         submissions_by_row_id=submissions_by_row_id,
         trials_by_row_id=trials_by_row_id,
         trajectories_dir=trajectories_dir,
         index_path=trajectory_index,
-        index_checkpoint_interval=index_checkpoint_interval,
+        index_checkpoint_interval=INDEX_CHECKPOINT_INTERVAL,
     )
-    print(f"Wrote/indexed {total} trajectories under {trajectories_dir}")
+    print(f"Indexed {indexed} trajectories under {trajectories_dir}; fetched {fetched}")
     print(f"Trajectory index: {trajectory_index}")
 
     if failures:
@@ -558,21 +535,11 @@ def download_trajectories_from_trials_file(
 
 def scrape_harbor_leaderboard(
     output_path: Path,
-    trials_output_path: Path | None,
+    trials_output_path: Path,
     trajectories_dir: Path,
     trajectory_index: Path,
-    limit: int | None,
-    row_start_index: int,
-    row_id_filter: list[str] | None,
-    page_limit: int | None,
-    trial_limit: int | None,
-    skip_trajectories: bool,
-    include_harbor_metadata: bool,
-    index_checkpoint_interval: int,
+    download_trajectories_enabled: bool,
 ) -> int:
-    if row_start_index < 1:
-        raise ValueError("--row-start-index must be 1 or greater.")
-
     session = requests.Session()
     print(f"Fetching Harbor leaderboard: {main_leaderboard_url()}")
     leaderboard_action_id = discover_server_action_id(
@@ -583,12 +550,6 @@ def scrape_harbor_leaderboard(
     )
     leaderboard = fetch_leaderboard(session, action_id=leaderboard_action_id)
     rows = list(leaderboard["rows"])
-    if row_id_filter:
-        wanted = set(row_id_filter)
-        rows = [row for row in rows if str(row.get("id")) in wanted]
-    if limit is not None:
-        rows = rows[:limit]
-    rows = rows[row_start_index - 1 :]
 
     row_trials_action_id = (
         discover_server_action_id(
@@ -608,18 +569,16 @@ def scrape_harbor_leaderboard(
     failures: list[tuple[str, str]] = []
 
     print(f"Found {len(rows)} leaderboard rows to scrape")
-    for index, row in enumerate(rows, start=row_start_index):
+    for index, row in enumerate(rows, start=1):
         row_id = str(row["id"])
         display = label_from_link((row.get("metadata") or {}).get("agent_display"))
         model = label_from_link((row.get("metadata") or {}).get("model_display"))
-        print(f"[{index}/{row_start_index + len(rows) - 1}] row={row_id} {display} / {model}")
+        print(f"[{index}/{len(rows)}] row={row_id} {display} / {model}")
         try:
             trials = iter_row_trials(
                 session,
                 row_id=row_id,
                 action_id=row_trials_action_id,
-                page_limit=page_limit,
-                trial_limit=trial_limit,
             )
         except (requests.RequestException, ValueError) as exc:
             failures.append((row_id, str(exc)))
@@ -634,11 +593,7 @@ def scrape_harbor_leaderboard(
             )
             continue
 
-        submission = submission_record(
-            row,
-            trials,
-            include_harbor_metadata=include_harbor_metadata,
-        )
+        submission = submission_record(row, trials)
         submissions.append(submission)
         submissions_by_row_id[row_id] = submission
         trials_by_row_id[row_id] = trials
@@ -672,25 +627,24 @@ def scrape_harbor_leaderboard(
         encoding="utf-8",
     )
     print(f"Wrote {len(submissions)} submissions to {output_path}")
-    if trials_output_path is not None:
-        trials_output_path.parent.mkdir(parents=True, exist_ok=True)
-        trials_output_path.write_text(
-            json.dumps(all_trial_records, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        print(f"Wrote {len(all_trial_records)} trial metadata records to {trials_output_path}")
+    trials_output_path.parent.mkdir(parents=True, exist_ok=True)
+    trials_output_path.write_text(
+        json.dumps(all_trial_records, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    print(f"Wrote {len(all_trial_records)} trial metadata records to {trials_output_path}")
 
-    if not skip_trajectories:
-        total, trajectory_failures = download_trajectories(
+    if download_trajectories_enabled:
+        indexed, fetched, trajectory_failures = download_trajectories(
             session=session,
             submissions_by_row_id=submissions_by_row_id,
             trials_by_row_id=trials_by_row_id,
             trajectories_dir=trajectories_dir,
             index_path=trajectory_index,
-            index_checkpoint_interval=index_checkpoint_interval,
+            index_checkpoint_interval=INDEX_CHECKPOINT_INTERVAL,
         )
         failures.extend(trajectory_failures)
-        print(f"Wrote/indexed {total} trajectories under {trajectories_dir}")
+        print(f"Indexed {indexed} trajectories under {trajectories_dir}; fetched {fetched}")
         print(f"Trajectory index: {trajectory_index}")
 
     if failures:
@@ -707,133 +661,37 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Scrape Terminal-Bench 2.1 data from Harbor Hub."
     )
-    parser.add_argument(
-        "--benchmark",
-        choices=[DEFAULT_BENCHMARK],
-        default=DEFAULT_BENCHMARK,
-        help="Benchmark namespace used to resolve default data paths.",
-    )
-    parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument(
-        "--trials-output",
-        type=Path,
-        default=None,
-        help=(
-            "Harbor-specific raw trial metadata cache. Defaults to the "
-            "benchmark raw folder; use --no-trials-output to skip it."
-        ),
-    )
-    parser.add_argument(
-        "--no-trials-output",
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--download-trajectories",
         action="store_true",
-        help="Do not write the Harbor trial metadata cache.",
+        help="Scrape metadata, then download all available trajectory JSON.",
     )
-    parser.add_argument("--trajectories-dir", type=Path, default=None)
-    parser.add_argument("--trajectory-index", type=Path, default=None)
-    parser.add_argument("--limit", type=int, default=None, help="Only scrape the first N rows.")
-    parser.add_argument(
-        "--row-start-index",
-        type=int,
-        default=1,
-        help="1-based row offset for resuming metadata collection.",
-    )
-    parser.add_argument(
-        "--row-id",
-        action="append",
-        default=None,
-        help="Only scrape this Harbor leaderboard row id; repeat for multiple rows.",
-    )
-    parser.add_argument(
-        "--page-limit",
-        type=int,
-        default=None,
-        help="Only fetch the first N trial pages per row.",
-    )
-    parser.add_argument(
-        "--trial-limit",
-        type=int,
-        default=None,
-        help="Only fetch/download the first N trials per row.",
-    )
-    parser.add_argument(
-        "--skip-trajectories",
+    mode.add_argument(
+        "--retry-trajectories",
         action="store_true",
-        help="Save leaderboard metadata, but do not download trajectory JSON.",
-    )
-    parser.add_argument(
-        "--include-harbor-metadata",
-        action="store_true",
-        help="Include Harbor-only metadata fields in the leaderboard JSON.",
-    )
-    parser.add_argument(
-        "--download-trajectories-from-trials",
-        type=Path,
-        nargs="?",
-        const=BENCHMARK_TRIALS_SENTINEL,
-        default=None,
-        help=(
-            "Download/retry trajectories from an existing Harbor trial metadata "
-            "JSON instead of scraping leaderboard/trial tables first. If no "
-            "path is supplied, use the benchmark raw trial cache."
-        ),
-    )
-    parser.add_argument(
-        "--trial-id",
-        action="append",
-        default=None,
-        help=(
-            "With --download-trajectories-from-trials, only retry this trial id; "
-            "repeat for multiple ids."
-        ),
-    )
-    parser.add_argument(
-        "--index-checkpoint-interval",
-        type=int,
-        default=250,
-        help="Write the trajectory index after this many updates; use 0 for final-only.",
+        help="Download/retry trajectories from the saved Harbor trial metadata cache.",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    benchmark_paths = paths_for_benchmark(REPO_ROOT, args.benchmark)
-    output_path = args.output or benchmark_paths.leaderboard_submissions
-    trials_output_path = (
-        None
-        if args.no_trials_output
-        else args.trials_output or benchmark_paths.leaderboard_trials
-    )
-    trajectories_dir = args.trajectories_dir or benchmark_paths.trajectories_dir
-    trajectory_index = args.trajectory_index or benchmark_paths.trajectory_index
+    benchmark_paths = paths_for_benchmark(REPO_ROOT, DEFAULT_BENCHMARK)
 
-    if args.download_trajectories_from_trials is not None:
-        trials_path = (
-            benchmark_paths.leaderboard_trials
-            if args.download_trajectories_from_trials == BENCHMARK_TRIALS_SENTINEL
-            else args.download_trajectories_from_trials
-        )
+    if args.retry_trajectories:
         return download_trajectories_from_trials_file(
-            trials_path=trials_path,
-            trajectories_dir=trajectories_dir,
-            trajectory_index=trajectory_index,
-            index_checkpoint_interval=args.index_checkpoint_interval,
-            trial_id_filter=args.trial_id,
+            trials_path=benchmark_paths.leaderboard_trials,
+            trajectories_dir=benchmark_paths.trajectories_dir,
+            trajectory_index=benchmark_paths.trajectory_index,
         )
 
     return scrape_harbor_leaderboard(
-        output_path=output_path,
-        trials_output_path=trials_output_path,
-        trajectories_dir=trajectories_dir,
-        trajectory_index=trajectory_index,
-        limit=args.limit,
-        row_start_index=args.row_start_index,
-        row_id_filter=args.row_id,
-        page_limit=args.page_limit,
-        trial_limit=args.trial_limit,
-        skip_trajectories=args.skip_trajectories,
-        include_harbor_metadata=args.include_harbor_metadata,
-        index_checkpoint_interval=args.index_checkpoint_interval,
+        output_path=benchmark_paths.leaderboard_submissions,
+        trials_output_path=benchmark_paths.leaderboard_trials,
+        trajectories_dir=benchmark_paths.trajectories_dir,
+        trajectory_index=benchmark_paths.trajectory_index,
+        download_trajectories_enabled=args.download_trajectories,
     )
 
 

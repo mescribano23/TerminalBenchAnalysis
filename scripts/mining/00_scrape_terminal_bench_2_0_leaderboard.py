@@ -26,22 +26,19 @@ from bs4 import BeautifulSoup
 from scripts.benchmark_paths import paths_for_benchmark
 
 _trajectory_index = importlib.import_module(".04_trajectory_index_helpers", __package__)
-_submission_sampling = importlib.import_module(".05_top_submission_sampling", __package__)
 
 TrajectoryIndexWriter = _trajectory_index.TrajectoryIndexWriter
-sample_submissions = _submission_sampling.sample_submissions
-submission_score = _submission_sampling.submission_score
-
+safe_path_component = _trajectory_index.safe_path_component
+trajectory_file_status = _trajectory_index.trajectory_file_status
+trajectory_payload_status = _trajectory_index.trajectory_payload_status
 
 BASE_URL = "https://www.tbench.ai"
 DEFAULT_LEADERBOARD_URL = f"{BASE_URL}/leaderboard/terminal-bench/2.0"
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
-DATA_DIR = REPO_ROOT / "data"
-DEFAULT_OUTPUT_PATH = DATA_DIR / "raw" / "terminal_bench_2_0" / "leaderboard_submissions.json"
-DEFAULT_TRAJECTORIES_DIR = DATA_DIR / "trajectories" / "terminal_bench_2_0_sample"
-DEFAULT_TRAJECTORY_INDEX = DATA_DIR / "indexes" / "terminal_bench_2_0" / "trajectory_trials.json"
+DEFAULT_BENCHMARK = "terminal_bench_2_0"
 REQUEST_DELAY_SECONDS = 0.5
+INDEX_CHECKPOINT_INTERVAL = 250
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -730,14 +727,6 @@ def submission_url_from_record(submission: dict[str, Any], bench_version: str = 
     )
 
 
-def safe_path_component(value: object) -> str:
-    text = str(value).strip() or "unknown"
-    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text)
-    text = re.sub(r"\s+", "_", text)
-    text = text.strip(" ._")
-    return text[:160] or "unknown"
-
-
 def first_task_with_url(submission: dict[str, Any]) -> dict[str, Any] | None:
     for task in submission.get("tasks") or []:
         if task.get("trialUrl") and task.get("taskChecksum"):
@@ -780,13 +769,10 @@ def check_single_submission_trajectory_availability(
     return True, "trajectory object found"
 
 
-def check_trajectory_availability(
-    leaderboard_path: Path,
-    limit: int | None = None,
-) -> int:
+def check_trajectory_availability(leaderboard_path: Path) -> int:
     leaderboard = read_json_file(leaderboard_path)
     session = requests.Session()
-    rows_to_check = leaderboard[:limit] if limit is not None else leaderboard
+    rows_to_check = leaderboard
 
     available = 0
     unavailable = 0
@@ -823,149 +809,218 @@ def check_trajectory_availability(
     return 0
 
 
-def collect_trajectories(
-    leaderboard_path: Path,
-    sample_n: int,
+def trial_record(
+    submission: dict[str, object],
+    task: dict[str, object],
+    trial: dict[str, object],
+) -> dict[str, object]:
+    task_url = str(task.get("trialUrl") or "")
+    trial_id = str(trial.get("trialId") or "")
+    return {
+        "submission": {
+            "scaffold": submission.get("scaffold"),
+            "scaffold_version": submission.get("scaffold_version"),
+            "model": submission.get("model"),
+            "provider": submission.get("provider"),
+        },
+        "submission_url": submission.get("submission_url"),
+        "taskName": task.get("taskName"),
+        "taskChecksum": task.get("taskChecksum"),
+        "taskUrl": task_url,
+        "trialUrl": f"{task_url.rstrip('/')}/{quote(trial_id, safe='')}",
+        **trial,
+    }
+
+
+def collect_submission_trial_metadata(
+    session: requests.Session,
+    submission: dict[str, object],
+) -> tuple[list[dict[str, object]], list[tuple[str, str]]]:
+    records: list[dict[str, object]] = []
+    failures: list[tuple[str, str]] = []
+    tasks = list(submission.get("tasks") or [])
+
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_url = str(task.get("trialUrl") or "")
+        if not task_url:
+            failures.append((str(task.get("taskName") or "unknown"), "no task URL"))
+            continue
+        try:
+            task_html = fetch_html(session, task_url)
+            trials = extract_trials(task_html)
+        except (requests.RequestException, ValueError) as exc:
+            failures.append((task_url, str(exc)))
+            print(f"  warning: trial metadata failed for {task_url}: {exc}", file=sys.stderr)
+            continue
+
+        records.extend(trial_record(submission, task, trial) for trial in trials)
+
+    return records, failures
+
+
+def index_file_path(output_path: Path) -> str:
+    try:
+        return output_path.resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return output_path.as_posix()
+
+
+def trial_output_path(trial: dict[str, object], trajectories_dir: Path) -> Path:
+    submission = trial.get("submission") if isinstance(trial.get("submission"), dict) else {}
+    scaffold = str(submission.get("scaffold") or "unknown")
+    model = str(submission.get("model") or "unknown")
+    task_checksum = str(trial.get("taskChecksum") or trial.get("taskName") or "unknown")
+    trial_id = str(trial.get("trialId") or "unknown")
+    return (
+        trajectories_dir
+        / safe_path_component(scaffold)
+        / safe_path_component(model)
+        / f"{safe_path_component(task_checksum)}_{safe_path_component(trial_id)}.json"
+    )
+
+
+def trial_index_entry(trial: dict[str, object], output_path: Path) -> dict[str, object]:
+    submission = trial.get("submission") if isinstance(trial.get("submission"), dict) else {}
+    return {
+        "scaffold": str(submission.get("scaffold") or "unknown"),
+        "model": str(submission.get("model") or "unknown"),
+        "taskName": str(trial.get("taskName") or "unknown"),
+        "taskChecksum": str(trial.get("taskChecksum") or trial.get("taskName") or "unknown"),
+        "trialId": str(trial.get("trialId") or ""),
+        "reward": float(trial.get("reward") or 0.0),
+        "cost": float(trial.get("costCents") or 0.0),
+        "duration": float(trial.get("durationSeconds") or 0.0),
+        "filePath": index_file_path(output_path),
+    }
+
+
+def fetch_trial_trajectory(session: requests.Session, trial: dict[str, object]) -> dict[str, Any]:
+    trial_url = str(trial.get("trialUrl") or "")
+    if not trial_url:
+        raise ValueError("trial metadata has no trialUrl")
+    trial_html = fetch_html(session, trial_url)
+    if page_has_no_trajectory_marker(trial_html):
+        raise ValueError("trial page says no trajectory data available")
+    return extract_trajectory(trial_html)
+
+
+def download_trajectories_from_trial_records(
+    trials: list[dict[str, object]],
     trajectories_dir: Path,
     index_path: Path,
-    task_limit: int | None = None,
-    trial_limit: int | None = None,
-    index_checkpoint_interval: int = 250,
-    sample_start_index: int = 1,
-) -> int:
-    leaderboard = read_json_file(leaderboard_path)
-    full_sample = sample_submissions(sample_n, leaderboard)
-    if sample_start_index < 1:
-        raise ValueError("--sample-start-index must be 1 or greater.")
-    sampled = full_sample[sample_start_index - 1 :]
+) -> tuple[int, int, list[tuple[str, str]]]:
     session = requests.Session()
-
-    trajectory_index = TrajectoryIndexWriter(
+    index_writer = TrajectoryIndexWriter(
         index_path=index_path,
-        checkpoint_interval=index_checkpoint_interval,
+        checkpoint_interval=INDEX_CHECKPOINT_INTERVAL,
     )
-
-    submissions_processed = 0
-    tasks_fetched = 0
-    trials_processed = 0
-    passed_trials = 0
-    total_cost_cents = 0.0
-    total_duration_seconds = 0.0
+    pruned = index_writer.prune_invalid_file_entries(REPO_ROOT)
+    indexed = 0
+    fetched = 0
     failures: list[tuple[str, str]] = []
 
-    print(
-        f"Sampling {len(sampled)} of {len(full_sample)} submissions from {leaderboard_path} "
-        f"from top-ranked submissions, start_index={sample_start_index}"
-    )
+    print(f"Checking {len(trials)} cached 2.0 trial records for trajectories")
+    for index, trial in enumerate(trials, start=1):
+        if not isinstance(trial, dict):
+            failures.append((f"trial[{index}]", "trial record is not an object"))
+            continue
+        trial_id = str(trial.get("trialId") or "")
+        if not trial_id:
+            failures.append((f"trial[{index}]", "trial record has no trialId"))
+            continue
 
-    for submission_index, submission in enumerate(sampled, start=sample_start_index):
-        submissions_processed += 1
-        submission_url = submission_url_from_record(submission)
-        scaffold = str(submission.get("scaffold", "unknown"))
-        model = str(submission.get("model", "unknown"))
-        output_dir = trajectories_dir / safe_path_component(scaffold) / safe_path_component(model)
-        tasks = list(submission.get("tasks") or [])
-        if task_limit is not None:
-            tasks = tasks[:task_limit]
+        output_path = trial_output_path(trial, trajectories_dir)
+        entry = trial_index_entry(trial, output_path)
+        is_valid, reason = trajectory_file_status(output_path)
+        if is_valid:
+            index_writer.upsert(entry)
+            index_writer.checkpoint()
+            indexed += 1
+            continue
+        index_writer.remove(entry)
+        if reason != "missing":
+            print(
+                f"  warning: retrying invalid trajectory file {output_path}: {reason}",
+                file=sys.stderr,
+            )
 
-        print(
-            f"[{submission_index}/{len(full_sample)}] "
-            f"{submission.get('scaffold')} / {submission.get('model')} "
-            f"score={submission_score(submission):.3f}, tasks={len(tasks)}"
+        try:
+            trajectory = fetch_trial_trajectory(session, trial)
+        except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+            failures.append((trial_id, str(exc)))
+            print(f"  warning: trajectory failed for {trial_id}: {exc}", file=sys.stderr)
+            continue
+        payload_is_valid, payload_reason = trajectory_payload_status(trajectory)
+        if not payload_is_valid:
+            failures.append((trial_id, payload_reason))
+            print(
+                f"  warning: trajectory failed for {trial_id}: {payload_reason}",
+                file=sys.stderr,
+            )
+            continue
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(trajectory, indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
+        index_writer.upsert(entry)
+        index_writer.checkpoint()
+        indexed += 1
+        fetched += 1
 
-        for task_index, task in enumerate(tasks, start=1):
-            task_checksum = str(task.get("taskChecksum", ""))
-            safe_task_checksum = safe_path_component(task_checksum)
-            task_name = str(task.get("taskName", ""))
-            task_url = str(task.get("trialUrl") or f"{submission_url}/{quote(task_checksum, safe='')}")
+    index_writer.checkpoint(force=True)
+    if pruned:
+        print(f"Removed {pruned} stale trajectory index entries")
+    return indexed, fetched, failures
 
-            try:
-                task_html = fetch_html(session, task_url)
-                trials = extract_trials(task_html)
-            except (requests.RequestException, ValueError) as exc:
-                failures.append((task_url, str(exc)))
-                print(f"  warning: task fetch failed: {task_url}: {exc}", file=sys.stderr)
-                continue
 
-            tasks_fetched += 1
-            if trial_limit is not None:
-                trials = trials[:trial_limit]
-            print(f"  task {task_index}/{len(tasks)} {task_name}: {len(trials)} trials")
+def load_trial_metadata(trials_path: Path) -> list[dict[str, object]]:
+    try:
+        trials = read_json_file(trials_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"could not read {trials_path}: {exc}") from exc
+    if not isinstance(trials, list):
+        raise ValueError(f"{trials_path} does not contain a JSON list")
+    return [trial for trial in trials if isinstance(trial, dict)]
 
-            for trial in trials:
-                trial_id = str(trial.get("trialId", ""))
-                if not trial_id:
-                    continue
 
-                trial_url = f"{task_url.rstrip('/')}/{quote(trial_id, safe='')}"
-                output_path = output_dir / f"{safe_task_checksum}_{safe_path_component(trial_id)}.json"
-                reward = float(trial.get("reward", 0.0) or 0.0)
-                cost_cents = float(trial.get("costCents", 0.0) or 0.0)
-                duration_seconds = float(trial.get("durationSeconds", 0.0) or 0.0)
-                entry = {
-                    "scaffold": scaffold,
-                    "model": model,
-                    "taskName": task_name,
-                    "taskChecksum": task_checksum,
-                    "trialId": trial_id,
-                    "reward": reward,
-                    "cost": cost_cents,
-                    "duration": duration_seconds,
-                    "filePath": output_path.as_posix(),
-                }
-
-                if not output_path.exists():
-                    try:
-                        trial_html = fetch_html(session, trial_url)
-                        trajectory = extract_trajectory(trial_html)
-                    except (requests.RequestException, ValueError) as exc:
-                        failures.append((trial_url, str(exc)))
-                        print(
-                            f"  warning: trial download failed: {trial_url}: {exc}",
-                            file=sys.stderr,
-                        )
-                        continue
-
-                    write_json_file(output_path, trajectory)
-
-                trajectory_index.upsert(entry)
-                trials_processed += 1
-                passed_trials += 1 if reward > 0 else 0
-                total_cost_cents += cost_cents
-                total_duration_seconds += duration_seconds
-                trajectory_index.checkpoint()
-
-    trajectory_index.checkpoint(force=True)
-
-    pass_rate = passed_trials / trials_processed if trials_processed else 0.0
-    print("\nProgress summary")
-    print(f"  submissions processed: {submissions_processed}")
-    print(f"  tasks fetched: {tasks_fetched}")
-    print(f"  trials processed: {trials_processed}")
-    print(f"  pass rate: {pass_rate:.2%}")
-    print(
-        f"  estimated total cost: ${total_cost_cents / 100:.4f} "
-        f"({total_cost_cents:.4f} cents)"
+def retry_trajectories_from_trials_file(
+    trials_path: Path,
+    trajectories_dir: Path,
+    index_path: Path,
+) -> int:
+    try:
+        trials = load_trial_metadata(trials_path)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    indexed, fetched, failures = download_trajectories_from_trial_records(
+        trials=trials,
+        trajectories_dir=trajectories_dir,
+        index_path=index_path,
     )
-    print(f"  total trial duration: {total_duration_seconds:.1f}s")
-    print(f"  index file: {index_path}")
-
+    print(f"Indexed {indexed} trajectories under {trajectories_dir}; fetched {fetched}")
+    print(f"Trajectory index: {index_path}")
     if failures:
         print(f"Completed with {len(failures)} failures:", file=sys.stderr)
-        for url, error in failures[:20]:
-            print(f"  {url}: {error}", file=sys.stderr)
+        for key, error in failures[:20]:
+            print(f"  {key}: {error}", file=sys.stderr)
         if len(failures) > 20:
             print(f"  ... {len(failures) - 20} more", file=sys.stderr)
         return 1
-
     return 0
 
 
 def collect_leaderboard(
     leaderboard_url: str,
     output_path: Path,
-    limit: int | None = None,
+    trials_output_path: Path,
+    download_trajectories_enabled: bool,
+    trajectories_dir: Path,
+    trajectory_index: Path,
 ) -> int:
     existing_by_key: dict[SubmissionKey, dict[str, object]] = {}
     if output_path.exists():
@@ -983,11 +1038,10 @@ def collect_leaderboard(
     print(f"Fetching leaderboard: {leaderboard_url}")
     leaderboard_html = fetch_html(session, leaderboard_url)
     submissions = extract_submission_links(leaderboard_html, leaderboard_url)
-    if limit is not None:
-        submissions = submissions[:limit]
 
     print(f"Found {len(submissions)} submission URLs")
     rows: list[dict[str, object]] = []
+    all_trial_records: list[dict[str, object]] = []
     failures: list[tuple[str, str]] = []
 
     for index, submission in enumerate(submissions, start=1):
@@ -1008,24 +1062,40 @@ def collect_leaderboard(
         for metric_key, metric_value in list(official_metrics.items()):
             if metric_value in {"", None} and existing.get(metric_key) not in {"", None}:
                 official_metrics[metric_key] = existing[metric_key]
-        rows.append(
-            {
-                "scaffold": submission.scaffold,
-                "scaffold_version": submission.scaffold_version,
-                "model": submission.model,
-                "provider": submission.provider,
-                "has_trajectories": existing.get("has_trajectories", ""),
-                "submission_url": submission.url,
-                **official_metrics,
-                "tasks": tasks,
-            }
-        )
+        row = {
+            "scaffold": submission.scaffold,
+            "scaffold_version": submission.scaffold_version,
+            "model": submission.model,
+            "provider": submission.provider,
+            "has_trajectories": existing.get("has_trajectories", ""),
+            "submission_url": submission.url,
+            **official_metrics,
+            "tasks": tasks,
+        }
+        rows.append(row)
+
+        trial_records, trial_failures = collect_submission_trial_metadata(session, row)
+        all_trial_records.extend(trial_records)
+        failures.extend(trial_failures)
+        print(f"  cached trial records={len(trial_records)}, metadata failures={len(trial_failures)}")
 
     write_json_file(output_path, rows)
     print(f"Wrote {len(rows)} submissions to {output_path}")
+    write_json_file(trials_output_path, all_trial_records)
+    print(f"Wrote {len(all_trial_records)} trial metadata records to {trials_output_path}")
+
+    if download_trajectories_enabled:
+        indexed, fetched, trajectory_failures = download_trajectories_from_trial_records(
+            trials=all_trial_records,
+            trajectories_dir=trajectories_dir,
+            index_path=trajectory_index,
+        )
+        failures.extend(trajectory_failures)
+        print(f"Indexed {indexed} trajectories under {trajectories_dir}; fetched {fetched}")
+        print(f"Trajectory index: {trajectory_index}")
 
     if failures:
-        print(f"Completed with {len(failures)} failed submission fetches:", file=sys.stderr)
+        print(f"Completed with {len(failures)} failures:", file=sys.stderr)
         for url, error in failures:
             print(f"  {url}: {error}", file=sys.stderr)
         return 1
@@ -1074,160 +1144,38 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Scrape Terminal-Bench leaderboard task data from tbench.ai HTML."
     )
-    parser.add_argument(
-        "--benchmark",
-        choices=["terminal_bench_2_0"],
-        default=None,
-        help=(
-            "Resolve default raw/index/trajectory paths for a benchmark. "
-            "Omit to use the Terminal-Bench 2.0 defaults."
-        ),
-    )
-    parser.add_argument("--leaderboard-url", default=DEFAULT_LEADERBOARD_URL)
-    parser.add_argument("--output", type=Path, default=None)
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
-        "--collect-trajectories",
+        "--download-trajectories",
         action="store_true",
-        help="Load an existing leaderboard JSON and download sampled trial trajectories.",
+        help="Scrape metadata, then download all available trajectory JSON.",
     )
     mode_group.add_argument(
-        "--check-trajectory-availability",
+        "--retry-trajectories",
         action="store_true",
-        help=(
-            "Fetch one trial page per submission, mark has_trajectories in the "
-            "leaderboard JSON, then exit."
-        ),
-    )
-    mode_group.add_argument(
-        "--refresh-row-metrics-only",
-        action="store_true",
-        help=(
-            "Fetch the leaderboard table and update official row-level "
-            "accuracy/stderr fields in an existing leaderboard JSON."
-        ),
-    )
-    parser.add_argument(
-        "--leaderboard-json",
-        type=Path,
-        default=None,
-        help="Existing leaderboard JSON to sample from when --collect-trajectories is used.",
-    )
-    parser.add_argument(
-        "--sample-n",
-        type=int,
-        default=3,
-        help="Number of submissions to sample for trajectory collection.",
-    )
-    parser.add_argument(
-        "--sample-start-index",
-        type=int,
-        default=1,
-        help=(
-            "1-based index into the sampled submission list where collection "
-            "should start; useful when resuming a long run."
-        ),
-    )
-    parser.add_argument(
-        "--trajectories-dir",
-        type=Path,
-        default=None,
-        help="Directory where trajectory JSON files are saved.",
-    )
-    parser.add_argument(
-        "--trajectory-index",
-        type=Path,
-        default=None,
-        help="Master trajectory index JSON path.",
-    )
-    parser.add_argument(
-        "--index-checkpoint-interval",
-        type=int,
-        default=250,
-        help=(
-            "Write the trajectory index after this many updates during "
-            "--collect-trajectories. Use 0 to write only at the end."
-        ),
-    )
-    parser.add_argument(
-        "--task-limit",
-        type=int,
-        default=None,
-        help="Only fetch the first N tasks per sampled submission.",
-    )
-    parser.add_argument(
-        "--trial-limit",
-        type=int,
-        default=None,
-        help="Only download the first N trials per task.",
-    )
-    parser.add_argument(
-        "--availability-limit",
-        type=int,
-        default=None,
-        help="Only check the first N submissions for trajectory availability.",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="Only fetch the first N submissions.",
+        help="Download/retry trajectories from the saved trial metadata cache.",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    benchmark_paths = (
-        paths_for_benchmark(REPO_ROOT, args.benchmark)
-        if args.benchmark is not None
-        else None
-    )
-    output_path = (
-        args.output
-        or (benchmark_paths.leaderboard_submissions if benchmark_paths else DEFAULT_OUTPUT_PATH)
-    )
-    leaderboard_json = (
-        args.leaderboard_json
-        or (benchmark_paths.leaderboard_submissions if benchmark_paths else DEFAULT_OUTPUT_PATH)
-    )
-    trajectories_dir = (
-        args.trajectories_dir
-        or (benchmark_paths.trajectories_dir if benchmark_paths else DEFAULT_TRAJECTORIES_DIR)
-    )
-    trajectory_index = (
-        args.trajectory_index
-        or (benchmark_paths.trajectory_index if benchmark_paths else DEFAULT_TRAJECTORY_INDEX)
-    )
+    benchmark_paths = paths_for_benchmark(REPO_ROOT, DEFAULT_BENCHMARK)
 
-    if args.refresh_row_metrics_only:
-        return refresh_leaderboard_row_metrics(
-            leaderboard_url=args.leaderboard_url,
-            leaderboard_path=leaderboard_json,
-        )
-
-    if args.check_trajectory_availability:
-        return check_trajectory_availability(
-            leaderboard_path=leaderboard_json,
-            limit=args.availability_limit,
-        )
-
-    if args.collect_trajectories:
-        return collect_trajectories(
-            leaderboard_path=leaderboard_json,
-            sample_n=args.sample_n,
-            trajectories_dir=trajectories_dir,
-            index_path=trajectory_index,
-            task_limit=args.task_limit,
-            trial_limit=args.trial_limit,
-            index_checkpoint_interval=args.index_checkpoint_interval,
-            sample_start_index=args.sample_start_index,
+    if args.retry_trajectories:
+        return retry_trajectories_from_trials_file(
+            trials_path=benchmark_paths.leaderboard_trials,
+            trajectories_dir=benchmark_paths.trajectories_dir,
+            index_path=benchmark_paths.trajectory_index,
         )
 
     return collect_leaderboard(
-        leaderboard_url=args.leaderboard_url,
-        output_path=output_path,
-        limit=args.limit,
+        leaderboard_url=DEFAULT_LEADERBOARD_URL,
+        output_path=benchmark_paths.leaderboard_submissions,
+        trials_output_path=benchmark_paths.leaderboard_trials,
+        download_trajectories_enabled=args.download_trajectories,
+        trajectories_dir=benchmark_paths.trajectories_dir,
+        trajectory_index=benchmark_paths.trajectory_index,
     )
 
 
