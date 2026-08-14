@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-SUPPORTED_BENCHMARKS = ("terminal_bench_2_0", "terminal_bench_2_1")
+SUPPORTED_BENCHMARKS = (
+    "terminal_bench_2_0",
+    "terminal_bench_2_1",
+)
 
 
 def find_repo_root(start: Path) -> Path:

@@ -154,42 +154,27 @@ python -m scripts.analysis.diminishing_returns.00_analyze_diminishing_returns --
 python -m scripts.analysis.diminishing_returns.00_analyze_diminishing_returns --by-model
 ```
 
-### 6. Analyze Terminal-Bench 2.0 vs 2.1 Trajectory Drift
+### 6. Analyze Terminal-Bench 2.0 to 2.1 Longitudinal Changes
 
-First make sure each benchmark has its own characterized trajectory table:
+Build the per-benchmark trajectory tables, then run the longitudinal pipeline:
 
 ```powershell
 python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_0
 python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_1
-```
-
-Build the combined, version-labelled trajectory table:
-
-```powershell
 python -m scripts.analysis.longitudinal.00_build_longitudinal_dataset
+python -m scripts.analysis.longitudinal.01_plot_instruction_change_robustness
+python -m scripts.analysis.longitudinal.02_analyze_longitudinal_changes
+python -m scripts.analysis.longitudinal.03_analyze_performance_effort_over_time
+python -m scripts.analysis.longitudinal.04_analyze_token_accounting
 ```
 
-Run descriptive comparisons: raw metric shifts, task overlap, task-matched
-differences, task-mix reweighting, overlapping agent-key checks, and
-command-pattern drift:
+The longitudinal analyses use different denominators depending on which fields
+are required.
 
-```powershell
-python -m scripts.analysis.longitudinal.01_compare_versions
-```
-
-Fit adjusted version models to estimate whether 2.1 differences remain after
-task, scaffold, model, and agent-key controls:
-
-```powershell
-python -m scripts.analysis.longitudinal.02_fit_adjusted_version_models
-```
-
-The main outputs are written under:
-
-```text
-data/processed_live/longitudinal/
-reports/longitudinal/
-```
+- 38,604 = all retained TB2.0/TB2.1 trajectories in the pooled longitudinal dataset.
+- 34,862 = the subset where the raw trajectory contains at least two valid per-call prompt token values.
+  The excluded 3,742 trajectories are still valid for pass-rate, effort, logged-character, and benchmark-level token summaries. They are excluded only from the per-call context accumulation analysis because they lack enough per-call prompt-token detail to measure within-trajectory growth.
+  Instruction-change robustness splits the 89 shared tasks into 74 unchanged tasks (32,113 trajectories) and 15 documented changed tasks (6,491 trajectories).
 
 ## Useful Maintenance Commands
 
