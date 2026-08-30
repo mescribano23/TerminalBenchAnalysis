@@ -6,6 +6,8 @@ Outputs:
 - data/processed_live/task_mining/category/task_domain_effort_summary.csv
 - data/processed_live/task_mining/difficulty/task_difficulty_outcome.csv
 - data/processed_live/task_mining/difficulty/task_difficulty_effort_summary.csv
+- data/processed_live/task_mining/difficulty/task_difficulty_token_alignment_summary.csv
+- data/processed_live/task_mining/difficulty/task_difficulty_token_alignment_by_task.csv
 - data/processed_live/task_mining/category_difficulty/category_difficulty_composition.csv
 - data/processed_live/task_mining/category_difficulty/category_difficulty_pass_rates.csv
 - reports/tasks/category/task_domain_success_task_weighted.png
@@ -34,6 +36,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import StrMethodFormatter
 import numpy as np
 import pandas as pd
+from scipy.stats import kendalltau, kruskal, spearmanr
 
 from scripts.benchmark_paths import find_repo_root
 
@@ -267,6 +270,132 @@ def build_effort_summary(
     return out.sort_values(["variable", "median", dimension_column], ascending=[True, False, True]).reset_index(
         drop=True
     )
+
+
+def build_task_difficulty_token_alignment(
+    trajectories: pd.DataFrame,
+    tasks: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    df = merge_task_metadata(trajectories, tasks, "difficulty")
+    if "total_tokens" not in df.columns:
+        raise ValueError("Trajectory table must contain total_tokens for token/difficulty alignment.")
+
+    token_df = df[df["difficulty"].isin(DIFFICULTY_ORDER) & df["total_tokens"].gt(0)].copy()
+    if token_df.empty:
+        raise ValueError("No positive total_tokens rows are available for token/difficulty alignment.")
+
+    difficulty_order = {difficulty: index + 1 for index, difficulty in enumerate(DIFFICULTY_ORDER)}
+    token_df["difficulty_ordinal"] = token_df["difficulty"].map(difficulty_order)
+    token_df["log10_total_tokens"] = np.log10(token_df["total_tokens"])
+
+    by_task = (
+        token_df.groupby(["task_name", "difficulty", "category"], as_index=False)
+        .agg(
+            n_positive_token_trajectories=("total_tokens", "size"),
+            median_total_tokens=("total_tokens", "median"),
+            mean_total_tokens=("total_tokens", "mean"),
+            q25_total_tokens=("total_tokens", lambda values: values.quantile(0.25)),
+            q75_total_tokens=("total_tokens", lambda values: values.quantile(0.75)),
+        )
+        .assign(
+            difficulty_ordinal=lambda rows: rows["difficulty"].map(difficulty_order),
+            log10_median_total_tokens=lambda rows: np.log10(rows["median_total_tokens"]),
+        )
+    )
+
+    rows: list[dict[str, Any]] = []
+
+    def add_row(section: str, metric: str, value: Any, difficulty: str = "", comparison: str = "") -> None:
+        rows.append(
+            {
+                "section": section,
+                "difficulty": difficulty,
+                "comparison": comparison,
+                "metric": metric,
+                "value": value,
+            }
+        )
+
+    for difficulty in DIFFICULTY_ORDER:
+        task_group = by_task[by_task["difficulty"].eq(difficulty)]["median_total_tokens"]
+        trajectory_group = token_df[token_df["difficulty"].eq(difficulty)]["total_tokens"]
+        add_row("task_level_distribution", "n_tasks", int(task_group.shape[0]), difficulty)
+        add_row("task_level_distribution", "median_task_median_total_tokens", float(task_group.median()), difficulty)
+        add_row("task_level_distribution", "q25_task_median_total_tokens", float(task_group.quantile(0.25)), difficulty)
+        add_row("task_level_distribution", "q75_task_median_total_tokens", float(task_group.quantile(0.75)), difficulty)
+        add_row("trajectory_level_distribution", "n_positive_token_trajectories", int(trajectory_group.shape[0]), difficulty)
+        add_row("trajectory_level_distribution", "median_total_tokens", float(trajectory_group.median()), difficulty)
+        add_row("trajectory_level_distribution", "q25_total_tokens", float(trajectory_group.quantile(0.25)), difficulty)
+        add_row("trajectory_level_distribution", "q75_total_tokens", float(trajectory_group.quantile(0.75)), difficulty)
+
+    task_spearman = spearmanr(by_task["difficulty_ordinal"], by_task["log10_median_total_tokens"])
+    task_kendall = kendalltau(by_task["difficulty_ordinal"], by_task["log10_median_total_tokens"])
+    trajectory_spearman = spearmanr(token_df["difficulty_ordinal"], token_df["log10_total_tokens"])
+    task_kruskal = kruskal(
+        *[
+            by_task.loc[by_task["difficulty"].eq(difficulty), "log10_median_total_tokens"]
+            for difficulty in DIFFICULTY_ORDER
+        ]
+    )
+
+    add_row("association", "spearman_rho", float(task_spearman.statistic), comparison="task_level_log_median_total_tokens")
+    add_row("association", "spearman_p_value", float(task_spearman.pvalue), comparison="task_level_log_median_total_tokens")
+    add_row("association", "kendall_tau", float(task_kendall.statistic), comparison="task_level_log_median_total_tokens")
+    add_row("association", "kendall_p_value", float(task_kendall.pvalue), comparison="task_level_log_median_total_tokens")
+    add_row("association", "spearman_rho", float(trajectory_spearman.statistic), comparison="trajectory_level_log_total_tokens")
+    add_row("association", "spearman_p_value", float(trajectory_spearman.pvalue), comparison="trajectory_level_log_total_tokens")
+    add_row("association", "kruskal_h", float(task_kruskal.statistic), comparison="task_level_log_median_total_tokens")
+    add_row("association", "kruskal_p_value", float(task_kruskal.pvalue), comparison="task_level_log_median_total_tokens")
+
+    task_medians = by_task.groupby("difficulty")["median_total_tokens"].median()
+    easy_max = by_task.loc[by_task["difficulty"].eq("easy"), "median_total_tokens"].max()
+    add_row(
+        "overlap",
+        "share_hard_tasks_below_medium_task_median",
+        float((by_task.loc[by_task["difficulty"].eq("hard"), "median_total_tokens"] < task_medians["medium"]).mean()),
+        comparison="hard_vs_medium",
+    )
+    add_row(
+        "overlap",
+        "share_medium_tasks_above_hard_task_median",
+        float((by_task.loc[by_task["difficulty"].eq("medium"), "median_total_tokens"] > task_medians["hard"]).mean()),
+        comparison="medium_vs_hard",
+    )
+    add_row(
+        "overlap",
+        "share_easy_tasks_above_medium_task_median",
+        float((by_task.loc[by_task["difficulty"].eq("easy"), "median_total_tokens"] > task_medians["medium"]).mean()),
+        comparison="easy_vs_medium",
+    )
+    add_row(
+        "overlap",
+        "share_hard_tasks_below_easy_task_max",
+        float((by_task.loc[by_task["difficulty"].eq("hard"), "median_total_tokens"] < easy_max).mean()),
+        comparison="hard_vs_easy",
+    )
+
+    for harder, easier in [("medium", "easy"), ("hard", "medium"), ("hard", "easy")]:
+        harder_values = by_task.loc[by_task["difficulty"].eq(harder), "median_total_tokens"].to_numpy(dtype=float)
+        easier_values = by_task.loc[by_task["difficulty"].eq(easier), "median_total_tokens"].to_numpy(dtype=float)
+        superiority = (
+            (harder_values[:, None] > easier_values[None, :]).sum()
+            + 0.5 * (harder_values[:, None] == easier_values[None, :]).sum()
+        ) / (len(harder_values) * len(easier_values))
+        add_row(
+            "stochastic_superiority",
+            "prob_harder_task_median_exceeds_easier",
+            float(superiority),
+            comparison=f"{harder}_vs_{easier}",
+        )
+
+    summary = pd.DataFrame(rows)
+    by_task = (
+        by_task.assign(_difficulty_order=dimension_sort_key(by_task["difficulty"], "difficulty"))
+        .sort_values(["_difficulty_order", "median_total_tokens", "task_name"])
+        .drop(columns="_difficulty_order")
+        .reset_index(drop=True)
+    )
+    return summary, by_task
 
 
 def merge_task_metadata(
@@ -1045,6 +1174,7 @@ def main() -> None:
     source_difficulty_rates = build_stratified_pass_rates(trajectories, tasks, ["model_source"], "difficulty")
     category_difficulty_rates = build_category_difficulty_pass_rates(trajectories, tasks)
     category_difficulty_composition = build_category_difficulty_composition(category_difficulty_rates)
+    token_alignment_summary, token_alignment_by_task = build_task_difficulty_token_alignment(trajectories, tasks)
 
     category_out_dir = args.out / "category"
     difficulty_out_dir = args.out / "difficulty"
@@ -1057,11 +1187,15 @@ def main() -> None:
     effort_out_path = category_out_dir / "task_domain_effort_summary.csv"
     difficulty_out_path = difficulty_out_dir / "task_difficulty_outcome.csv"
     difficulty_effort_out_path = difficulty_out_dir / "task_difficulty_effort_summary.csv"
+    token_alignment_summary_path = difficulty_out_dir / "task_difficulty_token_alignment_summary.csv"
+    token_alignment_by_task_path = difficulty_out_dir / "task_difficulty_token_alignment_by_task.csv"
     category_difficulty_out_path = category_difficulty_out_dir / "category_difficulty.csv"
     domain_table.drop(columns=["low_task_count"]).to_csv(out_path, index=False)
     effort_summary.drop(columns=["complete_case_count"]).to_csv(effort_out_path, index=False)
     difficulty_table.drop(columns=["low_task_count"]).to_csv(difficulty_out_path, index=False)
     difficulty_effort_summary.drop(columns=["complete_case_count"]).to_csv(difficulty_effort_out_path, index=False)
+    token_alignment_summary.to_csv(token_alignment_summary_path, index=False)
+    token_alignment_by_task.to_csv(token_alignment_by_task_path, index=False)
     category_difficulty_rates[["category", "difficulty", "n_tasks", "n_trajectories", "pass_count", "fail_count", "pass_rate"]].to_csv(category_difficulty_out_path, index=False)
     category_figures_dir = args.figures_dir / "category"
     difficulty_figures_dir = args.figures_dir / "difficulty"
@@ -1112,6 +1246,8 @@ def main() -> None:
     print(f"Wrote {effort_out_path}")
     print(f"Wrote {difficulty_out_path}")
     print(f"Wrote {difficulty_effort_out_path}")
+    print(f"Wrote {token_alignment_summary_path}")
+    print(f"Wrote {token_alignment_by_task_path}")
     print(f"Wrote {category_difficulty_out_path}")
     print(f"Wrote {len(figure_paths)} category figures to {category_figures_dir}")
     print(f"Wrote {len(model_scaffold_figure_paths)} category model/scaffold figures to {category_figures_dir / 'model_scaffold'}")

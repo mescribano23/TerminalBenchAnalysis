@@ -48,28 +48,6 @@ REQUIRED_COLUMNS = {
     "category",
 }
 
-# Source of truth: supplied TB2.0->TB2.1 instruction changelog. This is a
-# documented instruction-change classification, not a live repository diff.
-DOCUMENTED_INSTRUCTION_CHANGE_REASONS = {
-    "adaptive-rejection-sampler": "ambiguous terminology/API clarification",
-    "build-pmars": "test path/format clarification",
-    "caffe-cifar-10": "test path/format clarification",
-    "chess-best-move": "multimodal capability-boundary instruction",
-    "code-from-image": "multimodal capability-boundary instruction",
-    "extract-moves-from-video": "multimodal capability-boundary instruction",
-    "financial-document-processor": "multimodal capability-boundary instruction",
-    "hf-model-inference": "test path/format clarification",
-    "install-windows-3.11": "test path/format clarification",
-    "mteb-retrieve": "ambiguous terminology/API clarification",
-    "path-tracing": "strict test constraint clarification; multimodal capability-boundary instruction",
-    "polyglot-c-py": "strict test constraint clarification",
-    "protein-assembly": "ambiguous terminology/API clarification",
-    "sam-cell-seg": "strict test constraint clarification",
-    "train-fasttext": "ambiguous terminology/API clarification",
-}
-DOCUMENTED_INSTRUCTION_CHANGE_TASKS = set(DOCUMENTED_INSTRUCTION_CHANGE_REASONS)
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trajectory-csv", type=Path, default=TRAJECTORY_CSV)
@@ -226,31 +204,6 @@ def aggregation_check(df: pd.DataFrame, summary: pd.DataFrame, group_col: str) -
     return f"{group_col}: aggregation choice is material (max difference {max_diff:.1f} pp)."
 
 
-def documented_task_definition_changes(task_names: set[str]) -> pd.DataFrame:
-    missing_documented = sorted(DOCUMENTED_INSTRUCTION_CHANGE_TASKS.difference(task_names))
-    if missing_documented:
-        raise ValueError(
-            "Documented instruction-change tasks missing from shared task set: "
-            + ", ".join(missing_documented)
-        )
-
-    rows: list[dict[str, object]] = []
-    for task_name in sorted(task_names):
-        changed = task_name in DOCUMENTED_INSTRUCTION_CHANGE_TASKS
-        rows.append(
-            {
-                "task_name": task_name,
-                "task_change_status": "changed" if changed else "unchanged",
-                "change_reason": DOCUMENTED_INSTRUCTION_CHANGE_REASONS.get(
-                    task_name,
-                    "not listed in supplied TB2.0-to-TB2.1 instruction changelog",
-                ),
-                "changed_components": "instruction" if changed else "",
-            }
-        )
-    return pd.DataFrame(rows)
-
-
 def difficulty_submission_summary(df: pd.DataFrame) -> pd.DataFrame:
     group_columns = ["submission_id", "submission_timestamp", "difficulty"]
     per_task = (
@@ -373,8 +326,6 @@ def main() -> None:
     difficulty_check = aggregation_check(df, difficulty_changes, "difficulty")
     category_check = aggregation_check(df, category_changes, "category")
 
-    definition_changes = documented_task_definition_changes(all_tasks)
-
     plot_difficulty(df, args.figures_dir / "pass_rate_change_by_difficulty.png")
     plot_category(
         category_changes,
@@ -382,9 +333,7 @@ def main() -> None:
         args.max_categories,
     )
 
-    status_counts = definition_changes["task_change_status"].value_counts().to_dict()
     print(f"Shared tasks matched: {len(all_tasks)}")
-    print(f"Task definition statuses: {status_counts}")
     print(difficulty_check)
     print(category_check)
     print(f"Category figure shows top {min(args.max_categories, len(category_changes))} of {len(category_changes)} categories.")

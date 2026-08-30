@@ -100,6 +100,8 @@ python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_ben
 python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_1
 ```
 
+`data/processed_live/terminal_bench_2_0/trajectory_schema_inspection.csv` documents the scaffold-stratified TB2.0 schema inspection used during trajectory parser development.
+
 Regenerate leaderboard-level summaries and figures:
 
 ```powershell
@@ -168,13 +170,59 @@ python -m scripts.analysis.longitudinal.03_analyze_performance_effort_over_time
 python -m scripts.analysis.longitudinal.04_analyze_token_accounting
 ```
 
+The main longitudinal token-accounting result is reported at the full-dataset
+population level:
+
+- logged characters: 31,829 -> 35,584 (+11.8%)
+- reported input tokens: 189,811 -> 264,066 (+39.1%)
+- reported output tokens: 8,788 -> 13,562 (+54.3%)
+- reported total tokens: 206,147 -> 281,590 (+36.6%)
+
+Optional visible-text tokenization audit:
+
+```powershell
+python -m scripts.analysis.longitudinal.05_analyze_visible_text_token_accounting
+```
+
+This audit tests whether tokenizing the readable text saved in trajectory JSON
+files can stand in for provider-reported token usage. It uses only exact
+model-specific tokenizers from the installed `tiktoken` OpenAI model registry;
+there is no tokenizer-family fallback and no characters-per-token
+approximation. With the current local tokenizer registry, the usable cohort is
+`openai/gpt-5` in TB2.0: 1,713 trajectories have an exact tokenizer available
+(5.51% of TB2.0), and 1,712 have paired visible-text and reported-token values.
+No TB2.1 model currently has an exact model-specific tokenizer in the local
+registry.
+
+For the paired `gpt-5` cohort, persisted readable trajectory text is far below
+reported token usage:
+
+- median visible-text tokens: 6,544
+- median reported input tokens: 86,867
+- median reported total tokens: 108,429
+- median reported-input / visible-text-token ratio: 13.65x
+- median reported-total / visible-text-token ratio: 17.30x
+- median visible model-output tokens / reported output tokens: 0.10x
+
+These numbers support treating provider-reported tokens as the primary token
+accounting field: the trajectory text omits repeated context, hidden or
+serialized tool state, provider-side formatting, and other processing that is
+not visible as plain saved text. The retained audit outputs are:
+
+```text
+data/processed_live/longitudinal/visible_text_token_accounting_summary.csv
+data/processed_live/longitudinal/visible_text_tokenizer_coverage_by_model.csv
+```
+
+Use `--details-csv PATH` only when row-level visible-text audit data are needed.
+
 The longitudinal analyses use different denominators depending on which fields
 are required.
 
 - 38,604 = all retained TB2.0/TB2.1 trajectories in the pooled longitudinal dataset.
 - 34,862 = the subset where the raw trajectory contains at least two valid per-call prompt token values.
   The excluded 3,742 trajectories are still valid for pass-rate, effort, logged-character, and benchmark-level token summaries. They are excluded only from the per-call context accumulation analysis because they lack enough per-call prompt-token detail to measure within-trajectory growth.
-  Instruction-change robustness splits the 89 shared tasks into 74 unchanged tasks (32,113 trajectories) and 15 documented changed tasks (6,491 trajectories).
+  Instruction-change robustness uses the audited stored-instruction split: 67 instruction-unchanged tasks (29,011 trajectories) and 22 instruction-changed tasks (9,593 trajectories).
 
 ## Useful Maintenance Commands
 

@@ -4,16 +4,13 @@
 The final thesis analysis keeps only three ideas:
 - clean model-version comparisons show heterogeneous token changes;
 - trajectory-level input tokens are the sum of input tokens from successive
-  model calls, and input contexts usually grow during a trajectory;
-- Codex trajectories expose explicit reasoning tokens that can form a large
-  part of output-token accounting.
+  model calls, and input contexts usually grow during a trajectory.
 
 Outputs:
 - data/processed_live/longitudinal/token_accounting/token_vs_logged_text_monthly.csv
 - data/processed_live/longitudinal/token_accounting/token_accounting_comparisons.csv
 - reports/longitudinal/token_accounting/token_vs_logged_text_over_time.png
 - reports/longitudinal/token_accounting/token_growth_by_model.png
-- reports/longitudinal/token_accounting/codex_reasoning_tokens.png
 - reports/longitudinal/token_accounting/input_token_accumulation.png
 - reports/longitudinal/token_accounting/input_context_growth_distribution.png
 """
@@ -53,7 +50,6 @@ COMPARISONS_CSV = OUT_DIR / "token_accounting_comparisons.csv"
 MONTHLY_TOKEN_TEXT_CSV = OUT_DIR / "token_vs_logged_text_monthly.csv"
 TOKEN_TEXT_OVER_TIME_FIG = FIGURES_DIR / "token_vs_logged_text_over_time.png"
 TOKEN_GROWTH_FIG = FIGURES_DIR / "token_growth_by_model.png"
-CODEX_REASONING_FIG = FIGURES_DIR / "codex_reasoning_tokens.png"
 INPUT_ACCUMULATION_FIG = FIGURES_DIR / "input_token_accumulation.png"
 INPUT_CONTEXT_DISTRIBUTION_FIG = FIGURES_DIR / "input_context_growth_distribution.png"
 MIN_RELIABLE_MONTH_TRAJECTORIES = 100
@@ -83,13 +79,12 @@ class ComparisonSpec:
     earlier_benchmark: str
     later_model: str
     later_benchmark: str
-    reasoning_share_valid: bool = False
 
 
 COMPARISONS = [
-    ComparisonSpec("codex_gpt5_to_gpt55", "codex", "gpt-5", "2.0", "gpt-5.5", "2.1", True),
-    ComparisonSpec("codex_gpt5_to_gpt56_luna", "codex", "gpt-5", "2.0", "gpt-5.6-luna", "2.1", True),
-    ComparisonSpec("codex_gpt5_to_gpt56_terra", "codex", "gpt-5", "2.0", "gpt-5.6-terra", "2.1", True),
+    ComparisonSpec("codex_gpt5_to_gpt55", "codex", "gpt-5", "2.0", "gpt-5.5", "2.1"),
+    ComparisonSpec("codex_gpt5_to_gpt56_luna", "codex", "gpt-5", "2.0", "gpt-5.6-luna", "2.1"),
+    ComparisonSpec("codex_gpt5_to_gpt56_terra", "codex", "gpt-5", "2.0", "gpt-5.6-terra", "2.1"),
     ComparisonSpec("gemini_cli_25pro_to_3pro", "gemini-cli", "gemini-2.5-pro", "2.0", "gemini-3-pro-preview", "2.1"),
     ComparisonSpec(
         "claude_code_opus46_to_opus47",
@@ -477,15 +472,6 @@ def trajectory_path(row: pd.Series, root: Path) -> Path:
     return root / str(row["benchmark"]) / Path(rel_path)
 
 
-def reasoning_from_final_metrics(scaffold: str, final_metrics: dict[str, Any]) -> float:
-    extra = final_metrics.get("extra") if isinstance(final_metrics.get("extra"), dict) else {}
-    if scaffold == "codex":
-        value = numeric(extra.get("reasoning_output_tokens"))
-        if not pd.isna(value):
-            return value
-    return math.nan
-
-
 def parse_raw_trajectory(row: pd.Series, root: Path) -> dict[str, Any]:
     path = trajectory_path(row, root)
     with path.open("r", encoding="utf-8") as f:
@@ -493,11 +479,7 @@ def parse_raw_trajectory(row: pd.Series, root: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Trajectory JSON is not an object: {path}")
 
-    final_metrics = data.get("final_metrics") if isinstance(data.get("final_metrics"), dict) else {}
-    reasoning_tokens = reasoning_from_final_metrics(str(row["scaffold"]), final_metrics)
-
     prompt_calls: list[float] = []
-    step_reasoning_calls: list[float] = []
 
     steps = data.get("steps") if isinstance(data.get("steps"), list) else []
     for step in steps:
@@ -511,27 +493,6 @@ def parse_raw_trajectory(row: pd.Series, root: Path) -> dict[str, Any]:
         if not pd.isna(prompt):
             prompt_calls.append(prompt)
 
-        metrics_extra = metrics.get("extra") if isinstance(metrics.get("extra"), dict) else {}
-        completion_details = (
-            metrics_extra.get("completion_tokens_details")
-            if isinstance(metrics_extra.get("completion_tokens_details"), dict)
-            else {}
-        )
-        per_call_reasoning = numeric(completion_details.get("reasoning_tokens"))
-        if pd.isna(per_call_reasoning):
-            per_call_reasoning = numeric(metrics_extra.get("reasoning_output_tokens"))
-        if not pd.isna(per_call_reasoning):
-            step_reasoning_calls.append(per_call_reasoning)
-
-    scaffold = str(row["scaffold"])
-    if pd.isna(reasoning_tokens) and scaffold == "codex" and step_reasoning_calls:
-        reasoning_tokens = float(sum(step_reasoning_calls))
-
-    reasoning_share = (
-        reasoning_tokens / float(row["completion_tokens"])
-        if not pd.isna(reasoning_tokens) and row["completion_tokens"] and not pd.isna(row["completion_tokens"])
-        else math.nan
-    )
     first_prompt = prompt_calls[0] if prompt_calls else math.nan
     last_prompt = prompt_calls[-1] if prompt_calls else math.nan
     diffs = np.diff(prompt_calls) if len(prompt_calls) >= 2 else np.array([])
@@ -552,8 +513,6 @@ def parse_raw_trajectory(row: pd.Series, root: Path) -> dict[str, Any]:
         "prompt_tokens": row["prompt_tokens"],
         "completion_tokens": row["completion_tokens"],
         "total_tokens": row["total_tokens"],
-        "reasoning_tokens": reasoning_tokens,
-        "reasoning_share_completion": reasoning_share,
         "prompt_calls": prompt_calls,
         "prompt_calls_sum": float(sum(prompt_calls)) if prompt_calls else math.nan,
         "prompt_call_count": len(prompt_calls),
@@ -606,8 +565,6 @@ def summarize_side(df: pd.DataFrame, spec: ComparisonSpec, side: str, shared_tas
         "prompt_tokens",
         "completion_tokens",
         "total_tokens",
-        "reasoning_tokens",
-        "reasoning_share_completion",
         "logged_chars",
     ]:
         row[metric] = task_balanced_median(group, metric)
@@ -654,18 +611,6 @@ def build_comparisons(df: pd.DataFrame) -> pd.DataFrame:
             row[f"{metric}_later"] = later[metric]
             row[f"{metric}_change_pct"] = pct_change(earlier[metric], later[metric])
 
-        if spec.reasoning_share_valid:
-            for metric in ["reasoning_tokens", "reasoning_share_completion"]:
-                row[f"{metric}_earlier"] = earlier[metric]
-                row[f"{metric}_later"] = later[metric]
-            row["reasoning_tokens_change_pct"] = pct_change(earlier["reasoning_tokens"], later["reasoning_tokens"])
-        else:
-            row["reasoning_tokens_earlier"] = math.nan
-            row["reasoning_tokens_later"] = math.nan
-            row["reasoning_tokens_change_pct"] = math.nan
-            row["reasoning_share_completion_earlier"] = math.nan
-            row["reasoning_share_completion_later"] = math.nan
-
         rows.append(row)
 
     order = [
@@ -685,11 +630,6 @@ def build_comparisons(df: pd.DataFrame) -> pd.DataFrame:
         "total_tokens_earlier",
         "total_tokens_later",
         "total_tokens_change_pct",
-        "reasoning_tokens_earlier",
-        "reasoning_tokens_later",
-        "reasoning_tokens_change_pct",
-        "reasoning_share_completion_earlier",
-        "reasoning_share_completion_later",
         "logged_chars_earlier",
         "logged_chars_later",
         "logged_chars_change_pct",
@@ -705,19 +645,11 @@ def validate_metrics(df: pd.DataFrame) -> dict[str, int]:
         > tolerance
     ]
 
-    reasoning_rows = df[df["reasoning_tokens"].notna()]
-    reasoning_bad = reasoning_rows[
-        (reasoning_rows["reasoning_tokens"] < -tolerance)
-        | (reasoning_rows["reasoning_tokens"] - reasoning_rows["completion_tokens"] > tolerance)
-    ]
-
     results = {
         "token_arithmetic_checked": int(token_rows.shape[0]),
         "token_arithmetic_invalid": int(token_bad.shape[0]),
-        "reasoning_checked": int(reasoning_rows.shape[0]),
-        "reasoning_invalid": int(reasoning_bad.shape[0]),
     }
-    if results["token_arithmetic_invalid"] or results["reasoning_invalid"]:
+    if results["token_arithmetic_invalid"]:
         raise ValueError(f"Validation failed: {results}")
     return results
 
@@ -912,72 +844,10 @@ def draw_token_growth_panel(ax: plt.Axes, comparisons: pd.DataFrame) -> None:
     ax.grid(axis="x", color="#E5E5E5", linewidth=0.8)
 
 
-def codex_reasoning_rows(comparisons: pd.DataFrame) -> pd.DataFrame:
-    codex_sides: list[dict[str, Any]] = []
-    for row in comparisons[comparisons["scaffold"].eq("codex")].itertuples(index=False):
-        codex_sides.append(
-            {
-                "label": f"{model_label(row.earlier_model)} ({row.earlier_benchmark})",
-                "completion": row.completion_tokens_earlier,
-                "reasoning": row.reasoning_tokens_earlier,
-                "share": row.reasoning_share_completion_earlier,
-            }
-        )
-        codex_sides.append(
-            {
-                "label": f"{model_label(row.later_model)} ({row.later_benchmark})",
-                "completion": row.completion_tokens_later,
-                "reasoning": row.reasoning_tokens_later,
-                "share": row.reasoning_share_completion_later,
-            }
-        )
-    return pd.DataFrame(codex_sides).drop_duplicates("label")
-
-
-def draw_codex_reasoning_panel(ax_reason: plt.Axes, comparisons: pd.DataFrame) -> None:
-    codex_df = codex_reasoning_rows(comparisons)
-    yy = np.arange(len(codex_df))
-    pair_height = 0.28
-    ax_reason.barh(
-        yy + pair_height / 2,
-        codex_df["completion"] / 1000.0,
-        height=pair_height,
-        color="#9A7A24",
-        label="Completion/output tokens",
-    )
-    ax_reason.barh(
-        yy - pair_height / 2,
-        codex_df["reasoning"] / 1000.0,
-        height=pair_height,
-        color="#8E5A5A",
-        label="Explicit reasoning tokens",
-    )
-    for idx, row in codex_df.iterrows():
-        x_pos = max(row["completion"], row["reasoning"]) / 1000.0
-        ax_reason.text(x_pos, idx, f"  reasoning share: {row['share']:.0%}", va="center", fontsize=8)
-    ax_reason.set_yticks(yy)
-    ax_reason.set_yticklabels(codex_df["label"])
-    ax_reason.invert_yaxis()
-    ax_reason.set_xlabel("Task-balanced token count, thousands")
-    ax_reason.set_title("Explicit reasoning is a substantial component of Codex output")
-    ax_reason.legend(loc="lower right", frameon=False)
-    ax_reason.grid(axis="x", color="#E5E5E5", linewidth=0.8)
-
-
 def plot_token_growth(comparisons: pd.DataFrame, out: Path) -> None:
     thesis_style()
     fig, ax = plt.subplots(figsize=(8.2, max(4.9, 0.47 * len(comparisons) + 1.2)))
     draw_token_growth_panel(ax, comparisons.copy())
-    fig.tight_layout()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, bbox_inches="tight", dpi=300)
-    plt.close(fig)
-
-
-def plot_codex_reasoning(comparisons: pd.DataFrame, out: Path) -> None:
-    thesis_style()
-    fig, ax = plt.subplots(figsize=(6.8, 3.4))
-    draw_codex_reasoning_panel(ax, comparisons.copy())
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, bbox_inches="tight", dpi=300)
@@ -1090,29 +960,6 @@ def print_table_1(comparisons: pd.DataFrame) -> None:
     print(pd.DataFrame(rows).to_string(index=False))
 
 
-def print_table_2(comparisons: pd.DataFrame) -> None:
-    print("\nTable 2 - Explicit reasoning decomposition")
-    reasoning = comparisons[
-        comparisons["scaffold"].eq("codex")
-        & comparisons["reasoning_tokens_earlier"].notna()
-        & comparisons["reasoning_tokens_later"].notna()
-    ]
-    rows = []
-    for row in reasoning.itertuples(index=False):
-        rows.append(
-            {
-                "Comparison": comparison_label(row),
-                "Output earlier -> later": format_arrow(row.completion_tokens_earlier, row.completion_tokens_later),
-                "Reasoning earlier -> later": format_arrow(row.reasoning_tokens_earlier, row.reasoning_tokens_later),
-                "Reasoning share earlier -> later": (
-                    f"{row.reasoning_share_completion_earlier:.0%} -> "
-                    f"{row.reasoning_share_completion_later:.0%}"
-                ),
-            }
-        )
-    print(pd.DataFrame(rows).to_string(index=False))
-
-
 def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -1147,7 +994,6 @@ def main() -> None:
 
     comparisons.to_csv(args.out_dir / COMPARISONS_CSV.name, index=False, na_rep="NA")
     plot_token_growth(comparisons, args.figures_dir / TOKEN_GROWTH_FIG.name)
-    plot_codex_reasoning(comparisons, args.figures_dir / CODEX_REASONING_FIG.name)
     plot_input_accumulation(examples, args.figures_dir / INPUT_ACCUMULATION_FIG.name)
     plot_input_context_distribution(
         all_context_eligible,
@@ -1175,14 +1021,12 @@ def main() -> None:
         )
 
     print_table_1(comparisons)
-    print_table_2(comparisons)
 
     print("\nFiles written")
     print(f"- {monthly_csv_path}")
     print(f"- {monthly_fig_path}")
     print(f"- {args.out_dir / COMPARISONS_CSV.name}")
     print(f"- {args.figures_dir / TOKEN_GROWTH_FIG.name}")
-    print(f"- {args.figures_dir / CODEX_REASONING_FIG.name}")
     print(f"- {args.figures_dir / INPUT_ACCUMULATION_FIG.name}")
     print(f"- {args.figures_dir / INPUT_CONTEXT_DISTRIBUTION_FIG.name}")
 
