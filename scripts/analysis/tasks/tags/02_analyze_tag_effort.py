@@ -3,7 +3,6 @@
 
 Outputs:
 - reports/tasks/tags/heatmap_tag_group_effort_median_lift.png
-- reports/tasks/tags/heatmap_semantic_cluster_effort_median_lift.png
 """
 
 from __future__ import annotations
@@ -29,9 +28,6 @@ REPORTS_DIR = REPO_ROOT / "reports"
 TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0" / "trajectory_summary.csv"
 TAGS_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "tags" / "task_tag_counts.csv"
 TAG_GROUPS_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "tags" / "tag_groups.csv"
-SEMANTIC_CLUSTERS_DEFAULT = (
-    DATA_PROCESSED_LIVE_DIR / "task_mining" / "tags" / "semantic_clusters" / "tag_semantic_clusters.csv"
-)
 OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "tags"
 FIGURES_DEFAULT = REPORTS_DIR / "tasks" / "tags"
 
@@ -39,8 +35,8 @@ OUTCOME_COLUMNS = {"task_name", "reward_outcome", "outcome", "reward"}
 EFFORT_DISPLAY_NAMES = {
     "step_count": "Step count",
     "agent_step_count": "Agent step count",
-    "tool_call_count": "Tool call count",
-    "command_count": "Command count",
+    "tool_call_count": "Structured tool call count",
+    "shell_invocation_count": "Shell invocation count",
     "total_tokens": "Total tokens",
     "duration_seconds": "Duration seconds",
     "cost_usd_positive": "Positive cost USD",
@@ -50,7 +46,7 @@ HEATMAP_VARIABLES = [
     "step_count",
     "agent_step_count",
     "tool_call_count",
-    "command_count",
+    "shell_invocation_count",
     "total_tokens",
     "duration_seconds",
     "cost_usd_positive",
@@ -62,7 +58,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trajectories", type=Path, default=TRAJECTORY_DEFAULT)
     parser.add_argument("--task-tags", type=Path, default=TAGS_DEFAULT)
     parser.add_argument("--tag-groups", type=Path, default=TAG_GROUPS_DEFAULT)
-    parser.add_argument("--semantic-clusters", type=Path, default=SEMANTIC_CLUSTERS_DEFAULT)
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DEFAULT)
     return parser.parse_args()
@@ -133,21 +128,9 @@ def load_tag_groups(path: Path) -> pd.DataFrame:
     return tag_groups[["tag_key", "tag_group"]].drop_duplicates("tag_key")
 
 
-def load_semantic_clusters(path: Path) -> pd.DataFrame:
-    clusters = pd.read_csv(path)
-    clusters["tag_key"] = clusters["tag"].map(normalize_tag_key)
-    clusters["cluster_id"] = clusters["cluster_id"].astype(int)
-    if "tag_count" in clusters.columns:
-        clusters["tag_count"] = pd.to_numeric(clusters["tag_count"], errors="coerce").fillna(0).astype(int)
-    else:
-        clusters["tag_count"] = 1
-    return clusters[["tag_key", "cluster_id", "tag", "tag_count"]].drop_duplicates(["tag_key", "cluster_id"])
-
-
 def build_memberships(
     task_tags: pd.DataFrame,
     tag_groups: pd.DataFrame,
-    semantic_clusters: pd.DataFrame,
 ) -> dict[str, pd.DataFrame]:
     tag_membership = task_tags[["task_name", "tag"]].drop_duplicates()
 
@@ -158,18 +141,9 @@ def build_memberships(
         .drop_duplicates()
     )
 
-    cluster_membership = (
-        task_tags.merge(semantic_clusters[["tag_key", "cluster_id"]], on="tag_key", how="left", validate="many_to_many")
-        .dropna(subset=["cluster_id"])
-        [["task_name", "cluster_id"]]
-        .drop_duplicates()
-    )
-    cluster_membership["cluster_id"] = cluster_membership["cluster_id"].astype(int)
-
     return {
         "tag": tag_membership,
         "tag_group": group_membership,
-        "semantic_cluster": cluster_membership,
     }
 
 
@@ -273,19 +247,6 @@ def build_effort_summary(
         .sort_values(["variable", "median", dimension_column], ascending=[True, False, True])
         .reset_index(drop=True)
     )
-
-
-def cluster_labels(semantic_clusters: pd.DataFrame, max_tags: int = 4) -> dict[int, str]:
-    labels: dict[int, str] = {}
-    for cluster_id, group in semantic_clusters.groupby("cluster_id"):
-        top_tags = (
-            group.sort_values(["tag_count", "tag"], ascending=[False, True])["tag"]
-            .drop_duplicates()
-            .head(max_tags)
-            .tolist()
-        )
-        labels[int(cluster_id)] = f"Cluster {int(cluster_id)}: {', '.join(top_tags)}"
-    return labels
 
 
 def figure_height(n_rows: int) -> float:
@@ -405,9 +366,6 @@ def write_figures(
     figures_dir: Path,
     group_outcome: pd.DataFrame,
     group_effort: pd.DataFrame,
-    cluster_outcome: pd.DataFrame,
-    cluster_effort: pd.DataFrame,
-    semantic_clusters: pd.DataFrame,
 ) -> list[Path]:
     figure_paths: list[Path] = []
     group_path = plot_effort_lift_heatmap(
@@ -420,17 +378,6 @@ def write_figures(
     )
     if group_path is not None:
         figure_paths.append(group_path)
-
-    semantic_path = plot_effort_lift_heatmap(
-        cluster_effort,
-        cluster_outcome,
-        "cluster_id",
-        cluster_labels(semantic_clusters),
-        "Median trajectory effort by semantic tag cluster",
-        figures_dir / "heatmap_semantic_cluster_effort_median_lift.png",
-    )
-    if semantic_path is not None:
-        figure_paths.append(semantic_path)
     return figure_paths
 
 
@@ -438,22 +385,16 @@ def write_outputs(
     trajectories: pd.DataFrame,
     memberships: dict[str, pd.DataFrame],
     figures_dir: Path,
-    semantic_clusters: pd.DataFrame,
 ) -> list[Path]:
     baselines = global_effort_baselines(trajectories)
 
     group_outcome = build_outcome_table(trajectories, memberships["tag_group"], "tag_group")
     group_effort = build_effort_summary(trajectories, memberships["tag_group"], "tag_group", baselines)
-    cluster_outcome = build_outcome_table(trajectories, memberships["semantic_cluster"], "cluster_id")
-    cluster_effort = build_effort_summary(trajectories, memberships["semantic_cluster"], "cluster_id", baselines)
 
     return write_figures(
         figures_dir,
         group_outcome,
         group_effort,
-        cluster_outcome,
-        cluster_effort,
-        semantic_clusters,
     )
 
 
@@ -462,20 +403,17 @@ def main() -> None:
     trajectories = load_trajectories(args.trajectories)
     task_tags = load_task_tags(args.task_tags)
     tag_groups = load_tag_groups(args.tag_groups)
-    semantic_clusters = load_semantic_clusters(args.semantic_clusters)
-    memberships = build_memberships(task_tags, tag_groups, semantic_clusters)
+    memberships = build_memberships(task_tags, tag_groups)
     figure_paths = write_outputs(
         trajectories,
         memberships,
         args.figures_dir,
-        semantic_clusters,
     )
 
     print(f"Loaded {trajectories.shape[0]} pass/fail trajectories")
     print(f"Loaded {task_tags['task_name'].nunique()} tagged tasks and {task_tags['tag'].nunique()} tags")
     for key, membership in memberships.items():
-        dimension_column = "cluster_id" if key == "semantic_cluster" else key
-        print(f"{key}: {membership[dimension_column].nunique()} values, {membership.shape[0]} task memberships")
+        print(f"{key}: {membership[key].nunique()} values, {membership.shape[0]} task memberships")
     print("Wrote figures:")
     for path in figure_paths:
         print(f"- {path}")

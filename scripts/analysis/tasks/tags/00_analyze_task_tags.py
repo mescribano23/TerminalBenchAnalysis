@@ -4,6 +4,7 @@
 Outputs:
 - data/processed_live/task_mining/tags/task_tag_counts.csv
 - data/processed_live/task_mining/tags/tag_groups.csv
+- data/processed_live/task_mining/tags/perceptual_media_tasks.csv
 - data/processed_live/task_mining/tags/tag_summary.json
 """
 
@@ -195,6 +196,8 @@ TAG_GROUP_RULES: list[tuple[str, tuple[str, ...]]] = [
         ),
     ),
 ]
+PERCEPTUAL_MEDIA_TAGS = {"ocr", "image-processing", "images", "video-processing"}
+PERCEPTUAL_MEDIA_CATEGORIES = {"video-processing"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -309,6 +312,36 @@ def build_group_rows(frequency_rows: list[dict[str, Any]]) -> list[dict[str, Any
     return sorted(rows, key=lambda row: (str(row["tag_group"]), -int(row["n_tasks"]), str(row["tag"])))
 
 
+def build_perceptual_media_rows(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for task in tasks:
+        task_tags = normalized_tags(task)
+        matched_tags = sorted(PERCEPTUAL_MEDIA_TAGS.intersection(task_tags))
+        category = str(task.get("category", ""))
+        matched_by_category = category in PERCEPTUAL_MEDIA_CATEGORIES
+        if not matched_tags and not matched_by_category:
+            continue
+        matched_metadata = [*matched_tags]
+        if matched_by_category:
+            matched_metadata.append(f"category:{category}")
+        rows.append(
+            {
+                "task_name": task.get("id", ""),
+                "category": category,
+                "difficulty": task.get("difficulty", ""),
+                "tags": "|".join(task_tags),
+                "matched_metadata": "|".join(matched_metadata),
+                "inclusion_rule": (
+                    "task has at least one metadata tag in "
+                    "ocr|image-processing|images|video-processing or category video-processing"
+                ),
+                "description": task.get("description", ""),
+                "analysis_status": "secondary_exploratory_metadata_defined",
+            }
+        )
+    return sorted(rows, key=lambda row: str(row["task_name"]))
+
+
 def write_summary(path: Path, task_rows: list[dict[str, Any]], frequency_rows: list[dict[str, Any]]) -> None:
     tag_counts = [int(row["tag_count"]) for row in task_rows]
     summary = {
@@ -336,6 +369,7 @@ def main() -> None:
     task_rows = build_task_rows(tasks)
     frequency_rows = build_frequency_rows(tasks)
     group_rows = build_group_rows(frequency_rows)
+    perceptual_media_rows = build_perceptual_media_rows(tasks)
 
     write_csv(
         args.out / "task_tag_counts.csv",
@@ -347,6 +381,20 @@ def main() -> None:
         group_rows,
         ["tag_group", "tag", "n_tasks", "pct_tasks", "dominant_category", "is_singleton"],
     )
+    write_csv(
+        args.out / "perceptual_media_tasks.csv",
+        perceptual_media_rows,
+        [
+            "task_name",
+            "category",
+            "difficulty",
+            "tags",
+            "matched_metadata",
+            "inclusion_rule",
+            "description",
+            "analysis_status",
+        ],
+    )
     write_summary(args.out / "tag_summary.json", task_rows, frequency_rows)
 
     total_assignments = sum(int(row["tag_count"]) for row in task_rows)
@@ -356,6 +404,7 @@ def main() -> None:
     print(f"Tasks without tags: {len(tasks) - tagged_tasks}")
     print(f"Total tag assignments: {total_assignments}")
     print(f"Unique tags: {len(frequency_rows)}")
+    print(f"Perceptual-media tasks: {len(perceptual_media_rows)}")
     print(f"Output: {args.out}")
 
 

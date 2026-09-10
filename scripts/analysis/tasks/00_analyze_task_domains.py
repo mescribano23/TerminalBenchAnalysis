@@ -5,6 +5,7 @@ Outputs:
 - data/processed_live/task_mining/category/task_domain_outcome.csv
 - data/processed_live/task_mining/category/task_domain_effort_summary.csv
 - data/processed_live/task_mining/difficulty/task_difficulty_outcome.csv
+- data/processed_live/task_mining/rq2_1_difficulty_significance.csv
 - data/processed_live/task_mining/difficulty/task_difficulty_effort_summary.csv
 - data/processed_live/task_mining/difficulty/task_difficulty_token_alignment_summary.csv
 - data/processed_live/task_mining/difficulty/task_difficulty_token_alignment_by_task.csv
@@ -36,7 +37,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import StrMethodFormatter
 import numpy as np
 import pandas as pd
-from scipy.stats import kendalltau, kruskal, spearmanr
+from scipy.stats import spearmanr
 
 from scripts.benchmark_paths import find_repo_root
 
@@ -47,18 +48,20 @@ DATA_DIR = REPO_ROOT / "data"
 DATA_PROCESSED_LIVE_DIR = DATA_DIR / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
 
-TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0" / "trajectory_summary.csv"
+TRAJECTORY_DEFAULT = DATA_PROCESSED_LIVE_DIR / "longitudinal" / "trajectory_longitudinal.csv"
 TASKS_DEFAULT = DATA_DIR / "raw" / "terminal_bench_2_0" / "terminal_bench_2_tasks.json"
 OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining"
 FIGURES_DEFAULT = REPORTS_DIR / "tasks"
+BENCHMARK_VERSION_DEFAULT = "2.0"
 
 ENTITY_COLUMNS = {"scaffold", "model_dir"}
 MODEL_META_COLUMNS = {"leaderboard_model", "leaderboard_model_organization", "model_name"}
 OUTCOME_COLUMNS = {"task_name", "reward_outcome", "outcome", "reward"}
+BALANCING_COLUMNS = {"submission_id", "benchmark_version"}
 EFFORT_DISPLAY_NAMES = {
     "step_count": "Step count",
-    "command_count": "Command count",
-    "tool_call_count": "Tool call count",
+    "shell_invocation_count": "Shell invocation count",
+    "tool_call_count": "Structured tool call count",
     "total_tokens": "Total tokens",
     "duration_seconds": "Duration seconds",
     "cost_usd_positive": "Positive cost USD",
@@ -81,6 +84,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tasks", type=Path, default=TASKS_DEFAULT)
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DEFAULT)
+    parser.add_argument("--benchmark-version", default=BENCHMARK_VERSION_DEFAULT)
     return parser.parse_args()
 
 
@@ -127,10 +131,13 @@ def ordered_dimension_values(domain_table: pd.DataFrame, dimension_column: str) 
 def load_trajectories(path: Path) -> pd.DataFrame:
     df = pd.read_csv(
         path,
-        usecols=lambda column: column in OUTCOME_COLUMNS | EFFORT_SOURCE_COLUMNS | ENTITY_COLUMNS | MODEL_META_COLUMNS,
+        usecols=lambda column: column
+        in OUTCOME_COLUMNS | EFFORT_SOURCE_COLUMNS | ENTITY_COLUMNS | MODEL_META_COLUMNS | BALANCING_COLUMNS,
     )
     if "task_name" not in df.columns:
         raise ValueError(f"{path} must contain task_name.")
+    if "benchmark_version" in df.columns:
+        df["benchmark_version"] = df["benchmark_version"].astype(str)
 
     if "reward_outcome" in df.columns:
         df["outcome"] = df["reward_outcome"]
@@ -163,8 +170,63 @@ def load_trajectories(path: Path) -> pd.DataFrame:
     df["model_source"] = df.apply(model_source_type, axis=1)
 
     columns = ["task_name", "outcome", "passed", "scaffold", "model_dir", "model_provider", "model_source"]
+    if "submission_id" in df.columns:
+        columns.append("submission_id")
+    if "benchmark_version" in df.columns:
+        columns.append("benchmark_version")
     columns.extend(column for column in EFFORT_DISPLAY_NAMES if column in df.columns)
     return df[columns]
+
+
+def filter_benchmark_version(df: pd.DataFrame, benchmark_version: str | None) -> pd.DataFrame:
+    if not benchmark_version:
+        return df
+    if "benchmark_version" not in df.columns:
+        raise ValueError("Balanced RQ2 analysis requires benchmark_version in the trajectory table.")
+    subset = df[df["benchmark_version"].astype(str).eq(str(benchmark_version))].copy()
+    if subset.empty:
+        raise ValueError(f"No trajectories found for benchmark_version={benchmark_version!r}.")
+    return subset
+
+
+def require_submission_id(df: pd.DataFrame) -> None:
+    if "submission_id" not in df.columns:
+        raise ValueError("Balanced RQ2 analysis requires submission_id in the trajectory table.")
+    if df["submission_id"].isna().any():
+        raise ValueError("Balanced RQ2 analysis found missing submission_id values.")
+
+
+def submission_task_pass_rates(df: pd.DataFrame, group_columns: list[str]) -> pd.DataFrame:
+    require_submission_id(df)
+    st_columns = ["submission_id", "task_name", *group_columns]
+    submission_task = (
+        df.groupby(st_columns, as_index=False)
+        .agg(
+            submission_task_trajectory_count=("passed", "size"),
+            submission_task_pass_count=("passed", "sum"),
+            submission_task_pass_rate=("passed", "mean"),
+        )
+    )
+    return (
+        submission_task.groupby(["task_name", *group_columns], as_index=False)
+        .agg(
+            task_submission_count=("submission_id", "nunique"),
+            task_trajectory_count=("submission_task_trajectory_count", "sum"),
+            task_pass_count=("submission_task_pass_count", "sum"),
+            task_pass_rate=("submission_task_pass_rate", "mean"),
+        )
+    )
+
+
+def trajectory_pooled_task_pass_rates(df: pd.DataFrame, group_columns: list[str]) -> pd.DataFrame:
+    return (
+        df.groupby(["task_name", *group_columns], as_index=False)
+        .agg(
+            trajectory_pooled_task_trajectory_count=("passed", "size"),
+            trajectory_pooled_task_pass_count=("passed", "sum"),
+            trajectory_pooled_task_pass_rate=("passed", "mean"),
+        )
+    )
 
 
 def build_domain_table(
@@ -179,13 +241,10 @@ def build_domain_table(
         preview = ", ".join(missing_tasks[:8])
         raise ValueError(f"Task metadata missing for {missing.sum()} trajectory rows. Examples: {preview}")
 
-    task_rates = (
-        df.groupby([dimension_column, "task_name"], as_index=False)
-        .agg(
-            task_trajectory_count=("passed", "size"),
-            task_pass_count=("passed", "sum"),
-            task_pass_rate=("passed", "mean"),
-        )
+    task_rates = submission_task_pass_rates(df, [dimension_column])
+    pooled_task_rates = trajectory_pooled_task_pass_rates(df, [dimension_column])
+    pooled_task_rates = pooled_task_rates.rename(
+        columns={"trajectory_pooled_task_pass_rate": "trajectory_pooled_task_mean_input"}
     )
 
     rows: list[dict[str, Any]] = []
@@ -193,21 +252,30 @@ def build_domain_table(
         n_trajectories = int(group.shape[0])
         pass_count = int(group["passed"].sum())
         fail_count = n_trajectories - pass_count
-        pass_rate = pass_count / n_trajectories if n_trajectories else None
+        trajectory_pooled_pass_rate = pass_count / n_trajectories if n_trajectories else None
 
-        dimension_task_rates = task_rates.loc[task_rates[dimension_column] == dimension_value, "task_pass_rate"]
-        n_tasks = int(dimension_task_rates.shape[0])
-        task_mean_pass_rate = float(dimension_task_rates.mean()) if n_tasks else None
+        dimension_task_rates = task_rates.loc[task_rates[dimension_column] == dimension_value]
+        dimension_pooled_task_rates = pooled_task_rates.loc[pooled_task_rates[dimension_column] == dimension_value]
+        n_tasks = int(dimension_task_rates["task_name"].nunique())
+        task_mean_pass_rate = (
+            float(dimension_task_rates["task_pass_rate"].mean()) if n_tasks else None
+        )
+        trajectory_pooled_task_mean_pass_rate = (
+            float(dimension_pooled_task_rates["trajectory_pooled_task_mean_input"].mean()) if n_tasks else None
+        )
 
         rows.append(
             {
                 dimension_column: dimension_value,
                 "n_tasks": n_tasks,
                 "n_trajectories": n_trajectories,
+                "n_submission_task_combinations": int(dimension_task_rates["task_submission_count"].sum()),
                 "pass_count": pass_count,
                 "fail_count": fail_count,
-                "pass_rate": pass_rate,
+                "pass_rate": task_mean_pass_rate,
                 "task_mean_pass_rate": task_mean_pass_rate,
+                "trajectory_pooled_pass_rate": trajectory_pooled_pass_rate,
+                "trajectory_pooled_task_mean_pass_rate": trajectory_pooled_task_mean_pass_rate,
                 "low_task_count": n_tasks < 5,
             }
         )
@@ -226,6 +294,42 @@ def build_domain_table(
     ).reset_index(drop=True)
 
 
+def build_rq2_1_difficulty_significance(
+    trajectories: pd.DataFrame,
+    tasks: pd.DataFrame,
+) -> pd.DataFrame:
+    df = trajectories.merge(tasks, on="task_name", how="left", validate="many_to_one")
+    missing = df["difficulty"].isna()
+    if missing.any():
+        missing_tasks = sorted(df.loc[missing, "task_name"].dropna().unique().tolist())
+        preview = ", ".join(missing_tasks[:8])
+        raise ValueError(f"Task difficulty missing for {missing.sum()} trajectory rows. Examples: {preview}")
+
+    task_rates = submission_task_pass_rates(df, ["difficulty"])
+    task_rates = task_rates.loc[task_rates["difficulty"].isin(DIFFICULTY_ORDER)].copy()
+    task_rates["difficulty_ordinal"] = task_rates["difficulty"].map(
+        {difficulty: index + 1 for index, difficulty in enumerate(DIFFICULTY_ORDER)}
+    )
+
+    if len(task_rates) < 2:
+        rho = np.nan
+        p_value = np.nan
+    else:
+        result = spearmanr(task_rates["difficulty_ordinal"], task_rates["task_pass_rate"])
+        rho = float(result.statistic)
+        p_value = float(result.pvalue)
+
+    return pd.DataFrame(
+        [
+            {
+                "n_tasks": int(task_rates["task_name"].nunique()),
+                "spearman_rho": rho,
+                "p_value": p_value,
+            }
+        ]
+    )
+
+
 def build_effort_summary(
     trajectories: pd.DataFrame,
     tasks: pd.DataFrame,
@@ -239,23 +343,43 @@ def build_effort_summary(
         raise ValueError(f"Task metadata missing for {missing.sum()} trajectory rows. Examples: {preview}")
 
     rows: list[dict[str, Any]] = []
-    for dimension_value, group in df.groupby(dimension_column, sort=False):
-        for variable, display_name in EFFORT_DISPLAY_NAMES.items():
-            if variable not in group.columns:
-                continue
-            values = group[variable].dropna()
+    for variable, display_name in EFFORT_DISPLAY_NAMES.items():
+        if variable not in df.columns:
+            continue
+        metric_work = df[["submission_id", "task_name", dimension_column, variable]].dropna().copy()
+        submission_task = (
+            metric_work.groupby(["submission_id", "task_name", dimension_column], as_index=False)[variable]
+            .median()
+            .rename(columns={variable: "submission_task_median"})
+        )
+        task_effort = (
+            submission_task.groupby(["task_name", dimension_column], as_index=False)
+            .agg(
+                task_submission_count=("submission_id", "nunique"),
+                task_effort=("submission_task_median", "median"),
+            )
+        )
+
+        for dimension_value, group in df.groupby(dimension_column, sort=False):
+            task_values = task_effort.loc[task_effort[dimension_column] == dimension_value]
+            values = task_values["task_effort"].dropna()
+            trajectory_values = group[variable].dropna()
             rows.append(
                 {
                     dimension_column: dimension_value,
                     "variable": variable,
                     "variable_display": display_name,
                     "n_trajectories": int(group.shape[0]),
-                    "complete_case_count": int(values.shape[0]),
+                    "complete_case_count": int(trajectory_values.shape[0]),
+                    "n_tasks": int(task_values["task_name"].nunique()),
+                    "n_submission_task_combinations": int(task_values["task_submission_count"].sum()),
                     "median": float(values.median()) if len(values) else None,
                     "mean": float(values.mean()) if len(values) else None,
                     "p75": float(values.quantile(0.75)) if len(values) else None,
                     "p90": float(values.quantile(0.90)) if len(values) else None,
                     "max": float(values.max()) if len(values) else None,
+                    "trajectory_level_median": float(trajectory_values.median()) if len(trajectory_values) else None,
+                    "trajectory_level_mean": float(trajectory_values.mean()) if len(trajectory_values) else None,
                 }
             )
 
@@ -327,25 +451,6 @@ def build_task_difficulty_token_alignment(
         add_row("trajectory_level_distribution", "median_total_tokens", float(trajectory_group.median()), difficulty)
         add_row("trajectory_level_distribution", "q25_total_tokens", float(trajectory_group.quantile(0.25)), difficulty)
         add_row("trajectory_level_distribution", "q75_total_tokens", float(trajectory_group.quantile(0.75)), difficulty)
-
-    task_spearman = spearmanr(by_task["difficulty_ordinal"], by_task["log10_median_total_tokens"])
-    task_kendall = kendalltau(by_task["difficulty_ordinal"], by_task["log10_median_total_tokens"])
-    trajectory_spearman = spearmanr(token_df["difficulty_ordinal"], token_df["log10_total_tokens"])
-    task_kruskal = kruskal(
-        *[
-            by_task.loc[by_task["difficulty"].eq(difficulty), "log10_median_total_tokens"]
-            for difficulty in DIFFICULTY_ORDER
-        ]
-    )
-
-    add_row("association", "spearman_rho", float(task_spearman.statistic), comparison="task_level_log_median_total_tokens")
-    add_row("association", "spearman_p_value", float(task_spearman.pvalue), comparison="task_level_log_median_total_tokens")
-    add_row("association", "kendall_tau", float(task_kendall.statistic), comparison="task_level_log_median_total_tokens")
-    add_row("association", "kendall_p_value", float(task_kendall.pvalue), comparison="task_level_log_median_total_tokens")
-    add_row("association", "spearman_rho", float(trajectory_spearman.statistic), comparison="trajectory_level_log_total_tokens")
-    add_row("association", "spearman_p_value", float(trajectory_spearman.pvalue), comparison="trajectory_level_log_total_tokens")
-    add_row("association", "kruskal_h", float(task_kruskal.statistic), comparison="task_level_log_median_total_tokens")
-    add_row("association", "kruskal_p_value", float(task_kruskal.pvalue), comparison="task_level_log_median_total_tokens")
 
     task_medians = by_task.groupby("difficulty")["median_total_tokens"].median()
     easy_max = by_task.loc[by_task["difficulty"].eq("easy"), "median_total_tokens"].max()
@@ -419,26 +524,55 @@ def build_stratified_pass_rates(
     dimension_column: str = "category",
 ) -> pd.DataFrame:
     df = merge_task_metadata(trajectories, tasks, dimension_column)
+    task_rates = submission_task_pass_rates(df, [*group_columns, dimension_column])
+    pooled_task_rates = trajectory_pooled_task_pass_rates(df, [*group_columns, dimension_column])
     rows = (
-        df.groupby([*group_columns, dimension_column], as_index=False)
+        task_rates.groupby([*group_columns, dimension_column], as_index=False)
         .agg(
             n_tasks=("task_name", "nunique"),
-            n_trajectories=("passed", "size"),
-            pass_count=("passed", "sum"),
+            n_submission_task_combinations=("task_submission_count", "sum"),
+            n_trajectories=("task_trajectory_count", "sum"),
+            pass_count=("task_pass_count", "sum"),
+            pass_rate=("task_pass_rate", "mean"),
         )
     )
     rows["fail_count"] = rows["n_trajectories"] - rows["pass_count"]
-    rows["pass_rate"] = rows["pass_count"] / rows["n_trajectories"]
 
-    totals = (
-        df.groupby(group_columns, as_index=False)
+    pooled = (
+        pooled_task_rates.groupby([*group_columns, dimension_column], as_index=False)
         .agg(
-            total_tasks=("task_name", "nunique"),
-            total_trajectories=("passed", "size"),
-            total_pass_count=("passed", "sum"),
+            trajectory_pooled_task_mean_pass_rate=("trajectory_pooled_task_pass_rate", "mean"),
+            trajectory_pooled_pass_count=("trajectory_pooled_task_pass_count", "sum"),
+            trajectory_pooled_trajectory_count=("trajectory_pooled_task_trajectory_count", "sum"),
         )
     )
-    totals["total_pass_rate"] = totals["total_pass_count"] / totals["total_trajectories"]
+    pooled["trajectory_pooled_pass_rate"] = (
+        pooled["trajectory_pooled_pass_count"] / pooled["trajectory_pooled_trajectory_count"]
+    )
+    rows = rows.merge(
+        pooled[
+            [
+                *group_columns,
+                dimension_column,
+                "trajectory_pooled_pass_rate",
+                "trajectory_pooled_task_mean_pass_rate",
+            ]
+        ],
+        on=[*group_columns, dimension_column],
+        how="left",
+        validate="one_to_one",
+    )
+
+    totals = (
+        submission_task_pass_rates(df, group_columns).groupby(group_columns, as_index=False)
+        .agg(
+            total_tasks=("task_name", "nunique"),
+            total_submission_task_combinations=("task_submission_count", "sum"),
+            total_trajectories=("task_trajectory_count", "sum"),
+            total_pass_count=("task_pass_count", "sum"),
+            total_pass_rate=("task_pass_rate", "mean"),
+        )
+    )
     rows = rows.merge(totals, on=group_columns, how="left", validate="many_to_one")
 
     sort_columns = [*group_columns, dimension_column]
@@ -460,16 +594,43 @@ def build_category_difficulty_pass_rates(trajectories: pd.DataFrame, tasks: pd.D
         preview = ", ".join(missing_tasks[:8])
         raise ValueError(f"Task metadata missing category/difficulty for {missing.sum()} rows. Examples: {preview}")
 
+    task_rates = submission_task_pass_rates(df, ["category", "difficulty"])
+    pooled_task_rates = trajectory_pooled_task_pass_rates(df, ["category", "difficulty"])
     rows = (
-        df.groupby(["category", "difficulty"], as_index=False)
+        task_rates.groupby(["category", "difficulty"], as_index=False)
         .agg(
             n_tasks=("task_name", "nunique"),
-            n_trajectories=("passed", "size"),
-            pass_count=("passed", "sum"),
+            n_submission_task_combinations=("task_submission_count", "sum"),
+            n_trajectories=("task_trajectory_count", "sum"),
+            pass_count=("task_pass_count", "sum"),
+            pass_rate=("task_pass_rate", "mean"),
         )
     )
     rows["fail_count"] = rows["n_trajectories"] - rows["pass_count"]
-    rows["pass_rate"] = rows["pass_count"] / rows["n_trajectories"]
+    pooled = (
+        pooled_task_rates.groupby(["category", "difficulty"], as_index=False)
+        .agg(
+            trajectory_pooled_task_mean_pass_rate=("trajectory_pooled_task_pass_rate", "mean"),
+            trajectory_pooled_pass_count=("trajectory_pooled_task_pass_count", "sum"),
+            trajectory_pooled_trajectory_count=("trajectory_pooled_task_trajectory_count", "sum"),
+        )
+    )
+    pooled["trajectory_pooled_pass_rate"] = (
+        pooled["trajectory_pooled_pass_count"] / pooled["trajectory_pooled_trajectory_count"]
+    )
+    rows = rows.merge(
+        pooled[
+            [
+                "category",
+                "difficulty",
+                "trajectory_pooled_pass_rate",
+                "trajectory_pooled_task_mean_pass_rate",
+            ]
+        ],
+        on=["category", "difficulty"],
+        how="left",
+        validate="one_to_one",
+    )
     return (
         rows.assign(_difficulty_order=dimension_sort_key(rows["difficulty"], "difficulty"))
         .sort_values(["category", "_difficulty_order", "difficulty"])
@@ -577,7 +738,7 @@ def plot_task_weighted_success(
         ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
     ax.set_title(f"Task-weighted pass rate by {dimension_label}")
     note = (
-        "Note: Bars show the mean pass rate across tasks.\n"
+        "Note: Bars show the mean pass rate across tasks after averaging repeated trials within each submission-task pair.\n"
         f"Labels show distinct tasks and trajectories; * marks {dimension_label}s with fewer than five tasks."
     )
     fig.text(
@@ -769,7 +930,7 @@ def plot_effort_heatmap(
         figsize = (11.5, figure_height(len(plot_values)))
 
     fig, ax = plt.subplots(figsize=figsize)
-    cmap = plt.get_cmap("Blues").copy()
+    cmap = plt.get_cmap("RdYlGn_r").copy()
     cmap.set_bad("#f2f2f2")
     matrix = np.ma.masked_invalid(plot_normalized.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
@@ -799,7 +960,7 @@ def plot_effort_heatmap(
             )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label("Column-normalized median")
+    colorbar.set_label("Column-normalized median (green=lower effort, red=higher effort)")
     fig.tight_layout()
 
     path = effort_figures_dir / f"heatmap_{output_prefix}_effort_median.png"
@@ -1060,17 +1221,28 @@ def write_model_scaffold_outputs(
     tables_dir = out_dir / "model_scaffold"
     tables_dir.mkdir(parents=True, exist_ok=True)
 
+    rate_columns = [
+        dimension_column,
+        "n_tasks",
+        "n_submission_task_combinations",
+        "n_trajectories",
+        "pass_count",
+        "fail_count",
+        "pass_rate",
+        "trajectory_pooled_pass_rate",
+        "trajectory_pooled_task_mean_pass_rate",
+    ]
     model_table = model_category_rates[
-        ["model_dir", dimension_column, "n_tasks", "n_trajectories", "pass_count", "fail_count", "pass_rate"]
+        ["model_dir", *rate_columns]
     ]
     scaffold_table = scaffold_category_rates[
-        ["scaffold", dimension_column, "n_tasks", "n_trajectories", "pass_count", "fail_count", "pass_rate"]
+        ["scaffold", *rate_columns]
     ]
     provider_table = provider_category_rates[
-        ["model_provider", dimension_column, "n_tasks", "n_trajectories", "pass_count", "fail_count", "pass_rate"]
+        ["model_provider", *rate_columns]
     ]
     source_table = source_category_rates[
-        ["model_source", dimension_column, "n_tasks", "n_trajectories", "pass_count", "fail_count", "pass_rate"]
+        ["model_source", *rate_columns]
     ]
 
     model_table.to_csv(tables_dir / f"model_{file_label}_pass_rates.csv", index=False)
@@ -1159,10 +1331,12 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     tasks = load_tasks(args.tasks)
-    trajectories = load_trajectories(args.trajectories)
+    trajectories = filter_benchmark_version(load_trajectories(args.trajectories), args.benchmark_version)
+    require_submission_id(trajectories)
     domain_table = build_domain_table(trajectories, tasks)
     effort_summary = build_effort_summary(trajectories, tasks)
     difficulty_table = build_domain_table(trajectories, tasks, "difficulty")
+    difficulty_significance = build_rq2_1_difficulty_significance(trajectories, tasks)
     difficulty_effort_summary = build_effort_summary(trajectories, tasks, "difficulty")
     model_category_rates = build_stratified_pass_rates(trajectories, tasks, ["model_dir"])
     scaffold_category_rates = build_stratified_pass_rates(trajectories, tasks, ["scaffold"])
@@ -1186,6 +1360,7 @@ def main() -> None:
     out_path = category_out_dir / "task_domain_outcome.csv"
     effort_out_path = category_out_dir / "task_domain_effort_summary.csv"
     difficulty_out_path = difficulty_out_dir / "task_difficulty_outcome.csv"
+    difficulty_significance_path = args.out / "rq2_1_difficulty_significance.csv"
     difficulty_effort_out_path = difficulty_out_dir / "task_difficulty_effort_summary.csv"
     token_alignment_summary_path = difficulty_out_dir / "task_difficulty_token_alignment_summary.csv"
     token_alignment_by_task_path = difficulty_out_dir / "task_difficulty_token_alignment_by_task.csv"
@@ -1193,10 +1368,24 @@ def main() -> None:
     domain_table.drop(columns=["low_task_count"]).to_csv(out_path, index=False)
     effort_summary.drop(columns=["complete_case_count"]).to_csv(effort_out_path, index=False)
     difficulty_table.drop(columns=["low_task_count"]).to_csv(difficulty_out_path, index=False)
+    difficulty_significance.to_csv(difficulty_significance_path, index=False)
     difficulty_effort_summary.drop(columns=["complete_case_count"]).to_csv(difficulty_effort_out_path, index=False)
     token_alignment_summary.to_csv(token_alignment_summary_path, index=False)
     token_alignment_by_task.to_csv(token_alignment_by_task_path, index=False)
-    category_difficulty_rates[["category", "difficulty", "n_tasks", "n_trajectories", "pass_count", "fail_count", "pass_rate"]].to_csv(category_difficulty_out_path, index=False)
+    category_difficulty_rates[
+        [
+            "category",
+            "difficulty",
+            "n_tasks",
+            "n_submission_task_combinations",
+            "n_trajectories",
+            "pass_count",
+            "fail_count",
+            "pass_rate",
+            "trajectory_pooled_pass_rate",
+            "trajectory_pooled_task_mean_pass_rate",
+        ]
+    ].to_csv(category_difficulty_out_path, index=False)
     category_figures_dir = args.figures_dir / "category"
     difficulty_figures_dir = args.figures_dir / "difficulty"
     category_difficulty_figures_dir = args.figures_dir / "category_difficulty"
@@ -1245,6 +1434,7 @@ def main() -> None:
     print(f"Wrote {out_path}")
     print(f"Wrote {effort_out_path}")
     print(f"Wrote {difficulty_out_path}")
+    print(f"Wrote {difficulty_significance_path}")
     print(f"Wrote {difficulty_effort_out_path}")
     print(f"Wrote {token_alignment_summary_path}")
     print(f"Wrote {token_alignment_by_task_path}")
