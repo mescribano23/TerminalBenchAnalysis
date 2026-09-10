@@ -312,8 +312,8 @@ def config_plot_label(row: Any) -> str:
         "gpt-5.2": "GPT-5.2",
         "gpt-5.5": "GPT-5.5",
         "grok-4-0709": "grok-4",
-        "openai_gpt-oss-120b": "OSS 120B",
-        "openai_gpt-oss-20b": "OSS 20B",
+        "openai_gpt-oss-120b": "GPT-OSS 120B",
+        "openai_gpt-oss-20b": "GPT-OSS 20B",
     }
     model = labels.get(str(row.model_dir), model_label(str(row.model_dir)))
     return f"{model}\n{scaffold_short_label(str(row.scaffold))}"
