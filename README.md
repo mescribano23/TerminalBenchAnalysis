@@ -100,13 +100,24 @@ python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_ben
 python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_1
 ```
 
-`data/processed_live/terminal_bench_2_0/trajectory_schema_inspection.csv` documents the scaffold-stratified TB2.0 schema inspection used during trajectory parser development.
+`data/processed_live/terminal_bench_2_0/parser_validation_sample.csv` is a prepared 24-trajectory manual-validation sample covering all 12 TB2.0 scaffolds, pass/fail outcomes, providers, and submission dates; it has not itself been manually validated.
+
+The trajectory parser reports `shell_invocation_count`, not a decomposed shell-command count. A shell invocation is one extracted shell call or environment interaction; compound expressions issued together, such as `cd repo && pip install -r requirements.txt && pytest`, count as one invocation.
 
 Regenerate leaderboard-level summaries and figures:
 
 ```powershell
 python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_2_0
 python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_2_1
+```
+
+The public-trajectory subset is not treated as an unbiased sample of all
+leaderboard submissions. The reproducible availability audit outputs are:
+
+```text
+data/processed_live/{benchmark}/leaderboard_trajectory_availability_summary.csv
+data/processed_live/{benchmark}/leaderboard_trajectory_availability_by_scaffold.csv
+data/processed_live/{benchmark}/leaderboard_trajectory_availability_by_model.csv
 ```
 
 ### 4. Analyze Tasks
@@ -123,13 +134,9 @@ Summarize task tags and tag groups:
 python -m scripts.analysis.tasks.tags.00_analyze_task_tags
 ```
 
-Cluster tags semantically:
+This step also writes `data/processed_live/task_mining/tags/perceptual_media_tasks.csv`, a strict metadata-defined secondary/exploratory task group. Inclusion requires a task metadata tag in `ocr`, `image-processing`, `images`, or `video-processing`, or category `video-processing`; description-only keyword matches are not included.
 
-```powershell
-python -m scripts.analysis.tasks.tags.01_cluster_task_tags
-```
-
-Analyze effort by tag group and semantic tag cluster:
+Analyze effort by manual tag group:
 
 ```powershell
 python -m scripts.analysis.tasks.tags.02_analyze_tag_effort
@@ -141,19 +148,71 @@ Compare trajectory durations with expert and junior task time estimates:
 python -m scripts.analysis.tasks.01_analyze_time_estimates
 ```
 
-### 5. Analyze Diminishing Returns
+The human-time comparison uses median observed trajectory duration per task as the primary agent-duration statistic and retains mean duration as a sensitivity statistic. It is a descriptive comparison to benchmark time estimates, not a causal or literal human-versus-agent speed comparison.
 
-Regenerate the main diminishing-returns analysis:
+### 5. Analyze Effort, Success, and Diminishing Returns
+
+Regenerate the RQ1 statistical table:
 
 ```powershell
 python -m scripts.analysis.diminishing_returns.00_analyze_diminishing_returns
 ```
 
-Optionally add grouped appendix-style figures:
+RQ1 uses two explicit aggregation levels. Pooled trajectory-level summaries
+remain trajectory-weighted descriptive views. Task-balanced RQ1 summaries use
+`effective_submission_id` to aggregate repeated trials to submission-task
+units before averaging over tasks, so duplicated retries do not reweight a
+task. RQ1.1 task pass/fail contrasts require at least three distinct effective
+submissions in each outcome for a task-metric pair; the retained six effort
+measures are tested with Wilcoxon and task-conditioned quadratic logistic
+specifications.
+
+The paper-facing source of truth for RQ1 statistics is:
+
+```text
+data/processed_live/diminishing_returns/rq1_final_statistical_results.csv
+data/processed_live/diminishing_returns/rq1_within_task_effort_summary.csv
+data/processed_live/diminishing_returns/rq1_within_task_effort_by_task.csv
+data/processed_live/diminishing_returns/rq1_task_outcome_eligibility_thresholds.csv
+```
+
+Regenerate the descriptive effort-bin success-rate figures and appendix-style
+grouped figures:
 
 ```powershell
-python -m scripts.analysis.diminishing_returns.00_analyze_diminishing_returns --by-scaffold
-python -m scripts.analysis.diminishing_returns.00_analyze_diminishing_returns --by-model
+python -m scripts.analysis.diminishing_returns.01_plot_diminishing_returns
+python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effects
+```
+
+These figures are descriptive visualizations; the statistical table above is
+the inferential source of truth. The task-balanced effort-success curve assigns
+bins at the trajectory level, aggregates trajectories within each
+effective-submission/task/bin cell, averages those cells within task, and then
+averages tasks within each effort bin. RQ1.3 configuration efficiency uses the
+same submission-task hierarchy before rolling up to scaffold/model
+configurations. The descriptive/visual outputs are:
+
+```text
+data/processed_live/diminishing_returns/rq1_effort_bin_summary.csv
+data/processed_live/diminishing_returns/rq1_effort_quantile_bins.csv
+data/processed_live/diminishing_returns/rq1_effort_bin_robustness_summary.csv
+data/processed_live/terminal_bench_2_0/rq1_task_balanced_effort_success.csv
+data/processed_live/diminishing_returns/rq1_task_balanced_effort_success_change_summary.csv
+data/processed_live/diminishing_returns/rq1_3_configuration_efficiency.csv
+reports/diminishing_returns/effort_bins/rq1_pooled_vs_task_balanced_effort_success.png
+reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_token_pareto.png
+reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_duration_pareto.png
+reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_steps_pareto.png
+reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_shell_invocations_pareto.png
+reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_tool_calls_pareto.png
+reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_observed_cost_pareto.png
+reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_token_pareto.png
+reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_duration_pareto.png
+reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_steps_pareto.png
+reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_shell_invocations_pareto.png
+reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_tool_calls_pareto.png
+reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_observed_cost_pareto.png
+reports/diminishing_returns/**/*.png
 ```
 
 ### 6. Analyze Terminal-Bench 2.0 to 2.1 Longitudinal Changes
@@ -163,10 +222,10 @@ Build the per-benchmark trajectory tables, then run the longitudinal pipeline:
 ```powershell
 python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_0
 python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_1
-python -m scripts.analysis.longitudinal.00_build_longitudinal_dataset
-python -m scripts.analysis.longitudinal.01_plot_instruction_change_robustness
-python -m scripts.analysis.longitudinal.02_analyze_longitudinal_changes
-python -m scripts.analysis.longitudinal.03_analyze_performance_effort_over_time
+python -m scripts.analysis.longitudinal.00_build_dataset
+python -m scripts.analysis.longitudinal.01_analyze_instruction_change_robustness
+python -m scripts.analysis.longitudinal.02_analyze_pass_rate_changes
+python -m scripts.analysis.longitudinal.03_analyze_effort_changes
 python -m scripts.analysis.longitudinal.04_analyze_token_accounting
 ```
 
@@ -178,48 +237,24 @@ population level:
 - reported output tokens: 8,788 -> 13,562 (+54.3%)
 - reported total tokens: 206,147 -> 281,590 (+36.6%)
 
-Optional visible-text tokenization audit:
-
-```powershell
-python -m scripts.analysis.longitudinal.05_analyze_visible_text_token_accounting
-```
-
-This audit tests whether tokenizing the readable text saved in trajectory JSON
-files can stand in for provider-reported token usage. It uses only exact
-model-specific tokenizers from the installed `tiktoken` OpenAI model registry;
-there is no tokenizer-family fallback and no characters-per-token
-approximation. With the current local tokenizer registry, the usable cohort is
-`openai/gpt-5` in TB2.0: 1,713 trajectories have an exact tokenizer available
-(5.51% of TB2.0), and 1,712 have paired visible-text and reported-token values.
-No TB2.1 model currently has an exact model-specific tokenizer in the local
-registry.
-
-For the paired `gpt-5` cohort, persisted readable trajectory text is far below
-reported token usage:
-
-- median visible-text tokens: 6,544
-- median reported input tokens: 86,867
-- median reported total tokens: 108,429
-- median reported-input / visible-text-token ratio: 13.65x
-- median reported-total / visible-text-token ratio: 17.30x
-- median visible model-output tokens / reported output tokens: 0.10x
-
-These numbers support treating provider-reported tokens as the primary token
-accounting field: the trajectory text omits repeated context, hidden or
-serialized tool state, provider-side formatting, and other processing that is
-not visible as plain saved text. The retained audit outputs are:
+The main RQ4 effort figure keeps pooled trajectory medians as descriptive headline statistics. A task-balanced robustness table is also retained: for each of the 89 shared tasks, it computes the within-version task median in TB2.0 and TB2.1 and then summarizes paired changes over all shared tasks and over the 67 instruction-unchanged tasks.
 
 ```text
-data/processed_live/longitudinal/visible_text_token_accounting_summary.csv
-data/processed_live/longitudinal/visible_text_tokenizer_coverage_by_model.csv
+data/processed_live/longitudinal/task_balanced_effort_pooled_summary.csv
+data/processed_live/longitudinal/task_balanced_effort_summary.csv
+data/processed_live/longitudinal/task_balanced_effort_by_task.csv
+data/processed_live/longitudinal/comparable_configuration_audit.csv
 ```
 
-Use `--details-csv PATH` only when row-level visible-text audit data are needed.
+The principal TB2.0 -> TB2.1 comparison characterizes changes in the observed leaderboard/agent-system population. Exact same scaffold+model overlap is limited to `gemini-cli/gemini-3.1-pro-preview` and `terminus-2/gemini-3-pro-preview`, both spanning 89 tasks, so same-configuration comparisons are narrow descriptive robustness checks rather than evidence that isolates temporal or model effects. No model equivalences are inferred beyond mappings explicitly encoded in retained scripts.
 
 The longitudinal analyses use different denominators depending on which fields
 are required.
 
 - 38,604 = all retained TB2.0/TB2.1 trajectories in the pooled longitudinal dataset.
+- Core observable-effort fields have complete coverage in this dataset: steps, shell invocations, structured tool calls, benchmark-reported duration, and logged readable characters are available for 38,604/38,604 trajectories.
+- Provider-reported token fields are available for 38,042/38,604 trajectories (98.5%).
+- Reported cost is available for 25,840/38,604 trajectories (66.9%) and is configuration-dependent; cost analyses therefore describe the cost-observed subset.
 - 34,862 = the subset where the raw trajectory contains at least two valid per-call prompt token values.
   The excluded 3,742 trajectories are still valid for pass-rate, effort, logged-character, and benchmark-level token summaries. They are excluded only from the per-call context accumulation analysis because they lack enough per-call prompt-token detail to measure within-trajectory growth.
   Instruction-change robustness uses the audited stored-instruction split: 67 instruction-unchanged tasks (29,011 trajectories) and 22 instruction-changed tasks (9,593 trajectories).
