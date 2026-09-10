@@ -2,15 +2,15 @@
 
 The longitudinal pipeline builds a unified trajectory dataset and then produces
 the retained longitudinal figures. Summary tables are recomputed from the
-trajectory dataset and raw trajectories only when they support the current RQ3
+trajectory dataset and raw trajectories only when they support the current RQ4
 analysis.
 
 Execution order:
 
-    python -m scripts.analysis.longitudinal.00_build_longitudinal_dataset
-    python -m scripts.analysis.longitudinal.01_plot_instruction_change_robustness
-    python -m scripts.analysis.longitudinal.02_analyze_longitudinal_changes
-    python -m scripts.analysis.longitudinal.03_analyze_performance_effort_over_time
+    python -m scripts.analysis.longitudinal.00_build_dataset
+    python -m scripts.analysis.longitudinal.01_analyze_instruction_change_robustness
+    python -m scripts.analysis.longitudinal.02_analyze_pass_rate_changes
+    python -m scripts.analysis.longitudinal.03_analyze_effort_changes
     python -m scripts.analysis.longitudinal.04_analyze_token_accounting
 
 Retained data outputs:

@@ -57,7 +57,7 @@ REQUIRED_TRAJECTORY_COLUMNS = {
     "step_count",
     "agent_step_count",
     "tool_call_count",
-    "command_count",
+    "shell_invocation_count",
     "message_chars",
     "reasoning_chars",
     "observation_chars",
@@ -71,7 +71,7 @@ EFFORT_COLUMNS = [
     "step_count",
     "agent_step_count",
     "tool_call_count",
-    "command_count",
+    "shell_invocation_count",
     "message_chars",
     "reasoning_chars",
     "observation_chars",
@@ -150,7 +150,7 @@ def read_trajectory_table(processed_dir: Path, benchmark: str) -> pd.DataFrame:
         raise FileNotFoundError(
             f"Missing {path}. Regenerate it with "
             f"`python -m scripts.analysis.00_characterize_trajectories --benchmark {benchmark}`."
-        )
+    )
     df = pd.read_csv(path, low_memory=False)
     validate_columns(df, REQUIRED_TRAJECTORY_COLUMNS, path)
     df = df.copy()

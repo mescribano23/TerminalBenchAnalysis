@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Final descriptive Terminal-Bench 2.0 to 2.1 longitudinal analysis."""
+"""Analyze Terminal-Bench 2.0 to 2.1 pass-rate changes."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot the RQ3 instruction-change robustness check.
+"""Analyze the RQ4 instruction-change robustness check.
 
 The instruction-changed/unchanged task split is loaded from the repository's
 processed longitudinal audit rather than from an external changelog.
