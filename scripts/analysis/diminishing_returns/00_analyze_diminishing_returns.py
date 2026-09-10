@@ -1,821 +1,604 @@
 #!/usr/bin/env python3
-"""Descriptive diminishing-returns analysis for Terminal-Bench trajectories.
+"""Final RQ1 effort-success statistics.
 
-Outputs:
-- data/processed_live/diminishing_returns/diminishing_returns_effort_bins.csv
-- data/processed_live/diminishing_returns/diminishing_returns_variable_coverage.csv
-- data/processed_live/diminishing_returns/task_step_median_per_task.csv
-- data/processed_live/diminishing_returns/task_step_median_by_difficulty.csv
-- reports/diminishing_returns/diminishing_returns_*.png
-- reports/diminishing_returns/diminishing_returns_combined_effort_variables.png
-- reports/diminishing_returns/by_scaffold_reduced/diminishing_returns_*_reduced_heatmap.png reduced scaffold heatmaps
-- reports/diminishing_returns/by_outcome/box_plots/diminishing_returns_performance_box_*.png
-- reports/diminishing_returns/by_outcome/stacked/diminishing_returns_outcome_stacked_*.png
-- optional reports/diminishing_returns/by_scaffold/diminishing_returns_*_heatmap.png heatmaps
-- optional reports/diminishing_returns/by_model/diminishing_returns_*_heatmap.png heatmaps
-- optional reports/diminishing_returns/by_model/by_provider/diminishing_returns_*_heatmap.png provider heatmaps
-- optional reports/diminishing_returns/by_model/by_provider_facetted/diminishing_returns_*_heatmap.png model heatmaps facetted by provider
+Task-balanced pass/fail contrasts use effective submission-task aggregation
+before task-level medians, while pooled trajectory medians and
+task-conditioned logistic models remain trajectory-level analyses.
+
+Paper-facing output:
+- data/processed_live/diminishing_returns/rq1_final_statistical_results.csv
+- data/processed_live/diminishing_returns/rq1_within_task_effort_summary.csv
+- data/processed_live/diminishing_returns/rq1_within_task_effort_by_task.csv
+- data/processed_live/diminishing_returns/rq1_task_outcome_eligibility_thresholds.csv
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import math
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.special import logsumexp
+from scipy.stats import norm, wilcoxon
 
 from scripts.benchmark_paths import find_repo_root
+from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = find_repo_root(SCRIPT_DIR)
-DATA_DIR = REPO_ROOT / "data"
-DATA_PROCESSED_LIVE_DIR = DATA_DIR / "processed_live"
-REPORTS_DIR = REPO_ROOT / "reports"
-FIGURES_DIR = REPORTS_DIR / "diminishing_returns"
+REPO_ROOT = find_repo_root(Path(__file__).resolve().parent)
+INPUT_DEFAULT = REPO_ROOT / "data" / "processed_live" / "terminal_bench_2_0" / "trajectory_summary.csv"
+OUT_DEFAULT = REPO_ROOT / "data" / "processed_live" / "diminishing_returns"
 
-INPUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0" / "trajectory_summary.csv"
-TASKS_DEFAULT = DATA_PROCESSED_LIVE_DIR / "task_mining" / "terminal_bench_2_tasks.csv"
-TASKS_JSON_FALLBACK = DATA_DIR / "raw" / "terminal_bench_2_0" / "terminal_bench_2_tasks.json"
-OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "diminishing_returns"
-DIFFICULTY_ORDER = ["easy", "medium", "hard"]
-MIN_PASSING_TRAJECTORIES = 5
-MIN_FAILING_TRAJECTORIES = 5
-
-EFFORT_VARIABLES = [
+MIN_OUTCOME_SUBMISSIONS = 3
+METRICS = [
     "step_count",
-    "step_count_scaffold_ratio",
-    "command_count",
+    "shell_invocation_count",
     "tool_call_count",
     "total_tokens",
     "duration_seconds",
     "cost_usd_positive",
 ]
-
-REDUCED_SCAFFOLDS = [
-    "terminus-2",
-    "mini-swe-agent",
-    "openhands",
-    "claude-code",
-    "codex",
-    "gemini-cli",
+WITHIN_TASK_METRICS = [
+    "step_count",
+    "shell_invocation_count",
+    "tool_call_count",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "duration_seconds",
+    "cost_usd_positive",
 ]
-
-MODEL_PROVIDER_HEATMAPS = ["OpenAI", "Anthropic", "Google", "DeepSeek"]
-OPEN_SOURCE_MODEL_KEYWORDS = (
-    "deepseek",
-    "glm",
-    "gpt-oss",
-    "kimi",
-    "minimax",
-    "qwen",
-)
-
 DISPLAY_NAMES = {
     "step_count": "Step count",
-    "step_count_scaffold_ratio": "Step count / scaffold median",
-    "command_count": "Command count",
-    "tool_call_count": "Tool call count",
+    "shell_invocation_count": "Shell invocation count",
+    "tool_call_count": "Structured tool call count",
+    "prompt_tokens": "Prompt/input tokens",
+    "completion_tokens": "Completion/output tokens",
     "total_tokens": "Total tokens",
     "duration_seconds": "Duration seconds",
-    "cost_usd_positive": "Positive cost USD",
+    "cost_usd_positive": "Positive reported cost USD",
 }
-
-BIN_SPECS = {
-    "step_count": ([0, 10, 25, 50, 100, 200, math.inf], ["0-10", "11-25", "26-50", "51-100", "101-200", ">200"]),
-    "step_count_scaffold_ratio": ([0, 0.5, 1, 2, 4, math.inf], ["<=0.5x", "0.5-1x", "1-2x", "2-4x", ">4x"]),
-    "command_count": ([-0.5, 0.5, 5, 15, 40, math.inf], ["0", "1-5", "6-15", "16-40", ">40"]),
-    "tool_call_count": ([-0.5, 5, 15, 35, 75, 150, math.inf], ["0-5", "6-15", "16-35", "36-75", "76-150", ">150"]),
-    "total_tokens": (
-        [-0.5, 10_000, 100_000, 500_000, 1_000_000, 3_000_000, 10_000_000, math.inf],
-        ["0-10k", "10k-100k", "100k-500k", "500k-1M", "1M-3M", "3M-10M", ">10M"],
-    ),
-    "duration_seconds": (
-        [-0.000001, 10, 60, 300, 900, 1800, 3600, math.inf],
-        ["0-10s", "10-60s", "1-5m", "5-15m", "15-30m", "30-60m", ">60m"],
-    ),
-    "cost_usd_positive": (
-        [0, 0.001, 0.01, 0.05, 0.10, 0.50, 1.00, math.inf],
-        ["<=$0.001", "$0.001-0.01", "$0.01-0.05", "$0.05-0.10", "$0.10-0.50", "$0.50-1", ">$1"],
-    ),
-}
+CLUSTER_COLUMNS = ["scaffold", "model_dir", "agent_version", "leaderboard_model"]
+DIMINISHING_RETURNS_CURVE_SUPPORT = {"step_count", "duration_seconds"}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=INPUT_DEFAULT)
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
-    parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
-    parser.add_argument(
-        "--by-scaffold",
-        action="store_true",
-        help="Also write appendix-style grouped plots with one series per scaffold.",
-    )
-    parser.add_argument(
-        "--by-model",
-        action="store_true",
-        help="Also write appendix-style grouped plots with one series per model_dir.",
-    )
     return parser.parse_args()
 
 
-def wilson_interval(successes: int, total: int, z: float = 1.96) -> tuple[float | None, float | None]:
-    if total <= 0:
-        return None, None
-    p = successes / total
-    denom = 1 + z**2 / total
-    center = (p + z**2 / (2 * total)) / denom
-    half = z * math.sqrt((p * (1 - p) + z**2 / (4 * total)) / total) / denom
-    return max(0.0, center - half), min(1.0, center + half)
-
-
 def load_data(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    if "reward" not in df.columns:
-        raise ValueError(f"{path} must contain a reward column.")
-
+    df = pd.read_csv(path, low_memory=False)
     df["reward"] = pd.to_numeric(df["reward"], errors="coerce")
-    binary_mask = df["reward"].isin([0, 1])
-    df = df.loc[binary_mask].copy()
-    if df.empty:
-        raise ValueError("No rows with binary reward values 0 or 1 were found.")
+    df = df[df["reward"].isin([0, 1])].copy()
     df["passed"] = df["reward"].astype(int)
 
-    required_numeric = [
+    for column in [
         "step_count",
-        "command_count",
+        "shell_invocation_count",
         "tool_call_count",
+        "prompt_tokens",
+        "completion_tokens",
         "total_tokens",
         "duration_seconds",
         "cost_usd",
-    ]
-    missing = [column for column in required_numeric if column not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns: {', '.join(missing)}")
-    for column in required_numeric:
+    ]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
-
-    if "scaffold" not in df.columns:
-        raise ValueError("trajectory_summary.csv must contain a scaffold column.")
-    df["scaffold"] = df["scaffold"].fillna("unknown").astype(str)
-    if "model_dir" in df.columns:
-        df["model_dir"] = df["model_dir"].fillna("unknown").astype(str)
-    if "leaderboard_model_organization" in df.columns:
-        df["leaderboard_model_organization"] = (
-            df["leaderboard_model_organization"].fillna("unknown").astype(str).replace({"Minimax": "MiniMax"})
-        )
-
-    scaffold_medians = df.groupby("scaffold")["step_count"].transform("median")
-    df["step_count_scaffold_ratio"] = df["step_count"] / scaffold_medians.replace(0, np.nan)
+    df["total_tokens"] = df["total_tokens"].where(df["total_tokens"] > 0)
     df["cost_usd_positive"] = df["cost_usd"].where(df["cost_usd"] > 0)
 
-    return df
+    for column in CLUSTER_COLUMNS:
+        if column in df.columns:
+            df[column] = df[column].fillna("unknown").astype(str)
+    return ensure_effective_submission_id(df)
 
 
-def load_task_difficulties(path: Path) -> pd.DataFrame:
-    if path.suffix.lower() == ".json":
-        with path.open(encoding="utf-8") as f:
-            task_rows: list[dict[str, Any]] = json.load(f)
-        tasks = pd.DataFrame(task_rows)
-    else:
-        tasks = pd.read_csv(path)
-
-    required = {"id", "difficulty"}
-    missing = required.difference(tasks.columns)
-    if missing:
-        raise ValueError(f"{path} is missing required task fields: {', '.join(sorted(missing))}")
-
-    return tasks[["id", "difficulty"]].rename(columns={"id": "task_name"}).drop_duplicates("task_name")
-
-
-def build_variable_coverage(df: pd.DataFrame) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
-    for variable in EFFORT_VARIABLES:
-        valid = df[variable].dropna()
-        rows.append(
-            {
-                "variable": variable,
-                "variable_display": DISPLAY_NAMES[variable],
-                "trajectory_count": len(df),
-                "complete_case_count": int(valid.shape[0]),
-                "complete_case_fraction": float(valid.shape[0] / len(df)),
-                "positive_count": int((valid > 0).sum()),
-                "zero_count": int((valid == 0).sum()),
-                "median": float(valid.median()) if len(valid) else None,
-                "p90": float(valid.quantile(0.90)) if len(valid) else None,
-                "max": float(valid.max()) if len(valid) else None,
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def difficulty_sort_key(series: pd.Series) -> pd.Series:
-    order = {value: index for index, value in enumerate(DIFFICULTY_ORDER)}
-    return series.astype(str).map(order).fillna(len(order))
-
-
-def comparison_label(row: pd.Series) -> str:
-    if row["median_steps_pass"] > row["median_steps_fail"]:
+def direction(pass_median: float, fail_median: float) -> str:
+    if pass_median > fail_median:
         return "pass_higher"
-    if row["median_steps_fail"] > row["median_steps_pass"]:
+    if fail_median > pass_median:
         return "fail_higher"
     return "tie"
 
 
-def build_task_step_median_outputs(
-    df: pd.DataFrame,
-    tasks: pd.DataFrame,
-    min_passing: int = MIN_PASSING_TRAJECTORIES,
-    min_failing: int = MIN_FAILING_TRAJECTORIES,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    required = {"task_name", "passed", "step_count"}
-    missing = required.difference(df.columns)
-    if missing:
-        raise ValueError(f"Trajectory data is missing required columns: {', '.join(sorted(missing))}")
+def signed_rank(values: pd.Series) -> tuple[float, float]:
+    diffs = pd.to_numeric(values, errors="coerce").dropna().to_numpy(dtype=float)
+    if len(diffs) == 0:
+        return np.nan, np.nan
+    if np.all(diffs == 0):
+        return 0.0, 1.0
+    result = wilcoxon(diffs, alternative="two-sided", zero_method="wilcox", method="auto")
+    return float(result.statistic), float(result.pvalue)
 
-    work = df[["task_name", "passed", "step_count"]].dropna(subset=["task_name", "step_count"]).copy()
-    merged = work.merge(tasks, on="task_name", how="left", validate="many_to_one")
-    missing_difficulty = merged["difficulty"].isna()
-    if missing_difficulty.any():
-        missing_preview = ", ".join(sorted(merged.loc[missing_difficulty, "task_name"].unique())[:8])
-        raise ValueError(
-            f"Task difficulty is missing for {int(missing_difficulty.sum())} trajectory rows. "
-            f"Examples: {missing_preview}"
+
+def task_medians(df: pd.DataFrame, metric: str) -> tuple[pd.DataFrame, int, float, float, str]:
+    work = df[["task_name", "passed", metric]].dropna().copy()
+    pooled = work.groupby("passed")[metric].median()
+    pooled_success = float(pooled.get(1, np.nan))
+    pooled_failure = float(pooled.get(0, np.nan))
+
+    balanced_work = df[[EFFECTIVE_SUBMISSION_ID, "task_name", "passed", metric]].dropna().copy()
+    submission_task_outcome = (
+        balanced_work.groupby([EFFECTIVE_SUBMISSION_ID, "task_name", "passed"], as_index=False)
+        .agg(
+            trajectory_count=(metric, "size"),
+            submission_task_outcome_median=(metric, "median"),
         )
-
-    grouped = (
-        merged.groupby(["task_name", "difficulty", "passed"], as_index=False)["step_count"]
-        .agg(trajectory_count="size", median_steps="median")
     )
-    counts = grouped.pivot(index=["task_name", "difficulty"], columns="passed", values="trajectory_count").fillna(0)
-    medians = grouped.pivot(index=["task_name", "difficulty"], columns="passed", values="median_steps")
-
+    grouped = (
+        submission_task_outcome.groupby(["task_name", "passed"])
+        .agg(
+            submission_count=(EFFECTIVE_SUBMISSION_ID, "nunique"),
+            trajectory_count=("trajectory_count", "sum"),
+            median=("submission_task_outcome_median", "median"),
+        )
+        .reset_index()
+    )
+    counts = grouped.pivot(index="task_name", columns="passed", values="submission_count").fillna(0)
+    trajectory_counts = grouped.pivot(index="task_name", columns="passed", values="trajectory_count").fillna(0)
+    medians = grouped.pivot(index="task_name", columns="passed", values="median")
     per_task = pd.DataFrame(
         {
-            "fail_count": counts.get(0, pd.Series(dtype=float)),
-            "pass_count": counts.get(1, pd.Series(dtype=float)),
-            "median_steps_fail": medians.get(0, pd.Series(dtype=float)),
-            "median_steps_pass": medians.get(1, pd.Series(dtype=float)),
+            "fail_submission_count": counts.get(0, pd.Series(dtype=float)),
+            "pass_submission_count": counts.get(1, pd.Series(dtype=float)),
+            "fail_trajectory_count": trajectory_counts.get(0, pd.Series(dtype=float)),
+            "pass_trajectory_count": trajectory_counts.get(1, pd.Series(dtype=float)),
+            "fail_median": medians.get(0, pd.Series(dtype=float)),
+            "pass_median": medians.get(1, pd.Series(dtype=float)),
         }
     ).reset_index()
-    per_task["fail_count"] = per_task["fail_count"].astype(int)
-    per_task["pass_count"] = per_task["pass_count"].astype(int)
     per_task = per_task[
-        (per_task["pass_count"] >= min_passing) & (per_task["fail_count"] >= min_failing)
+        (per_task["pass_submission_count"] >= MIN_OUTCOME_SUBMISSIONS)
+        & (per_task["fail_submission_count"] >= MIN_OUTCOME_SUBMISSIONS)
     ].copy()
-    per_task["median_step_difference_pass_minus_fail"] = (
-        per_task["median_steps_pass"] - per_task["median_steps_fail"]
+    per_task["difference"] = per_task["pass_median"] - per_task["fail_median"]
+    per_task["within_task_direction"] = np.select(
+        [
+            per_task["pass_median"] > per_task["fail_median"],
+            per_task["fail_median"] > per_task["pass_median"],
+        ],
+        ["pass_higher", "fail_higher"],
+        default="tie",
     )
-    per_task["comparison"] = per_task.apply(comparison_label, axis=1)
-    per_task = per_task.sort_values(
-        ["difficulty", "task_name"],
-        key=lambda column: difficulty_sort_key(column) if column.name == "difficulty" else column,
-    )
-
-    summary_rows: list[dict[str, Any]] = []
-    for difficulty, group in per_task.groupby("difficulty", sort=False):
-        summary_rows.append(
-            {
-                "difficulty": difficulty,
-                "eligible_task_count": int(len(group)),
-                "pass_higher_task_count": int((group["comparison"] == "pass_higher").sum()),
-                "fail_higher_task_count": int((group["comparison"] == "fail_higher").sum()),
-                "tie_task_count": int((group["comparison"] == "tie").sum()),
-                "mean_difference": float(group["median_step_difference_pass_minus_fail"].mean()),
-                "median_difference": float(group["median_step_difference_pass_minus_fail"].median()),
-            }
-        )
-
-    return per_task, pd.DataFrame(summary_rows)
+    return per_task, int(len(work)), pooled_success, pooled_failure, direction(pooled_success, pooled_failure)
 
 
-def bin_series(series: pd.Series, variable: str) -> pd.Categorical:
-    edges, labels = BIN_SPECS[variable]
-    return pd.cut(
-        series,
-        bins=edges,
-        labels=labels,
-        include_lowest=True,
-        right=True,
-        ordered=True,
-    )
-
-
-def build_effort_bins(df: pd.DataFrame, group_column: str | None = None) -> pd.DataFrame:
-    if group_column is not None and group_column not in df.columns:
-        raise ValueError(f"Cannot build grouped plots because {group_column!r} is missing.")
-
+def eligibility_threshold_rows(df: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    for variable in EFFORT_VARIABLES:
-        columns = [variable, "passed"] if group_column is None else [group_column, variable, "passed"]
-        work = df[columns].dropna().copy()
-        work["effort_bin"] = bin_series(work[variable], variable)
-        groups = [(None, work)] if group_column is None else work.groupby(group_column)
-
-        for group_value, group_frame in groups:
-            for bin_order, (label, bin_group) in enumerate(group_frame.groupby("effort_bin", observed=False), start=1):
-                n = int(len(bin_group))
-                passes = int(bin_group["passed"].sum()) if n else 0
-                ci_low, ci_high = wilson_interval(passes, n)
-                row = {
-                    "variable": variable,
-                    "variable_display": DISPLAY_NAMES[variable],
-                    "bin_order": bin_order,
-                    "effort_bin": str(label),
-                    "n": n,
-                    "pass_count": passes,
-                    "success_rate": passes / n if n else None,
-                    "success_rate_ci95_low": ci_low,
-                    "success_rate_ci95_high": ci_high,
+    for metric in WITHIN_TASK_METRICS:
+        work = df[[EFFECTIVE_SUBMISSION_ID, "task_name", "passed", metric]].dropna().copy()
+        submission_task_outcome = (
+            work.groupby([EFFECTIVE_SUBMISSION_ID, "task_name", "passed"], as_index=False)[metric]
+            .median()
+        )
+        counts = (
+            submission_task_outcome.groupby(["task_name", "passed"])[EFFECTIVE_SUBMISSION_ID]
+            .nunique()
+            .reset_index(name="submission_count")
+            .pivot(index="task_name", columns="passed", values="submission_count")
+            .fillna(0)
+        )
+        pass_counts = counts.get(1, pd.Series(dtype=float))
+        fail_counts = counts.get(0, pd.Series(dtype=float))
+        for threshold in [2, 3, 4, 5]:
+            rows.append(
+                {
+                    "metric": metric,
+                    "metric_display": DISPLAY_NAMES.get(metric, metric),
+                    "min_distinct_submissions_per_outcome": threshold,
+                    "eligible_task_count": int(((pass_counts >= threshold) & (fail_counts >= threshold)).sum()),
                 }
-                if group_column is not None:
-                    row.update({"group_column": group_column, "group_value": str(group_value)})
-                rows.append(row)
+            )
     return pd.DataFrame(rows)
 
 
-def plot_effort_bins(
-    bins: pd.DataFrame,
-    figures_dir: Path,
-    group_column: str | None = None,
-) -> list[Path]:
-    paths: list[Path] = []
-    group_label = {"scaffold": "scaffold", "model_dir": "model"}.get(group_column)
-    output_dir = figures_dir if group_label is None else figures_dir / f"by_{group_label}"
-    output_dir.mkdir(parents=True, exist_ok=True)
+def within_task_rows(df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for metric in METRICS:
+        per_task, _, pooled_success, pooled_failure, pooled_direction = task_medians(df, metric)
+        eligible = int(len(per_task))
+        success_more = int((per_task["difference"] > 0).sum())
+        failure_more = int((per_task["difference"] < 0).sum())
+        ties = int((per_task["difference"] == 0).sum())
+        dominant_direction = (
+            "pass_higher" if success_more > failure_more else "fail_higher" if failure_more > success_more else "tie"
+        )
+        statistic, p_value = signed_rank(per_task["difference"])
+        q1 = float(per_task["difference"].quantile(0.25)) if eligible else np.nan
+        q3 = float(per_task["difference"].quantile(0.75)) if eligible else np.nan
 
-    for variable in EFFORT_VARIABLES:
-        subset = bins[(bins["variable"] == variable) & (bins["n"] > 0)].sort_values("bin_order")
-        if group_label is None:
-            fig, ax = plt.subplots(figsize=(8.5, 4.8))
-            plot_overall_series(ax, subset)
-            _, labels = BIN_SPECS[variable]
-            ax.set_xticks(range(1, len(labels) + 1))
-            ax.set_xticklabels(labels, rotation=25, ha="right")
-            ax.set_ylim(0, 1)
-            ax.set_ylabel("Success rate")
-            ax.set_xlabel(DISPLAY_NAMES[variable])
-            ax.set_title(f"Terminal-Bench success rate by {DISPLAY_NAMES[variable].lower()}")
-            ax.grid(axis="y", alpha=0.25)
+        rows.append(
+            {
+                "metric": metric,
+                "metric_display": DISPLAY_NAMES.get(metric, metric),
+                "pooled_success_median": pooled_success,
+                "pooled_failure_median": pooled_failure,
+                "pooled_direction": pooled_direction,
+                "eligible_tasks": eligible,
+                "median_task_pass_median": float(per_task["pass_median"].median()) if eligible else np.nan,
+                "median_task_fail_median": float(per_task["fail_median"].median()) if eligible else np.nan,
+                "within_task_median_difference": float(per_task["difference"].median()) if eligible else np.nan,
+                "within_task_difference_q1": q1,
+                "within_task_difference_q3": q3,
+                "within_task_difference_iqr": q3 - q1,
+                "tasks_success_more_n": success_more,
+                "tasks_success_more_pct": success_more / eligible * 100 if eligible else np.nan,
+                "tasks_failure_more_n": failure_more,
+                "tasks_failure_more_pct": failure_more / eligible * 100 if eligible else np.nan,
+                "tie_task_count": ties,
+                "direction_reversal": pooled_direction != "tie"
+                and dominant_direction != "tie"
+                and pooled_direction != dominant_direction,
+                "wilcoxon_statistic": statistic,
+                "wilcoxon_p": p_value,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def within_task_direction_summary(df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for metric in WITHIN_TASK_METRICS:
+        per_task, complete_case_count, pooled_success, pooled_failure, pooled_direction = task_medians(df, metric)
+        eligible = int(len(per_task))
+        agree = int(per_task["within_task_direction"].eq(pooled_direction).sum())
+        reverse = int(
+            (
+                (pooled_direction != "tie")
+                & per_task["within_task_direction"].ne("tie")
+                & per_task["within_task_direction"].ne(pooled_direction)
+            ).sum()
+        )
+        pass_higher = int(per_task["difference"].gt(0).sum())
+        fail_higher = int(per_task["difference"].lt(0).sum())
+        ties = int(per_task["difference"].eq(0).sum())
+        statistic, p_value = signed_rank(per_task["difference"])
+        q1 = float(per_task["difference"].quantile(0.25)) if eligible else np.nan
+        q3 = float(per_task["difference"].quantile(0.75)) if eligible else np.nan
+        rows.append(
+            {
+                "metric": metric,
+                "metric_display": DISPLAY_NAMES.get(metric, metric),
+                "complete_case_count": complete_case_count,
+                "pooled_success_median": pooled_success,
+                "pooled_failure_median": pooled_failure,
+                "pooled_direction": pooled_direction,
+                "eligible_task_count": eligible,
+                "pass_higher_task_count": pass_higher,
+                "fail_higher_task_count": fail_higher,
+                "tie_task_count": ties,
+                "median_task_pass_median": float(per_task["pass_median"].median()) if eligible else np.nan,
+                "median_task_fail_median": float(per_task["fail_median"].median()) if eligible else np.nan,
+                "median_within_task_difference_pass_minus_fail": (
+                    float(per_task["difference"].median()) if eligible else np.nan
+                ),
+                "within_task_difference_q1": q1,
+                "within_task_difference_q3": q3,
+                "within_task_difference_iqr": q3 - q1,
+                "wilcoxon_statistic": statistic,
+                "wilcoxon_p": p_value,
+                "agree_with_pooled_task_count": agree,
+                "agree_with_pooled_task_fraction": agree / eligible if eligible else np.nan,
+                "reverse_pooled_task_count": reverse,
+                "reverse_pooled_task_fraction": reverse / eligible if eligible else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def model_frame(df: pd.DataFrame, metric: str) -> pd.DataFrame:
+    columns = ["task_name", "passed", metric, *[c for c in CLUSTER_COLUMNS if c in df.columns]]
+    work = df[columns].dropna().copy()
+    transformed = np.log1p(pd.to_numeric(work[metric], errors="coerce").where(lambda s: s >= 0))
+    work = work[np.isfinite(transformed)].copy()
+    transformed = transformed.loc[work.index]
+    work = work[work.groupby("task_name")["passed"].transform("nunique").eq(2)].copy()
+    transformed = transformed.loc[work.index]
+    log_effort_mean = float(transformed.mean())
+    log_effort_std = float(transformed.std(ddof=0))
+    work["log_effort"] = transformed
+    work["E"] = (transformed - log_effort_mean) / log_effort_std
+    work["E2"] = work["E"] ** 2
+    work["cluster"] = work[[c for c in CLUSTER_COLUMNS if c in work.columns]].fillna("unknown").astype(str).agg("|".join, axis=1)
+    work.attrs["log_effort_mean"] = log_effort_mean
+    work.attrs["log_effort_std"] = log_effort_std
+    return work
+
+
+def conditional_moments(weights: np.ndarray, x: np.ndarray, successes: int) -> tuple[float, np.ndarray, np.ndarray]:
+    p = x.shape[1]
+    a = np.zeros(successes + 1)
+    b = np.zeros((successes + 1, p))
+    c = np.zeros((successes + 1, p, p))
+    a[0] = 1.0
+    log_scale = 0.0
+
+    for index, (weight, row) in enumerate(zip(weights, x), start=1):
+        upto = min(index, successes)
+        old_a = a[:upto].copy()
+        old_b = b[:upto].copy()
+        old_c = c[:upto].copy()
+        row_outer = np.outer(row, row)
+        a[1 : upto + 1] += weight * old_a
+        b[1 : upto + 1] += weight * (old_b + old_a[:, None] * row)
+        c[1 : upto + 1] += weight * (
+            old_c
+            + old_b[:, :, None] * row[None, None, :]
+            + row[None, :, None] * old_b[:, None, :]
+            + old_a[:, None, None] * row_outer
+        )
+        scale = float(np.nanmax(a))
+        if scale > 0 and np.isfinite(scale):
+            a /= scale
+            b /= scale
+            c /= scale
+            log_scale += math.log(scale)
+
+    if a[successes] <= 0 or not np.isfinite(a[successes]):
+        raise FloatingPointError("Conditional likelihood denominator could not be evaluated.")
+    mean = b[successes] / a[successes]
+    second = c[successes] / a[successes]
+    return math.log(a[successes]) + log_scale, mean, second - np.outer(mean, mean)
+
+
+def inclusion_probabilities(log_weights: np.ndarray, successes: int) -> np.ndarray:
+    n = len(log_weights)
+    prefix = np.full((n + 1, successes + 1), -np.inf)
+    suffix = np.full((n + 1, successes + 1), -np.inf)
+    prefix[0, 0] = 0.0
+    suffix[n, 0] = 0.0
+
+    for i, log_weight in enumerate(log_weights):
+        prefix[i + 1, :] = prefix[i, :]
+        upto = min(i + 1, successes)
+        prefix[i + 1, 1 : upto + 1] = np.logaddexp(prefix[i, 1 : upto + 1], log_weight + prefix[i, :upto])
+
+    for i in range(n - 1, -1, -1):
+        suffix[i, :] = suffix[i + 1, :]
+        upto = min(n - i, successes)
+        suffix[i, 1 : upto + 1] = np.logaddexp(
+            suffix[i + 1, 1 : upto + 1],
+            log_weights[i] + suffix[i + 1, :upto],
+        )
+
+    probabilities = np.zeros(n)
+    denominator = prefix[n, successes]
+    for i, log_weight in enumerate(log_weights):
+        terms = [
+            prefix[i, left] + suffix[i + 1, successes - 1 - left]
+            for left in range(successes)
+            if left <= i and successes - 1 - left <= n - i - 1
+        ]
+        if terms:
+            probabilities[i] = math.exp(log_weight + logsumexp(terms) - denominator)
+    return np.clip(probabilities, 0.0, 1.0)
+
+
+def conditional_components(
+    beta: np.ndarray,
+    groups: list[tuple[np.ndarray, np.ndarray, np.ndarray]],
+    score_clusters: bool = False,
+) -> tuple[float, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+    objective = 0.0
+    gradient = np.zeros(len(beta))
+    hessian = np.zeros((len(beta), len(beta)))
+    cluster_scores: dict[str, np.ndarray] = {}
+
+    for x, y, clusters in groups:
+        successes = int(y.sum())
+        eta = x @ beta
+        shifted_eta = eta - float(np.max(eta))
+        log_denominator, expected, covariance = conditional_moments(np.exp(shifted_eta), x, successes)
+        objective -= float(shifted_eta[y == 1].sum() - log_denominator)
+        gradient += expected - x[y == 1].sum(axis=0)
+        hessian += covariance
+
+        if score_clusters:
+            probabilities = inclusion_probabilities(shifted_eta, successes)
+            for cluster, score in zip(clusters, (y - probabilities)[:, None] * x):
+                cluster_scores.setdefault(str(cluster), np.zeros(len(beta)))
+                cluster_scores[str(cluster)] += score
+
+    return objective, gradient, hessian, cluster_scores
+
+
+def fit_quadratic_conditional_logit(work: pd.DataFrame) -> dict[str, Any]:
+    groups = [
+        (
+            group[["E", "E2"]].to_numpy(dtype=float),
+            group["passed"].to_numpy(dtype=int),
+            group["cluster"].to_numpy(dtype=str),
+        )
+        for _, group in work.groupby("task_name", sort=False)
+    ]
+    beta = np.zeros(2)
+    converged = False
+    line_search_failed = False
+    final_gradient_norm = np.nan
+    iteration_count = 0
+
+    for iteration in range(1, 61):
+        iteration_count = iteration
+        value, gradient, hessian, _ = conditional_components(beta, groups)
+        final_gradient_norm = float(np.linalg.norm(gradient, ord=np.inf))
+        if final_gradient_norm < 1e-6:
+            converged = True
+            break
+        step = -np.linalg.pinv(hessian) @ gradient
+        if np.linalg.norm(step) > 2.0:
+            step *= 2.0 / np.linalg.norm(step)
+        slope = float(gradient @ step)
+        for power in range(30):
+            candidate = beta + (0.5**power) * step
+            try:
+                candidate_value, _, _, _ = conditional_components(candidate, groups)
+            except FloatingPointError:
+                candidate_value = np.inf
+            if np.isfinite(candidate_value) and candidate_value <= value + 1e-4 * (0.5**power) * slope:
+                beta = candidate
+                break
         else:
-            fig = plot_grouped_heatmap(subset, variable, group_label)
-        fig.tight_layout()
+            line_search_failed = True
+            raise RuntimeError("Conditional logit failed to find a stable Newton step.")
 
-        heatmap_suffix = "_heatmap" if group_label is not None else ""
-        path = output_dir / f"diminishing_returns_{variable}{heatmap_suffix}.png"
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
-        paths.append(path)
-
-    return paths
-
-
-def plot_reduced_scaffold_heatmaps(scaffold_bins: pd.DataFrame, figures_dir: Path) -> list[Path]:
-    paths: list[Path] = []
-    output_dir = figures_dir / "by_scaffold_reduced"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    reduced_bins = scaffold_bins[scaffold_bins["group_value"].isin(REDUCED_SCAFFOLDS)].copy()
-    if reduced_bins.empty:
-        return []
-
-    for variable in EFFORT_VARIABLES:
-        subset = reduced_bins[(reduced_bins["variable"] == variable) & (reduced_bins["n"] > 0)].sort_values("bin_order")
-        if subset.empty:
-            continue
-
-        fig = plot_grouped_heatmap(subset, variable, "scaffold", annotation_fontsize=9.0)
-        fig.tight_layout()
-
-        path = output_dir / f"diminishing_returns_{variable}_reduced_heatmap.png"
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
-        paths.append(path)
-
-    return paths
-
-
-def plot_combined_effort_bins(bins: pd.DataFrame, figures_dir: Path) -> Path | None:
-    output_dir = figures_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    plot_data = bins[bins["n"] > 0].copy()
-    if plot_data.empty:
-        return None
-
-    fig, ax = plt.subplots(figsize=(10.2, 5.8))
-    colors = plt.get_cmap("tab10").colors
-    markers = ["o", "s", "^", "D", "P", "X", "v"]
-
-    for index, variable in enumerate(EFFORT_VARIABLES):
-        subset = plot_data[plot_data["variable"] == variable].sort_values("bin_order")
-        if subset.empty:
-            continue
-        x = subset["bin_order"].to_numpy(dtype=float)
-        y = subset["success_rate"].to_numpy(dtype=float)
-        color = colors[index % len(colors)]
-        ax.plot(
-            x,
-            y,
-            marker=markers[index % len(markers)],
-            linewidth=1.9,
-            markersize=5.5,
-            color=color,
-            label=DISPLAY_NAMES[variable],
-        )
-
-    max_bin_order = int(plot_data["bin_order"].max())
-    ax.set_xticks(range(1, max_bin_order + 1))
-    ax.set_xticklabels([f"Bin {number}" for number in range(1, max_bin_order + 1)])
-    ax.set_ylim(0, 1)
-    ax.set_xlabel("Effort bin order, low to high within each variable")
-    ax.set_ylabel("Success rate")
-    ax.set_title("Terminal-Bench success rate by effort variable")
-    ax.grid(axis="y", alpha=0.25)
-    ax.legend(title="Effort variable", loc="center left", bbox_to_anchor=(1.01, 0.5), frameon=False)
-    fig.tight_layout()
-
-    path = output_dir / "diminishing_returns_combined_effort_variables.png"
-    fig.savefig(path, dpi=180)
-    plt.close(fig)
-    return path
+    _, gradient, hessian, cluster_scores = conditional_components(beta, groups, score_clusters=True)
+    final_gradient_norm = float(np.linalg.norm(gradient, ord=np.inf))
+    bread = np.linalg.pinv(hessian)
+    scores = np.vstack(list(cluster_scores.values()))
+    correction = (scores.shape[0] / (scores.shape[0] - 1)) * ((len(work) - 1) / (len(work) - 2))
+    covariance = bread @ (correction * scores.T @ scores) @ bread
+    se = np.sqrt(np.diag(covariance))
+    finite_beta = bool(np.isfinite(beta).all())
+    finite_covariance = bool(np.isfinite(covariance).all())
+    finite_se = bool(np.isfinite(se).all())
+    p_values = 2 * norm.sf(np.abs(beta / se))
+    ci_low = beta - 1.96 * se
+    ci_high = beta + 1.96 * se
+    z_min = float(work["E"].min())
+    z_max = float(work["E"].max())
+    turning_point_z = float(-beta[0] / (2 * beta[1])) if beta[1] != 0 else np.nan
+    turning_point_in_support = bool(np.isfinite(turning_point_z) and z_min <= turning_point_z <= z_max)
+    if np.isfinite(turning_point_z):
+        turning_point_percentile = float((work["E"] <= turning_point_z).mean() * 100)
+        log_effort_mean = float(work.attrs["log_effort_mean"])
+        log_effort_std = float(work.attrs["log_effort_std"])
+        turning_point_effort = float(np.expm1(turning_point_z * log_effort_std + log_effort_mean))
+    else:
+        turning_point_percentile = np.nan
+        turning_point_effort = np.nan
+    return {
+        "model_observation_count": int(len(work)),
+        "model_task_strata_count": int(work["task_name"].nunique()),
+        "model_cluster_count": int(work["cluster"].nunique()),
+        "beta_1_log_effort_z": float(beta[0]),
+        "beta_2_log_effort_z_squared": float(beta[1]),
+        "se_beta_1": float(se[0]),
+        "se_beta_2": float(se[1]),
+        "beta_1_ci_low": float(ci_low[0]),
+        "beta_1_ci_high": float(ci_high[0]),
+        "beta_2_ci_low": float(ci_low[1]),
+        "beta_2_ci_high": float(ci_high[1]),
+        "beta_1_p": float(p_values[0]),
+        "beta_2_p": float(p_values[1]),
+        "quadratic_coefficient": float(beta[1]),
+        "quadratic_p": float(p_values[1]),
+        "turning_point_z": turning_point_z,
+        "turning_point_in_empirical_support": turning_point_in_support,
+        "turning_point_empirical_percentile": turning_point_percentile,
+        "turning_point_effort_value": turning_point_effort,
+        "turning_point_interpretable": bool(beta[1] < 0 and turning_point_in_support),
+        "z_min": z_min,
+        "z_max": z_max,
+        "quadratic_converged": converged,
+        "quadratic_iteration_count": iteration_count,
+        "quadratic_final_gradient_norm": final_gradient_norm,
+        "quadratic_finite_coefficients": finite_beta,
+        "quadratic_finite_covariance": finite_covariance,
+        "quadratic_finite_se": finite_se,
+        "quadratic_line_search_failed": line_search_failed,
+    }
 
 
-def is_open_source_model(row: pd.Series) -> bool:
-    model_text = " ".join(
-        str(row.get(column, "")).lower().replace("_", "-")
-        for column in ["model_dir", "model_name"]
+def quadratic_rows(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for metric in METRICS:
+        rows.append({"metric": metric, **fit_quadratic_conditional_logit(model_frame(df, metric))})
+    return pd.DataFrame(rows)
+
+
+def final_results(df: pd.DataFrame) -> pd.DataFrame:
+    result = within_task_rows(df).merge(quadratic_rows(df), on="metric", validate="one_to_one")
+    result["wilcoxon_significant"] = result["wilcoxon_p"] < 0.05
+    result["quadratic_significant"] = result["quadratic_p"] < 0.05
+    result["diminishing_returns_supported"] = (
+        result["metric"].isin(DIMINISHING_RETURNS_CURVE_SUPPORT)
+        & (result["quadratic_coefficient"] < 0)
+        & result["quadratic_significant"]
     )
-    return any(keyword in model_text for keyword in OPEN_SOURCE_MODEL_KEYWORDS)
-
-
-def plot_model_provider_heatmaps(
-    df: pd.DataFrame,
-    figures_dir: Path,
-    output_name: str = "by_provider_facetted",
-    title_suffix: str = "",
-) -> list[Path]:
-    if "leaderboard_model_organization" not in df.columns:
-        return []
-
-    output_dir = figures_dir / "by_model" / output_name
-    output_dir.mkdir(parents=True, exist_ok=True)
-    paths: list[Path] = []
-
-    provider_bins: dict[str, pd.DataFrame] = {}
-    for provider in MODEL_PROVIDER_HEATMAPS:
-        provider_df = df[df["leaderboard_model_organization"].eq(provider)].copy()
-        if provider_df.empty:
-            continue
-        provider_bins[provider] = build_effort_bins(provider_df, group_column="model_dir")
-
-    for variable in EFFORT_VARIABLES:
-        _, labels = BIN_SPECS[variable]
-        panels: list[tuple[str, pd.DataFrame, pd.DataFrame, list[str]]] = []
-
-        for provider, bins in provider_bins.items():
-            subset = bins[(bins["variable"] == variable) & (bins["n"] > 0)].sort_values("bin_order")
-            if subset.empty:
-                continue
-
-            order_frame = (
-                subset.groupby("group_value", as_index=False)
-                .agg(pass_count=("pass_count", "sum"), n=("n", "sum"))
-                .assign(overall_success_rate=lambda frame: frame["pass_count"] / frame["n"])
-                .sort_values(["overall_success_rate", "n", "group_value"], ascending=[False, False, True])
-            )
-            group_order = order_frame["group_value"].tolist()
-            heatmap = (
-                subset.pivot(index="group_value", columns="effort_bin", values="success_rate")
-                .reindex(index=group_order, columns=labels)
-                .astype(float)
-            )
-            counts = (
-                subset.pivot(index="group_value", columns="effort_bin", values="n")
-                .reindex(index=group_order, columns=labels)
-                .fillna(0)
-                .astype(int)
-            )
-            panels.append((provider, heatmap, counts, group_order))
-
-        if not panels:
-            continue
-
-        row_counts = [max(1, len(group_order)) for _, _, _, group_order in panels]
-        figure_height = min(18.0, max(7.0, 2.4 + sum(row_counts) * 0.33 + len(panels) * 0.45))
-        fig, axes = plt.subplots(
-            len(panels),
-            1,
-            figsize=(11.8, figure_height),
-            sharex=True,
-            gridspec_kw={"height_ratios": row_counts},
-        )
-        axes = np.atleast_1d(axes)
-        cmap = plt.get_cmap("RdYlGn").copy()
-        cmap.set_bad("#f2f2f2")
-        image = None
-
-        for ax, (provider, heatmap, counts, group_order), row_count in zip(axes, panels, row_counts):
-            matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
-            image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
-            ax.set_yticks(range(len(group_order)))
-            ax.set_yticklabels(group_order, fontsize=8 if row_count > 12 else 9)
-            ax.set_ylabel(provider)
-            ax.set_title(f"{provider} models", loc="left", fontsize=10, pad=6)
-            ax.set_xticks(np.arange(-0.5, len(labels), 1), minor=True)
-            ax.set_yticks(np.arange(-0.5, row_count, 1), minor=True)
-            ax.grid(which="minor", color="white", linewidth=1.0)
-            ax.tick_params(which="minor", bottom=False, left=False)
-
-            for row_index, group_value in enumerate(group_order):
-                for column_index, label in enumerate(labels):
-                    rate = heatmap.loc[group_value, label]
-                    n = counts.loc[group_value, label]
-                    if pd.isna(rate) or n == 0:
-                        continue
-                    text_color = "white" if rate < 0.45 else "black"
-                    ax.text(
-                        column_index,
-                        row_index,
-                        f"{rate:.0%}\nn={n}",
-                        ha="center",
-                        va="center",
-                        fontsize=6.3,
-                        color=text_color,
-                    )
-
-        axes[-1].set_xticks(range(len(labels)))
-        axes[-1].set_xticklabels(labels, rotation=30, ha="right")
-        axes[-1].set_xlabel(DISPLAY_NAMES[variable])
-        for ax in axes[:-1]:
-            ax.tick_params(labelbottom=False)
-
-        fig.suptitle(
-            f"Terminal-Bench success rate by {DISPLAY_NAMES[variable].lower()} and model, facetted by provider{title_suffix}",
-            y=0.995,
-        )
-        fig.subplots_adjust(top=0.95, bottom=0.09, left=0.29, right=0.84, hspace=0.38)
-        if image is not None:
-            colorbar_ax = fig.add_axes([0.885, 0.36, 0.018, 0.28])
-            colorbar = fig.colorbar(image, cax=colorbar_ax)
-            colorbar.set_label("Success rate")
-
-        path = output_dir / f"diminishing_returns_{variable}_heatmap.png"
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
-        paths.append(path)
-
-    return paths
-
-
-def plot_provider_heatmaps(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
-    if "leaderboard_model_organization" not in df.columns:
-        return []
-
-    output_dir = figures_dir / "by_model" / "by_provider"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    paths: list[Path] = []
-    provider_bins = build_effort_bins(df, group_column="leaderboard_model_organization")
-
-    for variable in EFFORT_VARIABLES:
-        subset = provider_bins[(provider_bins["variable"] == variable) & (provider_bins["n"] > 0)].sort_values(
-            "bin_order"
-        )
-        if subset.empty:
-            continue
-
-        fig = plot_grouped_heatmap(subset, variable, "provider")
-        fig.tight_layout()
-        path = output_dir / f"diminishing_returns_{variable}_heatmap.png"
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
-        paths.append(path)
-
-    return paths
-
-
-def plot_model_provider_source_heatmaps(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
-    source_mask = df.apply(is_open_source_model, axis=1)
-    paths: list[Path] = []
-    paths.extend(
-        plot_model_provider_heatmaps(
-            df[source_mask].copy(),
-            figures_dir,
-            output_name="by_provider_open_source",
-            title_suffix=" (open-source/open-weight models)",
-        )
-    )
-    paths.extend(
-        plot_model_provider_heatmaps(
-            df[~source_mask].copy(),
-            figures_dir,
-            output_name="by_provider_closed_source",
-            title_suffix=" (closed-source models)",
-        )
-    )
-    return paths
-
-
-def plot_effort_performance_box_plots(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
-    paths: list[Path] = []
-    output_dir = figures_dir / "by_outcome" / "box_plots"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for variable in EFFORT_VARIABLES:
-        subset = df[[variable, "passed"]].dropna().copy()
-        if subset.empty:
-            continue
-
-        grouped_values = {
-            0: subset.loc[subset["passed"] == 0, variable].to_numpy(dtype=float),
-            1: subset.loc[subset["passed"] == 1, variable].to_numpy(dtype=float),
-        }
-        if not any(len(values) for values in grouped_values.values()):
-            continue
-
-        fig, ax = plt.subplots(figsize=(6.8, 5.4))
-        panels = [
-            (0, "Fail", "#c97b63", 1),
-            (1, "Pass", "#6aa57a", 2),
-        ]
-        for outcome_value, _label, color, position in panels:
-            values = grouped_values[outcome_value]
-            if len(values):
-                parts = ax.violinplot(
-                    [values],
-                    positions=[position],
-                    orientation="vertical",
-                    widths=0.58,
-                    showmeans=False,
-                    showmedians=False,
-                    showextrema=False,
-                )
-                for body in parts["bodies"]:
-                    body.set_facecolor(color)
-                    body.set_edgecolor("#2f3337")
-                    body.set_alpha(0.42)
-
-                ax.boxplot(
-                    [values],
-                    positions=[position],
-                    widths=0.25,
-                    patch_artist=True,
-                    showfliers=False,
-                    boxprops={"facecolor": "#ffffff", "edgecolor": "#243b4a", "linewidth": 1.1},
-                    medianprops={"color": "#1f2d3a", "linewidth": 1.7},
-                    whiskerprops={"color": "#243b4a", "linewidth": 1.0},
-                    capprops={"color": "#243b4a", "linewidth": 1.0},
-                )
-
-        tick_labels = [f"Fail\nn={len(grouped_values[0]):,}", f"Pass\nn={len(grouped_values[1]):,}"]
-        ax.set_xticks([1, 2])
-        ax.set_xticklabels(tick_labels)
-        ax.set_xlim(0.45, 2.55)
-        ax.set_ylabel(DISPLAY_NAMES[variable])
-        ax.set_xlabel("Trajectory outcome")
-        ax.set_title(f"{DISPLAY_NAMES[variable]} by trajectory outcome")
-        ax.grid(axis="y", alpha=0.25)
-        fig.tight_layout()
-
-        path = output_dir / f"diminishing_returns_performance_box_{variable}.png"
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
-        paths.append(path)
-
-    return paths
-
-
-def plot_effort_outcome_stacked_bars(bins: pd.DataFrame, figures_dir: Path) -> list[Path]:
-    paths: list[Path] = []
-    output_dir = figures_dir / "by_outcome" / "stacked"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for variable in EFFORT_VARIABLES:
-        subset = bins[(bins["variable"] == variable) & (bins["n"] > 0)].sort_values("bin_order")
-        if subset.empty:
-            continue
-
-        x = subset["bin_order"].to_numpy(dtype=float)
-        total = subset["n"].to_numpy(dtype=float)
-        pass_count = subset["pass_count"].to_numpy(dtype=float)
-        fail_count = total - pass_count
-
-        fig, ax = plt.subplots(figsize=(8.5, 4.8))
-        ax.bar(x, pass_count, width=0.74, color="#6aa57a", alpha=0.82, label="Passed trajectories")
-        ax.bar(x, fail_count, width=0.74, bottom=pass_count, color="#c97b63", alpha=0.82, label="Failed trajectories")
-
-        tick_labels = [
-            f"{row.effort_bin}\n(n={int(row.n):,})"
-            for row in subset.itertuples(index=False)
-        ]
-        ax.set_xticks(x)
-        ax.set_xticklabels(tick_labels, rotation=25, ha="right")
-        max_total = float(total.max()) if len(total) else 0.0
-        if max_total > 0:
-            ax.set_ylim(0, max_total * 1.12)
-        ax.set_ylabel("Trajectory count")
-        ax.set_xlabel(DISPLAY_NAMES[variable])
-        ax.set_title(f"Terminal-Bench outcome counts by {DISPLAY_NAMES[variable].lower()}")
-        ax.grid(axis="y", alpha=0.25)
-        ax.legend(frameon=False, loc="upper right", bbox_to_anchor=(1.0, 1.02))
-        fig.tight_layout()
-
-        path = output_dir / f"diminishing_returns_outcome_stacked_{variable}.png"
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
-        paths.append(path)
-
-    return paths
-
-
-def plot_grouped_heatmap(
-    subset: pd.DataFrame,
-    variable: str,
-    group_label: str,
-    annotation_fontsize: float = 6.5,
-) -> plt.Figure:
-    _, labels = BIN_SPECS[variable]
-    order_frame = (
-        subset.groupby("group_value", as_index=False)
-        .agg(pass_count=("pass_count", "sum"), n=("n", "sum"))
-        .assign(overall_success_rate=lambda frame: frame["pass_count"] / frame["n"])
-        .sort_values(["overall_success_rate", "n", "group_value"], ascending=[False, False, True])
-    )
-    group_order = order_frame["group_value"].tolist()
-
-    heatmap = (
-        subset.pivot(index="group_value", columns="effort_bin", values="success_rate")
-        .reindex(index=group_order, columns=labels)
-        .astype(float)
-    )
-    counts = (
-        subset.pivot(index="group_value", columns="effort_bin", values="n")
-        .reindex(index=group_order, columns=labels)
-        .fillna(0)
-        .astype(int)
-    )
-
-    row_count = max(1, len(group_order))
-    figure_height = min(14.0, max(4.8, 1.6 + row_count * 0.34))
-    fig, ax = plt.subplots(figsize=(10.5, figure_height))
-
-    cmap = plt.get_cmap("RdYlGn").copy()
-    cmap.set_bad("#f2f2f2")
-    matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
-    image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
-
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=30, ha="right")
-    ax.set_yticks(range(len(group_order)))
-    ax.set_yticklabels(group_order, fontsize=8 if row_count > 20 else 9)
-    ax.set_xlabel(DISPLAY_NAMES[variable])
-    ax.set_ylabel(group_label[:1].upper() + group_label[1:])
-    ax.set_title(f"Terminal-Bench success rate by {DISPLAY_NAMES[variable].lower()} and {group_label}")
-
-    ax.set_xticks(np.arange(-0.5, len(labels), 1), minor=True)
-    ax.set_yticks(np.arange(-0.5, row_count, 1), minor=True)
-    ax.grid(which="minor", color="white", linewidth=1.0)
-    ax.tick_params(which="minor", bottom=False, left=False)
-
-    colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label("Success rate")
-
-    if row_count <= 18:
-        for row_index, group_value in enumerate(group_order):
-            for column_index, label in enumerate(labels):
-                rate = heatmap.loc[group_value, label]
-                n = counts.loc[group_value, label]
-                if pd.isna(rate) or n == 0:
-                    continue
-                text_color = "white" if rate < 0.45 else "black"
-                ax.text(
-                    column_index,
-                    row_index,
-                    f"{rate:.0%}\nn={n}",
-                    ha="center",
-                    va="center",
-                    fontsize=annotation_fontsize,
-                    color=text_color,
-                )
-
-    return fig
-
-
-def plot_overall_series(ax: plt.Axes, subset: pd.DataFrame) -> None:
-    x = subset["bin_order"].to_numpy(dtype=float)
-    y = subset["success_rate"].to_numpy(dtype=float)
-    yerr = np.vstack(
+    return result[
         [
-            y - subset["success_rate_ci95_low"].to_numpy(dtype=float),
-            subset["success_rate_ci95_high"].to_numpy(dtype=float) - y,
+            "metric",
+            "metric_display",
+            "pooled_success_median",
+            "pooled_failure_median",
+            "pooled_direction",
+            "eligible_tasks",
+            "median_task_pass_median",
+            "median_task_fail_median",
+            "within_task_median_difference",
+            "within_task_difference_q1",
+            "within_task_difference_q3",
+            "within_task_difference_iqr",
+            "tasks_success_more_n",
+            "tasks_success_more_pct",
+            "tasks_failure_more_n",
+            "tasks_failure_more_pct",
+            "tie_task_count",
+            "direction_reversal",
+            "wilcoxon_statistic",
+            "wilcoxon_p",
+            "wilcoxon_significant",
+            "model_observation_count",
+            "model_task_strata_count",
+            "model_cluster_count",
+            "beta_1_log_effort_z",
+            "beta_2_log_effort_z_squared",
+            "se_beta_1",
+            "se_beta_2",
+            "beta_1_ci_low",
+            "beta_1_ci_high",
+            "beta_2_ci_low",
+            "beta_2_ci_high",
+            "beta_1_p",
+            "beta_2_p",
+            "quadratic_coefficient",
+            "quadratic_p",
+            "quadratic_significant",
+            "turning_point_z",
+            "turning_point_in_empirical_support",
+            "turning_point_empirical_percentile",
+            "turning_point_effort_value",
+            "turning_point_interpretable",
+            "z_min",
+            "z_max",
+            "quadratic_converged",
+            "quadratic_iteration_count",
+            "quadratic_final_gradient_norm",
+            "quadratic_finite_coefficients",
+            "quadratic_finite_covariance",
+            "quadratic_finite_se",
+            "quadratic_line_search_failed",
+            "diminishing_returns_supported",
         ]
-    )
-    ax.errorbar(x, y, yerr=yerr, marker="o", linewidth=1.8, capsize=4, color="#1f77b4")
+    ]
+
+
+def within_task_detail_rows(df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for metric in WITHIN_TASK_METRICS:
+        per_task, _, _, _, pooled_direction = task_medians(df, metric)
+        if per_task.empty:
+            continue
+        per_task["within_task_difference_pass_minus_fail"] = per_task.pop("difference")
+        per_task["agrees_with_pooled_direction"] = per_task["within_task_direction"].eq(pooled_direction)
+        per_task["reverses_pooled_direction"] = (
+            pooled_direction != "tie"
+        ) & per_task["within_task_direction"].ne("tie") & per_task["within_task_direction"].ne(pooled_direction)
+        per_task.insert(0, "metric", metric)
+        per_task.insert(1, "metric_display", DISPLAY_NAMES.get(metric, metric))
+        rows.extend(per_task.to_dict(orient="records"))
+    return pd.DataFrame(rows)
+
+
+def metric_list(series: pd.Series) -> str:
+    values = series.astype(str).tolist()
+    return ", ".join(values) if values else "none"
 
 
 def main() -> None:
@@ -823,48 +606,29 @@ def main() -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     df = load_data(args.input)
-    tasks_path = TASKS_DEFAULT if TASKS_DEFAULT.exists() else TASKS_JSON_FALLBACK
-    tasks = load_task_difficulties(tasks_path)
-    coverage = build_variable_coverage(df)
-    task_step_medians, task_step_summary = build_task_step_median_outputs(df, tasks)
-    bins = build_effort_bins(df)
-    figures = plot_effort_bins(bins, args.figures_dir)
-    combined_figure = plot_combined_effort_bins(bins, args.figures_dir)
-    outcome_box_figures = plot_effort_performance_box_plots(df, args.figures_dir)
-    outcome_stacked_figures = plot_effort_outcome_stacked_bars(bins, args.figures_dir)
-    scaffold_bins = build_effort_bins(df, group_column="scaffold")
-    reduced_scaffold_figures = plot_reduced_scaffold_heatmaps(scaffold_bins, args.figures_dir)
-    grouped_figures: list[Path] = []
-    if args.by_scaffold:
-        grouped_figures.extend(plot_effort_bins(scaffold_bins, args.figures_dir, "scaffold"))
-    if args.by_model:
-        model_bins = build_effort_bins(df, group_column="model_dir")
-        grouped_figures.extend(plot_effort_bins(model_bins, args.figures_dir, "model_dir"))
-        grouped_figures.extend(plot_provider_heatmaps(df, args.figures_dir))
-        grouped_figures.extend(plot_model_provider_heatmaps(df, args.figures_dir))
-        grouped_figures.extend(plot_model_provider_source_heatmaps(df, args.figures_dir))
+    within_summary = within_task_direction_summary(df)
+    within_detail = within_task_detail_rows(df)
+    eligibility = eligibility_threshold_rows(df)
+    table = final_results(df)
+    output_path = args.out / "rq1_final_statistical_results.csv"
+    within_summary_path = args.out / "rq1_within_task_effort_summary.csv"
+    within_detail_path = args.out / "rq1_within_task_effort_by_task.csv"
+    eligibility_path = args.out / "rq1_task_outcome_eligibility_thresholds.csv"
+    table.to_csv(output_path, index=False)
+    within_summary.to_csv(within_summary_path, index=False)
+    within_detail.to_csv(within_detail_path, index=False)
+    eligibility.to_csv(eligibility_path, index=False)
 
-    bins_path = args.out / "diminishing_returns_effort_bins.csv"
-    coverage_path = args.out / "diminishing_returns_variable_coverage.csv"
-    task_step_medians_path = args.out / "task_step_median_per_task.csv"
-    task_step_summary_path = args.out / "task_step_median_by_difficulty.csv"
-    bins.to_csv(bins_path, index=False)
-    coverage.to_csv(coverage_path, index=False)
-    task_step_medians.to_csv(task_step_medians_path, index=False)
-    task_step_summary.to_csv(task_step_summary_path, index=False)
-
-    print(f"Wrote {bins_path}")
-    print(f"Wrote {coverage_path}")
-    print(f"Wrote {task_step_medians_path}")
-    print(f"Wrote {task_step_summary_path}")
-    print(f"Wrote {len(figures)} figures to {args.figures_dir}")
-    if combined_figure is not None:
-        print(f"Wrote combined effort-variable figure to {combined_figure}")
-    print(f"Wrote {len(outcome_box_figures)} by-outcome box plots to {args.figures_dir / 'by_outcome' / 'box_plots'}")
-    print(f"Wrote {len(outcome_stacked_figures)} by-outcome stacked plots to {args.figures_dir / 'by_outcome' / 'stacked'}")
-    print(f"Wrote {len(reduced_scaffold_figures)} reduced scaffold heatmaps to {args.figures_dir / 'by_scaffold_reduced'}")
-    if grouped_figures:
-        print(f"Wrote {len(grouped_figures)} optional grouped figures to {args.figures_dir}")
+    reversals = table.loc[table["direction_reversal"], "metric"]
+    wilcoxon_sig = table.loc[table["wilcoxon_significant"], "metric"]
+    diminishing = table.loc[table["diminishing_returns_supported"], "metric"]
+    print(f"Reversal metrics: {metric_list(reversals)}")
+    print(f"Significant Wilcoxon metrics: {metric_list(wilcoxon_sig)}")
+    print(f"Diminishing-returns metrics: {metric_list(diminishing)}")
+    print(f"Wrote {output_path}")
+    print(f"Wrote {within_summary_path}")
+    print(f"Wrote {within_detail_path}")
+    print(f"Wrote {eligibility_path}")
 
 
 if __name__ == "__main__":
