@@ -21,6 +21,7 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 from scripts.benchmark_paths import SUPPORTED_BENCHMARKS, paths_for_benchmark
 
@@ -29,7 +30,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 DATA_PROCESSED_LIVE_DIR = REPO_ROOT / "data" / "processed_live"
 REPORTS_DIR = REPO_ROOT / "reports"
-FIGURES_DIR = REPORTS_DIR / "general_characteristics"
+FIGURES_DIR = REPORTS_DIR / "general_characteristics" / "terminal_bench_2_0"
 INPUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0" / "leaderboard_submission_summary.csv"
 OUT_DEFAULT = DATA_PROCESSED_LIVE_DIR / "terminal_bench_2_0"
 
@@ -195,11 +196,6 @@ def exploded_model_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return exploded
 
 
-def slugify(value: str) -> str:
-    chars = [char.lower() if char.isalnum() else "_" for char in value]
-    return "_".join("".join(chars).strip("_").split("_")) or "unknown"
-
-
 def grouped_accuracy_values(rows: list[dict[str, Any]], key: str, groups: list[dict[str, Any]], limit: int) -> list[tuple[str, list[float]]]:
     selected_keys = [str(group.get(key, "")) for group in groups if (group.get("row_count") or 0) >= 2][:limit]
     grouped: dict[str, list[float]] = {value: [] for value in selected_keys}
@@ -316,6 +312,50 @@ def plot_leaderboard_figures(
     return figures
 
 
+def summarize_availability(rows: list[dict[str, Any]]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    df["availability_group"] = np.where(df["has_trajectories"], "trajectory_available", "trajectory_unavailable")
+    df["leaderboard_date_parsed"] = pd.to_datetime(df["leaderboard_date"], errors="coerce")
+    by_group = (
+        df.groupby("availability_group", as_index=False)
+        .agg(
+            submission_count=("availability_group", "size"),
+            median_leaderboard_accuracy=("leaderboard_accuracy", "median"),
+            mean_leaderboard_accuracy=("leaderboard_accuracy", "mean"),
+            min_leaderboard_accuracy=("leaderboard_accuracy", "min"),
+            max_leaderboard_accuracy=("leaderboard_accuracy", "max"),
+            median_trial_count=("computed_submission_trial_count", "median"),
+            min_trial_count=("computed_submission_trial_count", "min"),
+            max_trial_count=("computed_submission_trial_count", "max"),
+            median_success_count=("computed_submission_success_count", "median"),
+            first_submission_date=("leaderboard_date_parsed", "min"),
+            median_submission_date=("leaderboard_date_parsed", "median"),
+            last_submission_date=("leaderboard_date_parsed", "max"),
+        )
+        .sort_values("availability_group")
+    )
+    for column in ["first_submission_date", "median_submission_date", "last_submission_date"]:
+        by_group[column] = by_group[column].dt.date.astype("string")
+
+    def grouped(column: str) -> pd.DataFrame:
+        out = (
+            df.groupby(column, dropna=False)
+            .agg(
+                submission_count=(column, "size"),
+                trajectory_available_count=("has_trajectories", "sum"),
+                median_leaderboard_accuracy=("leaderboard_accuracy", "median"),
+            )
+            .reset_index()
+        )
+        out["trajectory_unavailable_count"] = out["submission_count"] - out["trajectory_available_count"]
+        out["trajectory_available_fraction"] = out["trajectory_available_count"] / out["submission_count"]
+        return out.sort_values(["submission_count", "trajectory_available_count", column], ascending=[False, False, True])
+
+    return by_group, grouped("scaffold"), grouped("leaderboard_model")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -365,6 +405,15 @@ def main() -> None:
         exploded_model_groups,
         figures_dir,
     )
+    availability_summary, availability_by_scaffold, availability_by_model = summarize_availability(rows)
+    for frame, name in [
+        (availability_summary, "leaderboard_trajectory_availability_summary.csv"),
+        (availability_by_scaffold, "leaderboard_trajectory_availability_by_scaffold.csv"),
+        (availability_by_model, "leaderboard_trajectory_availability_by_model.csv"),
+    ]:
+        path = out / name
+        frame.to_csv(path, index=False)
+        print(f"Wrote {path}")
 
 
 if __name__ == "__main__":
