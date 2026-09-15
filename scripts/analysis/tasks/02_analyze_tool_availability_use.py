@@ -5,13 +5,6 @@ Main question:
 How does trajectory-level tool use relate to success across task domains?
 
 Outputs:
-- data/processed_live/task_mining/tools/rq2_3_tool_use_overall.csv
-- data/processed_live/task_mining/tools/rq2_3_tool_use_by_category.csv
-- data/processed_live/task_mining/tools/rq2_3_tool_use_by_difficulty.csv
-- data/processed_live/task_mining/tools/rq2_3_functional_use_overall.csv
-- data/processed_live/task_mining/tools/rq2_3_functional_use_by_category.csv
-- data/processed_live/task_mining/tools/rq2_3_functional_use_by_difficulty.csv
-- data/processed_live/task_mining/tools/rq2_3_functional_wilcoxon.csv
 - reports/tasks/tools/rq2_3_tool_success_association_by_category.png
 - reports/tasks/tools/rq2_3_tool_success_association_by_difficulty.png, only if informative
 - reports/tasks/tools/rq2_3_functional_success_association_by_category.png
@@ -46,6 +39,7 @@ REPO_ROOT_CANDIDATE = SCRIPT_DIR.parent.parent.parent
 if str(REPO_ROOT_CANDIDATE) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_CANDIDATE))
 
+from scripts.analysis.support_thresholds import MINIMUM_SUPPORT_PER_COMPARISON_CELL
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -75,7 +69,7 @@ FUNCTIONAL_FAMILIES = (
 )
 OUTCOME_COLUMNS = {"reward_outcome", "outcome", "reward"}
 COMMAND_ARGUMENT_KEYS = ("command", "cmd", "keystrokes", "action", "input", "code")
-MIN_CELL_SUPPORT_DEFAULT = 5
+MIN_CELL_SUPPORT_DEFAULT = MINIMUM_SUPPORT_PER_COMPARISON_CELL
 DIFFICULTY_FIGURE_MIN_RANGE_PP_DEFAULT = 5.0
 EXAMPLES_PER_FUNCTIONAL_FAMILY = 5
 
@@ -115,6 +109,7 @@ TOOL_FAMILY_DISPLAY = {
     "finish_submit": "Finish/submit",
     "unknown_other": "Unknown/other",
 }
+TOOL_FAMILY_DISPLAY_ORDER = [TOOL_FAMILY_DISPLAY[family] for family in MAIN_TOOL_FAMILIES]
 
 FUNCTIONAL_FAMILY_DISPLAY = {
     "inspect_search": "Inspect/search",
@@ -127,8 +122,26 @@ FUNCTIONAL_FAMILY_DISPLAY = {
     "network_external": "Network/external",
     "media_specialized": "Media/specialized",
 }
+FUNCTIONAL_FAMILY_DISPLAY_ORDER = [FUNCTIONAL_FAMILY_DISPLAY[family] for family in FUNCTIONAL_FAMILIES]
+CORE_FUNCTIONAL_FAMILY_DISPLAY_ORDER = [
+    FUNCTIONAL_FAMILY_DISPLAY[family]
+    for family in ("inspect_search", "modify_write", "execute_run", "test_validate")
+]
 
 DIFFICULTY_ORDER = ["easy", "medium", "hard"]
+CATEGORY_DISPLAY_LABELS = {
+    "data-processing": "data\nproc.",
+    "data-science": "data-\nscience",
+    "debugging": "debugging",
+    "file-operations": "file\nops.",
+    "machine-learning": "machine\nlearning",
+    "mathematics": "mathematics",
+    "model-training": "model-\ntraining",
+    "scientific-computing": "scientific\ncomputing",
+    "security": "security",
+    "software-engineering": "software\neng.",
+    "system-administration": "system\nadmin",
+}
 OBSOLETE_FIGURES = (
     "rq2_3_tool_success_association_overall.png",
     "rq2_3_tool_use_by_category.png",
@@ -136,7 +149,16 @@ OBSOLETE_FIGURES = (
     "heatmap_tool_availability_category_delta.png",
     "heatmap_tool_use_category_delta.png",
 )
-OBSOLETE_TABLES = ("rq2_3_tool_availability_audit.csv",)
+OBSOLETE_TABLES = (
+    "rq2_3_tool_availability_audit.csv",
+    "rq2_3_tool_use_overall.csv",
+    "rq2_3_tool_use_by_category.csv",
+    "rq2_3_tool_use_by_difficulty.csv",
+    "rq2_3_functional_use_overall.csv",
+    "rq2_3_functional_use_by_category.csv",
+    "rq2_3_functional_use_by_difficulty.csv",
+    "rq2_3_functional_wilcoxon.csv",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,9 +171,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-trajectories", type=int, default=None)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--progress-every", type=int, default=1000)
-    parser.add_argument("--min-cell-support", type=int, default=MIN_CELL_SUPPORT_DEFAULT)
     parser.add_argument("--difficulty-figure-min-range-pp", type=float, default=DIFFICULTY_FIGURE_MIN_RANGE_PP_DEFAULT)
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.min_cell_support = MIN_CELL_SUPPORT_DEFAULT
+    return args
 
 
 def textish(value: Any, max_len: int = 20000) -> str:
@@ -878,11 +901,6 @@ def summarize_functional_wilcoxon(task_contrasts: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def write_table(df: pd.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(path, index=False)
-
-
 def pct_label(value: float | None) -> str:
     if value is None or pd.isna(value):
         return ""
@@ -951,6 +969,13 @@ def plot_difference_heatmap(
     out_path: Path,
     dimension_order: list[str] | None = None,
     family_display_column: str = "tool_family_display",
+    family_display_order: list[str] | None = None,
+    transpose: bool = False,
+    annotation_fontsize: int = 8,
+    colorbar_label: str | None = "Mean task-level pass-rate difference (used - not used, pp)",
+    x_label_map: dict[str, str] | None = None,
+    x_label_rotation: int = 35,
+    figure_height_scale: float = 0.55,
 ) -> bool:
     if df.empty:
         return False
@@ -972,6 +997,11 @@ def plot_difference_heatmap(
     if pivot.empty:
         return False
 
+    if family_display_order:
+        ordered_index = [value for value in family_display_order if value in pivot.index]
+        ordered_index.extend(value for value in pivot.index if value not in ordered_index)
+        pivot = pivot.loc[ordered_index]
+
     if dimension_order:
         ordered = [value for value in dimension_order if value in pivot.columns]
         ordered.extend(value for value in pivot.columns if value not in ordered)
@@ -980,35 +1010,85 @@ def plot_difference_heatmap(
         ordered_columns = plot_df.groupby(dimension)["eligible_tasks"].sum().sort_values(ascending=False).index.tolist()
         pivot = pivot[[value for value in ordered_columns if value in pivot.columns]]
 
-    values = pivot.to_numpy(dtype=float)
+    display = pivot.T if transpose else pivot
+    values = display.to_numpy(dtype=float)
     max_abs = float(np.nanmax(np.abs(values)))
     if not np.isfinite(max_abs) or max_abs == 0:
         max_abs = 1.0
 
-    fig_width = max(7.0, min(18.0, 1.0 + 1.1 * len(pivot.columns)))
-    fig_height = max(3.8, 1.3 + 0.55 * len(pivot.index))
+    fig_width = max(7.0, min(18.0, 1.0 + 1.1 * len(display.columns)))
+    fig_height = max(3.8, 1.05 + figure_height_scale * len(display.index))
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     image = ax.imshow(values, cmap="RdBu", vmin=-max_abs, vmax=max_abs, aspect="auto")
     ax.set_title(title)
-    ax.set_xticks(np.arange(len(pivot.columns)))
-    ax.set_xticklabels(pivot.columns, rotation=35, ha="right")
-    ax.set_yticks(np.arange(len(pivot.index)))
-    ax.set_yticklabels(pivot.index)
+    ax.set_xticks(np.arange(len(display.columns)))
+    x_labels = [x_label_map.get(str(value), str(value)) if x_label_map else str(value) for value in display.columns]
+    x_label_alignment = "right" if x_label_rotation else "center"
+    ax.set_xticklabels(x_labels, rotation=x_label_rotation, ha=x_label_alignment)
+    ax.set_yticks(np.arange(len(display.index)))
+    ax.set_yticklabels(display.index)
     ax.tick_params(axis="both", length=0)
 
     for i in range(values.shape[0]):
         for j in range(values.shape[1]):
             value = values[i, j]
             if np.isfinite(value):
-                ax.text(j, i, pp_label(value), ha="center", va="center", fontsize=8)
+                ax.text(j, i, pp_label(value), ha="center", va="center", fontsize=annotation_fontsize)
 
     cbar = fig.colorbar(image, ax=ax)
-    cbar.set_label("Mean task-level pass-rate difference (used - not used, pp)")
+    if colorbar_label:
+        cbar.set_label(colorbar_label)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
     return True
+
+
+def category_order_by_core_functional_signal(functional_by_category: pd.DataFrame) -> list[str]:
+    plot_df = functional_by_category.copy()
+    if "single_task_category" in plot_df.columns:
+        plot_df = plot_df[~plot_df["single_task_category"].fillna(False)].copy()
+    plot_df = plot_df[
+        plot_df["eligible_tasks"].gt(0)
+        & plot_df["behavior_family_display"].isin(CORE_FUNCTIONAL_FAMILY_DISPLAY_ORDER)
+    ].copy()
+    if plot_df.empty:
+        return []
+    return (
+        plot_df.groupby("category")["mean_task_pass_rate_difference_pp"]
+        .mean()
+        .sort_values(ascending=False)
+        .index.astype(str)
+        .tolist()
+    )
+
+
+def display_order_by_mean_signal(
+    df: pd.DataFrame,
+    display_column: str,
+    fallback_order: list[str],
+) -> list[str]:
+    plot_df = df.copy()
+    if "single_task_category" in plot_df.columns:
+        plot_df = plot_df[~plot_df["single_task_category"].fillna(False)].copy()
+    plot_df = plot_df[plot_df["eligible_tasks"].gt(0)].copy()
+    if plot_df.empty or display_column not in plot_df.columns:
+        return fallback_order
+
+    signal_order = (
+        plot_df.groupby(display_column)
+        .agg(
+            mean_signal=("mean_task_pass_rate_difference_pp", "mean"),
+            eligible_tasks=("eligible_tasks", "sum"),
+        )
+        .sort_values(["mean_signal", "eligible_tasks"], ascending=[False, False])
+        .index.astype(str)
+        .tolist()
+    )
+    ordered = [value for value in signal_order if value in fallback_order]
+    ordered.extend(value for value in fallback_order if value not in ordered)
+    return ordered
 
 
 def difficulty_pattern_is_informative(
@@ -1451,25 +1531,26 @@ def main() -> None:
     )
     functional_wilcoxon = summarize_functional_wilcoxon(functional_task_contrasts)
 
-    write_table(overall, args.out / "rq2_3_tool_use_overall.csv")
-    write_table(by_category, args.out / "rq2_3_tool_use_by_category.csv")
-    write_table(by_difficulty, args.out / "rq2_3_tool_use_by_difficulty.csv")
-    write_table(functional_overall, args.out / "rq2_3_functional_use_overall.csv")
-    write_table(functional_by_category, args.out / "rq2_3_functional_use_by_category.csv")
-    write_table(functional_by_difficulty, args.out / "rq2_3_functional_use_by_difficulty.csv")
-    write_table(functional_wilcoxon, args.out / "rq2_3_functional_wilcoxon.csv")
     removed_tables = cleanup_obsolete_tables(args.out)
 
     category_figure = args.figures_dir / "rq2_3_tool_success_association_by_category.png"
     difficulty_figure = args.figures_dir / "rq2_3_tool_success_association_by_difficulty.png"
     functional_category_figure = args.figures_dir / "rq2_3_functional_success_association_by_category.png"
     functional_difficulty_figure = args.figures_dir / "rq2_3_functional_success_association_by_difficulty.png"
+    category_order = category_order_by_core_functional_signal(functional_by_category)
+    functional_category_family_order = display_order_by_mean_signal(
+        functional_by_category,
+        "behavior_family_display",
+        FUNCTIONAL_FAMILY_DISPLAY_ORDER,
+    )
 
     category_plotted = plot_difference_heatmap(
         by_category,
         "category",
         "Task-balanced tool-use association with success by category",
         category_figure,
+        dimension_order=category_order,
+        family_display_order=TOOL_FAMILY_DISPLAY_ORDER,
     )
     retained_figures = {category_figure.resolve()} if category_plotted else set()
     removed_current_figures: list[Path] = []
@@ -1482,7 +1563,13 @@ def main() -> None:
         "category",
         "Task-balanced functional association with success by category",
         functional_category_figure,
+        dimension_order=category_order,
         family_display_column="behavior_family_display",
+        family_display_order=functional_category_family_order,
+        annotation_fontsize=7,
+        x_label_map=CATEGORY_DISPLAY_LABELS,
+        x_label_rotation=0,
+        figure_height_scale=0.42,
     )
     if functional_category_plotted:
         retained_figures.add(functional_category_figure.resolve())
@@ -1501,6 +1588,7 @@ def main() -> None:
             "Task-balanced tool-use association with success by difficulty",
             difficulty_figure,
             dimension_order=DIFFICULTY_ORDER,
+            family_display_order=TOOL_FAMILY_DISPLAY_ORDER,
         ):
             retained_figures.add(difficulty_figure.resolve())
     elif difficulty_figure.exists():
@@ -1520,6 +1608,10 @@ def main() -> None:
             functional_difficulty_figure,
             dimension_order=DIFFICULTY_ORDER,
             family_display_column="behavior_family_display",
+            family_display_order=FUNCTIONAL_FAMILY_DISPLAY_ORDER,
+            transpose=True,
+            annotation_fontsize=11,
+            colorbar_label=None,
         ):
             retained_figures.add(functional_difficulty_figure.resolve())
     elif functional_difficulty_figure.exists():
@@ -1574,15 +1666,6 @@ def main() -> None:
             print(f"- {path}")
     else:
         print("- None")
-
-    print("\nFiles generated")
-    print(f"- {args.out / 'rq2_3_tool_use_overall.csv'}")
-    print(f"- {args.out / 'rq2_3_tool_use_by_category.csv'}")
-    print(f"- {args.out / 'rq2_3_tool_use_by_difficulty.csv'}")
-    print(f"- {args.out / 'rq2_3_functional_use_overall.csv'}")
-    print(f"- {args.out / 'rq2_3_functional_use_by_category.csv'}")
-    print(f"- {args.out / 'rq2_3_functional_use_by_difficulty.csv'}")
-    print(f"- {args.out / 'rq2_3_functional_wilcoxon.csv'}")
 
     print("\nMethodological confirmation")
     print(

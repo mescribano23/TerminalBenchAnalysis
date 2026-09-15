@@ -16,6 +16,7 @@ Outputs:
 - reports/tasks/category/task_domain_task_coverage.png
 - reports/tasks/category/pie_chart_task_domain_pass_fail_distribution.png
 - reports/tasks/category/effort_vars/heatmap_task_domain_effort_median.png
+- reports/tasks/difficulty/task_difficulty_success_effort_combined.png
 - data/processed_live/task_mining/category/model_scaffold/*.csv
 - data/processed_live/task_mining/difficulty/model_scaffold/*.csv
 - reports/tasks/category/model_scaffold/*.png
@@ -909,11 +910,14 @@ def plot_effort_heatmap(
             normalized[column] = (values - min_value) / (max_value - min_value)
 
     if dimension_column == "category":
-        plot_values = heatmap.T
-        plot_normalized = normalized.T
+        category_order = normalized.mean(axis=1, skipna=True).sort_values(ascending=False).index.tolist()
+        heatmap = heatmap.reindex(category_order)
+        normalized = normalized.reindex(category_order)
+        plot_values = heatmap
+        plot_normalized = normalized
         x_labels = plot_values.columns.tolist()
         y_labels = plot_values.index.tolist()
-        figsize = (figure_width(len(x_labels)), 5.8)
+        figsize = (14.0, 5.2)
     else:
         plot_values = heatmap
         plot_normalized = normalized
@@ -936,12 +940,13 @@ def plot_effort_heatmap(
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
 
     ax.set_xticks(range(len(x_labels)))
-    ax.set_xticklabels(x_labels, rotation=40 if dimension_column == "category" else 35, ha="right")
+    ax.set_xticklabels(x_labels, rotation=35, ha="right")
     ax.set_yticks(range(len(y_labels)))
     ax.set_yticklabels(y_labels)
-    ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:] if dimension_column == "category" else "Effort variable")
-    ax.set_ylabel("Effort variable" if dimension_column == "category" else dimension_label[:1].upper() + dimension_label[1:])
-    ax.set_title(f"Median trajectory effort by {dimension_label}, ordered by task coverage")
+    ax.set_xlabel("Effort variable")
+    ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
+    order_note = "overall normalized effort" if dimension_column == "category" else "task coverage"
+    ax.set_title(f"Median trajectory effort by {dimension_label}, ordered by {order_note}")
 
     for row_index in range(plot_values.shape[0]):
         for column_index in range(plot_values.shape[1]):
@@ -955,7 +960,7 @@ def plot_effort_heatmap(
                 format_cell_value(float(value)),
                 ha="center",
                 va="center",
-                fontsize=12,
+                fontsize=9.5 if dimension_column == "category" else 12,
                 color=text_color,
             )
 
@@ -965,6 +970,133 @@ def plot_effort_heatmap(
 
     path = effort_figures_dir / f"heatmap_{output_prefix}_effort_median.png"
     fig.savefig(path, dpi=180)
+    plt.close(fig)
+    return path
+
+
+def plot_task_difficulty_success_effort_combined(
+    difficulty_table: pd.DataFrame,
+    difficulty_effort_summary: pd.DataFrame,
+    path: Path,
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    difficulty_order = ordered_dimension_values(difficulty_table, "difficulty")
+    success = difficulty_table.set_index("difficulty").reindex(difficulty_order)
+    heatmap = (
+        difficulty_effort_summary.pivot(index="difficulty", columns="variable_display", values="median")
+        .reindex(index=difficulty_order, columns=list(EFFORT_DISPLAY_NAMES.values()))
+        .astype(float)
+    )
+
+    normalized = heatmap.copy()
+    for column in normalized.columns:
+        values = normalized[column]
+        min_value = values.min(skipna=True)
+        max_value = values.max(skipna=True)
+        if pd.isna(min_value) or pd.isna(max_value) or min_value == max_value:
+            normalized[column] = np.nan
+        else:
+            normalized[column] = (values - min_value) / (max_value - min_value)
+
+    fig, (success_ax, effort_ax) = plt.subplots(
+        1,
+        2,
+        figsize=(11.2, 3.35),
+        gridspec_kw={"width_ratios": [1.0, 2.35], "wspace": 0.28},
+    )
+
+    x_positions = np.arange(len(success))
+    bar_color = "#4C78A8"
+    success_ax.bar(x_positions, success["task_mean_pass_rate"], width=0.64, color=bar_color)
+    success_ax.set_xticks(x_positions)
+    success_ax.set_xticklabels([str(value).title() for value in success.index])
+    success_ax.set_ylim(0, 1)
+    success_ax.set_xlabel("Difficulty")
+    success_ax.set_ylabel("Task-balanced pass rate")
+    success_ax.grid(axis="y", alpha=0.25)
+    success_ax.spines["top"].set_visible(False)
+    success_ax.spines["right"].set_visible(False)
+    for x_position, value in zip(x_positions, success["task_mean_pass_rate"]):
+        if pd.isna(value):
+            continue
+        success_ax.text(
+            x_position,
+            min(float(value) + 0.035, 0.98),
+            f"{float(value) * 100:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=9.5,
+        )
+    success_ax.text(
+        -0.12,
+        1.04,
+        "(a)",
+        transform=success_ax.transAxes,
+        fontsize=11,
+        fontweight="bold",
+        va="bottom",
+    )
+
+    cmap = plt.get_cmap("RdYlGn_r").copy()
+    cmap.set_bad("#f2f2f2")
+    matrix = np.ma.masked_invalid(normalized.to_numpy(dtype=float))
+    image = effort_ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
+    effort_ax.set_xticks(range(len(heatmap.columns)))
+    effort_ax.set_xticklabels(
+        [
+            "Steps",
+            "Shell calls",
+            "Tool calls",
+            "Tokens",
+            "Duration (s)",
+            "Cost (USD)",
+        ],
+        rotation=35,
+        ha="right",
+    )
+    effort_ax.set_yticks(range(len(heatmap.index)))
+    effort_ax.set_yticklabels([str(value).title() for value in heatmap.index])
+    effort_ax.set_xlabel("Effort measure")
+    effort_ax.set_ylabel("Difficulty")
+    effort_ax.tick_params(axis="both", length=0)
+
+    for row_index in range(heatmap.shape[0]):
+        for column_index in range(heatmap.shape[1]):
+            value = heatmap.iat[row_index, column_index]
+            if pd.isna(value):
+                continue
+            text_color = "white" if normalized.iat[row_index, column_index] > 0.55 else "black"
+            effort_ax.text(
+                column_index,
+                row_index,
+                format_cell_value(float(value)),
+                ha="center",
+                va="center",
+                fontsize=8.8,
+                color=text_color,
+            )
+
+    for spine in effort_ax.spines.values():
+        spine.set_visible(False)
+    effort_ax.set_xticks(np.arange(-0.5, heatmap.shape[1], 1), minor=True)
+    effort_ax.set_yticks(np.arange(-0.5, heatmap.shape[0], 1), minor=True)
+    effort_ax.grid(which="minor", color="white", linewidth=1.2)
+    effort_ax.tick_params(which="minor", bottom=False, left=False)
+    effort_ax.text(
+        -0.08,
+        1.04,
+        "(b)",
+        transform=effort_ax.transAxes,
+        fontsize=11,
+        fontweight="bold",
+        va="bottom",
+    )
+
+    colorbar = fig.colorbar(image, ax=effort_ax, fraction=0.035, pad=0.02)
+    colorbar.set_label("Column-normalized median effort", fontsize=9)
+    colorbar.ax.tick_params(labelsize=8)
+    fig.savefig(path, dpi=240, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -1191,10 +1323,10 @@ def plot_category_difficulty_pass_rate_heatmap(
             ax.text(
                 column_index,
                 row_index,
-                f"{rate:.2f}\nn={count}",
+                f"{rate:.2f}",
                 ha="center",
                 va="center",
-                fontsize=9,
+                fontsize=12,
                 color=text_color,
             )
 
@@ -1307,23 +1439,32 @@ def plot_domain_figures(
     dimension_column: str = "category",
     dimension_label: str = "task category",
     output_prefix: str = "task_domain",
+    include_task_weighted_success: bool = True,
+    include_effort_heatmap: bool = True,
 ) -> list[Path]:
     figures_dir.mkdir(parents=True, exist_ok=True)
-    effort_heatmap = plot_effort_heatmap(
-        effort_summary,
-        domain_table,
-        figures_dir,
-        dimension_column,
-        dimension_label,
-        output_prefix,
-    )
-    return [
-        plot_task_weighted_success(domain_table, figures_dir, dimension_column, dimension_label, output_prefix),
+    paths = [
         plot_pass_fail_counts(domain_table, figures_dir, dimension_column, dimension_label, output_prefix),
         plot_pass_fail_pie_charts(domain_table, figures_dir, dimension_column, dimension_label, output_prefix),
         plot_task_coverage(domain_table, figures_dir, dimension_column, dimension_label, output_prefix),
-        *([effort_heatmap] if effort_heatmap is not None else []),
     ]
+    if include_task_weighted_success:
+        paths.insert(
+            0,
+            plot_task_weighted_success(domain_table, figures_dir, dimension_column, dimension_label, output_prefix),
+        )
+    if include_effort_heatmap:
+        effort_heatmap = plot_effort_heatmap(
+            effort_summary,
+            domain_table,
+            figures_dir,
+            dimension_column,
+            dimension_label,
+            output_prefix,
+        )
+        if effort_heatmap is not None:
+            paths.append(effort_heatmap)
+    return paths
 
 
 def main() -> None:
@@ -1406,6 +1547,13 @@ def main() -> None:
         "difficulty",
         "task difficulty",
         "task_difficulty",
+        include_task_weighted_success=False,
+        include_effort_heatmap=False,
+    )
+    difficulty_success_effort_combined_path = plot_task_difficulty_success_effort_combined(
+        difficulty_table,
+        difficulty_effort_summary,
+        difficulty_figures_dir / "task_difficulty_success_effort_combined.png",
     )
     difficulty_model_scaffold_figure_paths = write_model_scaffold_outputs(
         difficulty_out_dir,
@@ -1442,6 +1590,7 @@ def main() -> None:
     print(f"Wrote {len(figure_paths)} category figures to {category_figures_dir}")
     print(f"Wrote {len(model_scaffold_figure_paths)} category model/scaffold figures to {category_figures_dir / 'model_scaffold'}")
     print(f"Wrote {len(difficulty_figure_paths)} difficulty figures to {difficulty_figures_dir}")
+    print(f"Wrote difficulty success/effort figure to {difficulty_success_effort_combined_path}")
     print(
         f"Wrote {len(difficulty_model_scaffold_figure_paths)} difficulty model/scaffold figures "
         f"to {difficulty_figures_dir / 'model_scaffold'}"

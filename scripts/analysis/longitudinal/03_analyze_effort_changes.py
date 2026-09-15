@@ -331,7 +331,7 @@ def annotate_bar(ax: plt.Axes, y: float, change: float, early_label: str, late_l
 
 def plot(summary: pd.DataFrame, out: Path) -> None:
     thesis_style()
-    fig_height = max(3.8, 0.48 * len(summary) + 0.9)
+    fig_height = max(2.65, 0.28 * len(summary) + 0.55)
     fig, ax = plt.subplots(figsize=(6.6, fig_height))
 
     y_positions = np.arange(len(summary), dtype=float)
@@ -340,13 +340,13 @@ def plot(summary: pd.DataFrame, out: Path) -> None:
 
     max_abs = max(5.0, float(summary["relative_change_pct"].abs().max()))
     ax.set_xlim(-max_abs - 18.0, max_abs + 38.0)
-    ax.set_ylim(-0.55, len(summary) - 0.45)
+    ax.set_ylim(-0.42, len(summary) - 0.58)
     ax.axvline(0.0, color="#666666", linewidth=0.8, linestyle=(0, (2, 2)), zorder=0)
 
     for row in summary.itertuples(index=False):
         y = float(row.y)
         change = float(row.relative_change_pct)
-        ax.barh(y, change, height=0.56, color=str(row.color), edgecolor="none")
+        ax.barh(y, change, height=0.42, color=str(row.color), edgecolor="none")
         annotate_bar(ax, y, change, str(row.early_label), str(row.late_label))
 
     ax.set_title("Trajectory-effort changes from Terminal-Bench 2.0 to 2.1")

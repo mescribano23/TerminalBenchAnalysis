@@ -162,10 +162,11 @@ RQ1 uses two explicit aggregation levels. Pooled trajectory-level summaries
 remain trajectory-weighted descriptive views. Task-balanced RQ1 summaries use
 `effective_submission_id` to aggregate repeated trials to submission-task
 units before averaging over tasks, so duplicated retries do not reweight a
-task. RQ1.1 task pass/fail contrasts require at least three distinct effective
-submissions in each outcome for a task-metric pair; the retained six effort
-measures are tested with Wilcoxon and task-conditioned quadratic logistic
-specifications.
+task. Task-balanced contrasts use the shared minimum-support rule defined in
+`scripts/analysis/support_thresholds.py`. RQ1.1 task pass/fail contrasts require
+at least three distinct effective submissions in each outcome for a task-metric
+pair; the retained six effort measures are tested with Wilcoxon and
+task-conditioned quadratic logistic specifications.
 
 The paper-facing source of truth for RQ1 statistics is:
 

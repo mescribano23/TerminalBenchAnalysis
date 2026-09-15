@@ -10,7 +10,6 @@ Outputs:
 - data/processed_live/longitudinal/token_accounting/token_vs_logged_text_monthly.csv
 - data/processed_live/longitudinal/token_accounting/token_accounting_comparisons.csv
 - reports/longitudinal/token_accounting/token_vs_logged_text_over_time.png
-- reports/longitudinal/token_accounting/token_growth_by_model.png
 - reports/longitudinal/token_accounting/input_token_accumulation.png
 - reports/longitudinal/token_accounting/input_context_growth_distribution.png
 """
@@ -49,7 +48,6 @@ FIGURES_DIR = REPO_ROOT / "reports" / "longitudinal" / "token_accounting"
 COMPARISONS_CSV = OUT_DIR / "token_accounting_comparisons.csv"
 MONTHLY_TOKEN_TEXT_CSV = OUT_DIR / "token_vs_logged_text_monthly.csv"
 TOKEN_TEXT_OVER_TIME_FIG = FIGURES_DIR / "token_vs_logged_text_over_time.png"
-TOKEN_GROWTH_FIG = FIGURES_DIR / "token_growth_by_model.png"
 INPUT_ACCUMULATION_FIG = FIGURES_DIR / "input_token_accumulation.png"
 INPUT_CONTEXT_DISTRIBUTION_FIG = FIGURES_DIR / "input_context_growth_distribution.png"
 MIN_RELIABLE_MONTH_TRAJECTORIES = 100
@@ -807,53 +805,6 @@ def choose_accumulation_examples(df: pd.DataFrame, max_examples: int = 3) -> pd.
     return pd.DataFrame(selected[:max_examples]).reset_index(drop=True)
 
 
-def draw_token_growth_panel(ax: plt.Axes, comparisons: pd.DataFrame) -> None:
-    labels = [comparison_label(row) for row in comparisons.itertuples(index=False)]
-    y = np.arange(len(comparisons))
-    height = 0.17
-    offsets = {
-        "earlier_input": 0.27,
-        "later_input": 0.09,
-        "earlier_output": -0.09,
-        "later_output": -0.27,
-    }
-    styles = [
-        ("prompt_tokens_earlier", "Earlier input", "#4E79A7", y + offsets["earlier_input"], "//"),
-        ("prompt_tokens_later", "Later input", "#1F4E79", y + offsets["later_input"], None),
-        ("completion_tokens_earlier", "Earlier output", "#D9BE6C", y + offsets["earlier_output"], "//"),
-        ("completion_tokens_later", "Later output", "#9A7A24", y + offsets["later_output"], None),
-    ]
-    for column, label, color, ypos, hatch in styles:
-        ax.barh(
-            ypos,
-            comparisons[column].to_numpy(dtype=float) / 1000.0,
-            height=height,
-            color=color,
-            label=label,
-            hatch=hatch,
-            edgecolor="white" if hatch else color,
-            linewidth=0.4,
-        )
-
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels)
-    ax.invert_yaxis()
-    ax.set_xlabel("Task-balanced token count, thousands")
-    ax.set_title("Changes in token usage across longitudinal model comparisons")
-    ax.legend(loc="lower right", frameon=False, ncol=2)
-    ax.grid(axis="x", color="#E5E5E5", linewidth=0.8)
-
-
-def plot_token_growth(comparisons: pd.DataFrame, out: Path) -> None:
-    thesis_style()
-    fig, ax = plt.subplots(figsize=(8.2, max(4.9, 0.47 * len(comparisons) + 1.2)))
-    draw_token_growth_panel(ax, comparisons.copy())
-    fig.tight_layout()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, bbox_inches="tight", dpi=300)
-    plt.close(fig)
-
-
 def plot_input_accumulation(examples: pd.DataFrame, out: Path) -> None:
     thesis_style()
     fig, axes = plt.subplots(len(examples), 1, figsize=(7.4, 6.0), sharex=False)
@@ -993,7 +944,6 @@ def main() -> None:
         raise ValueError("Figure 2 example validation failed: per-call prompt sums do not match trajectory totals.")
 
     comparisons.to_csv(args.out_dir / COMPARISONS_CSV.name, index=False, na_rep="NA")
-    plot_token_growth(comparisons, args.figures_dir / TOKEN_GROWTH_FIG.name)
     plot_input_accumulation(examples, args.figures_dir / INPUT_ACCUMULATION_FIG.name)
     plot_input_context_distribution(
         all_context_eligible,
@@ -1026,7 +976,6 @@ def main() -> None:
     print(f"- {monthly_csv_path}")
     print(f"- {monthly_fig_path}")
     print(f"- {args.out_dir / COMPARISONS_CSV.name}")
-    print(f"- {args.figures_dir / TOKEN_GROWTH_FIG.name}")
     print(f"- {args.figures_dir / INPUT_ACCUMULATION_FIG.name}")
     print(f"- {args.figures_dir / INPUT_CONTEXT_DISTRIBUTION_FIG.name}")
 

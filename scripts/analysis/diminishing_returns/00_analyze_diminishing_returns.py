@@ -24,15 +24,15 @@ import pandas as pd
 from scipy.special import logsumexp
 from scipy.stats import norm, wilcoxon
 
-from scripts.benchmark_paths import find_repo_root
+from scripts.analysis.support_thresholds import MINIMUM_SUPPORT_PER_COMPARISON_CELL
 from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
+from scripts.benchmark_paths import find_repo_root
 
 
 REPO_ROOT = find_repo_root(Path(__file__).resolve().parent)
 INPUT_DEFAULT = REPO_ROOT / "data" / "processed_live" / "terminal_bench_2_0" / "trajectory_summary.csv"
 OUT_DEFAULT = REPO_ROOT / "data" / "processed_live" / "diminishing_returns"
 
-MIN_OUTCOME_SUBMISSIONS = 3
 METRICS = [
     "step_count",
     "shell_invocation_count",
@@ -153,8 +153,8 @@ def task_medians(df: pd.DataFrame, metric: str) -> tuple[pd.DataFrame, int, floa
         }
     ).reset_index()
     per_task = per_task[
-        (per_task["pass_submission_count"] >= MIN_OUTCOME_SUBMISSIONS)
-        & (per_task["fail_submission_count"] >= MIN_OUTCOME_SUBMISSIONS)
+        (per_task["pass_submission_count"] >= MINIMUM_SUPPORT_PER_COMPARISON_CELL)
+        & (per_task["fail_submission_count"] >= MINIMUM_SUPPORT_PER_COMPARISON_CELL)
     ].copy()
     per_task["difference"] = per_task["pass_median"] - per_task["fail_median"]
     per_task["within_task_direction"] = np.select(
