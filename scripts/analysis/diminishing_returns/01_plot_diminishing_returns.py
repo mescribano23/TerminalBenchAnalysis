@@ -20,6 +20,13 @@ import numpy as np
 import pandas as pd
 
 from scripts.benchmark_paths import find_repo_root
+from scripts.analysis.plot_style import (
+    FAIL_COLOR,
+    HEATMAP_DPI,
+    PASS_COLOR,
+    colorblind_cmap,
+    heatmap_text_color,
+)
 from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
 
 
@@ -375,22 +382,21 @@ def heatmap_frames(subset: pd.DataFrame, variable: str) -> tuple[list[str], list
 def plot_overall_series(ax: plt.Axes, subset: pd.DataFrame) -> None:
     x = subset["bin_order"].to_numpy(dtype=float)
     y = subset["success_rate"].to_numpy(dtype=float)
-    ax.plot(x, y, marker="o", linewidth=1.8, color="#1f77b4")
+    ax.plot(x, y, marker="o", linewidth=1.8, color=PASS_COLOR)
 
 
 def plot_grouped_heatmap(
     subset: pd.DataFrame,
     variable: str,
     group_label: str,
-    annotation_fontsize: float = 6.5,
+    annotation_fontsize: float = 8.0,
 ) -> plt.Figure:
     labels, group_order, heatmap, counts = heatmap_frames(subset, variable)
     row_count = max(1, len(group_order))
     figure_height = min(14.0, max(4.8, 1.6 + row_count * 0.34))
     fig, ax = plt.subplots(figsize=(10.5, figure_height))
 
-    cmap = plt.get_cmap("RdYlGn").copy()
-    cmap.set_bad("#f2f2f2")
+    cmap = colorblind_cmap()
     matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
 
@@ -417,7 +423,7 @@ def plot_grouped_heatmap(
                 n = counts.loc[group_value, label]
                 if pd.isna(rate) or n == 0:
                     continue
-                text_color = "white" if rate < 0.45 else "black"
+                text_color = heatmap_text_color(float(rate), cmap, 0, 1)
                 ax.text(
                     column_index,
                     row_index,
@@ -463,7 +469,7 @@ def plot_effort_bins(
 
         heatmap_suffix = "_heatmap" if group_label is not None else ""
         path = output_dir / f"diminishing_returns_{variable}{heatmap_suffix}.png"
-        fig.savefig(path, dpi=180)
+        fig.savefig(path, dpi=HEATMAP_DPI if group_label is not None else 180)
         plt.close(fig)
         paths.append(path)
 
@@ -479,7 +485,7 @@ def plot_pooled_vs_task_balanced(task_balanced: pd.DataFrame, figures_dir: Path)
 
     fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.0), sharey=True)
     axes = axes.ravel()
-    colors = {"pooled": "#2b6cb0", "task_balanced": "#b7532c"}
+    colors = {"pooled": PASS_COLOR, "task_balanced": FAIL_COLOR}
 
     for ax, variable in zip(axes, TASK_BALANCED_FIGURE_VARIABLES):
         subset = plot_data[plot_data["metric"].eq(variable)].sort_values("bin_order")
@@ -561,8 +567,7 @@ def plot_model_provider_heatmaps(
             gridspec_kw={"height_ratios": row_counts},
         )
         axes = np.atleast_1d(axes)
-        cmap = plt.get_cmap("RdYlGn").copy()
-        cmap.set_bad("#f2f2f2")
+        cmap = colorblind_cmap()
         image = None
 
         for ax, (provider, heatmap, counts, group_order), row_count in zip(axes, panels, row_counts):
@@ -583,14 +588,14 @@ def plot_model_provider_heatmaps(
                     n = counts.loc[group_value, label]
                     if pd.isna(rate) or n == 0:
                         continue
-                    text_color = "white" if rate < 0.45 else "black"
+                    text_color = heatmap_text_color(float(rate), cmap, 0, 1)
                     ax.text(
                         column_index,
                         row_index,
                         f"{rate:.0%}\nn={n}",
                         ha="center",
                         va="center",
-                        fontsize=6.3,
+                        fontsize=7.5,
                         color=text_color,
                     )
 
@@ -611,7 +616,7 @@ def plot_model_provider_heatmaps(
             colorbar.set_label("Success rate")
 
         path = output_dir / f"diminishing_returns_{variable}_heatmap.png"
-        fig.savefig(path, dpi=180)
+        fig.savefig(path, dpi=HEATMAP_DPI)
         plt.close(fig)
         paths.append(path)
 
@@ -637,7 +642,7 @@ def plot_provider_heatmaps(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
         fig = plot_grouped_heatmap(subset, variable, "provider")
         fig.tight_layout()
         path = output_dir / f"diminishing_returns_{variable}_heatmap.png"
-        fig.savefig(path, dpi=180)
+        fig.savefig(path, dpi=HEATMAP_DPI)
         plt.close(fig)
         paths.append(path)
 
@@ -676,7 +681,7 @@ def plot_effort_performance_box_plots(df: pd.DataFrame, figures_dir: Path) -> li
             continue
 
         fig, ax = plt.subplots(figsize=(6.8, 5.4))
-        for outcome_value, color, position in [(0, "#c97b63", 1), (1, "#6aa57a", 2)]:
+        for outcome_value, color, position in [(0, FAIL_COLOR, 1), (1, PASS_COLOR, 2)]:
             values = grouped_values[outcome_value]
             if len(values) == 0:
                 continue
@@ -746,8 +751,8 @@ def plot_effort_outcome_stacked_bars(bins: pd.DataFrame, figures_dir: Path) -> l
         fail_count = total - pass_count
 
         fig, ax = plt.subplots(figsize=(8.5, 4.8))
-        ax.bar(x, pass_count, width=0.74, color="#6aa57a", alpha=0.82, label="Passed trajectories")
-        ax.bar(x, fail_count, width=0.74, bottom=pass_count, color="#c97b63", alpha=0.82, label="Failed trajectories")
+        ax.bar(x, pass_count, width=0.74, color=PASS_COLOR, alpha=0.82, label="Passed trajectories")
+        ax.bar(x, fail_count, width=0.74, bottom=pass_count, color=FAIL_COLOR, alpha=0.82, label="Failed trajectories")
         ax.set_xticks(x)
         ax.set_xticklabels(
             [f"{row.effort_bin}\n(n={int(row.n):,})" for row in subset.itertuples(index=False)],

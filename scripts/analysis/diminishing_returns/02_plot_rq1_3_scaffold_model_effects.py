@@ -36,6 +36,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.benchmark_paths import find_repo_root
+from scripts.analysis.plot_style import OTHER_COLOR, PRINT_DPI, colorblind_cycle
 from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
 
 
@@ -164,44 +165,9 @@ SCAFFOLD_ORDER = [
     "judy",
 ]
 
-SCAFFOLD_COLORS = {
-    "terminus-2": "#4E79A7",
-    "mini-swe-agent": "#F28E2B",
-    "openhands": "#59A14F",
-    "claude-code": "#B07AA1",
-    "codex": "#E15759",
-    "gemini-cli": "#76B7B2",
-    "terminus-3-3": "#EDC948",
-    "terminus-kira-env-bootstrap": "#9C755F",
-    "nexau": "#BAB0AC",
-    "deepagent-harbor": "#8CD17D",
-    "hookele": "#FF9DA7",
-    "judy": "#A0CBE8",
-}
-
-MODEL_COLORS = [
-    "#4E79A7",
-    "#F28E2B",
-    "#59A14F",
-    "#B07AA1",
-    "#E15759",
-    "#76B7B2",
-    "#EDC948",
-    "#9C755F",
-    "#BAB0AC",
-    "#8CD17D",
-    "#FF9DA7",
-    "#A0CBE8",
-    "#D37295",
-    "#86BCB6",
-    "#B6992D",
-    "#499894",
-    "#E17C05",
-    "#79706E",
-    "#D4A6C8",
-    "#B07AA1",
-]
-OTHER_MODEL_COLOR = "#C7C7C7"
+SCAFFOLD_COLORS = dict(zip(SCAFFOLD_ORDER, colorblind_cycle(len(SCAFFOLD_ORDER))))
+MODEL_COLORS = colorblind_cycle(24)
+OTHER_MODEL_COLOR = OTHER_COLOR
 
 
 def parse_args() -> argparse.Namespace:
@@ -808,7 +774,7 @@ def plot_pareto(
     )
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    fig.savefig(out, dpi=PRINT_DPI, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -904,7 +870,7 @@ def plot_pareto_by_model(
     )
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    fig.savefig(out, dpi=PRINT_DPI, bbox_inches="tight")
     plt.close(fig)
 
 

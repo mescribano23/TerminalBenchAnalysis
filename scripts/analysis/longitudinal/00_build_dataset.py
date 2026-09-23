@@ -269,9 +269,41 @@ def same_timestamp(candidates: pd.DataFrame) -> bool:
 
 def pick_submission_match(
     row: pd.Series,
+    by_url: dict[str, pd.DataFrame],
     by_full: dict[Any, pd.DataFrame],
     by_no_version: dict[Any, pd.DataFrame],
 ) -> dict[str, Any]:
+    source_url = str(row.get("source_submission_url") or "").strip()
+    candidates = by_url.get(source_url) if source_url else None
+    match_method = "source_submission_url"
+    if candidates is not None and not candidates.empty:
+        status = "matched" if len(candidates) == 1 else "ambiguous_same_submission_url"
+        chosen = candidates.iloc[0]
+        return {
+            "submission_id": chosen.get("submission_id", ""),
+            "submission_url": chosen.get("submission_url", ""),
+            "submission_scaffold_version": chosen.get("submission_scaffold_version", ""),
+            "submission_provider": chosen.get("submission_provider", ""),
+            "submission_timestamp": chosen.get("submission_timestamp", pd.NaT),
+            "submission_date": chosen.get("submission_date", ""),
+            "leaderboard_accuracy_submission": chosen.get("leaderboard_accuracy_submission", np.nan),
+            "leaderboard_stderr_submission": chosen.get("leaderboard_stderr_submission", np.nan),
+            "leaderboard_agent_display_name": chosen.get("leaderboard_agent_display_name", ""),
+            "leaderboard_model_display": chosen.get("leaderboard_model_display", ""),
+            "leaderboard_agent_organization": chosen.get("leaderboard_agent_organization", ""),
+            "leaderboard_model_organization_submission": chosen.get(
+                "leaderboard_model_organization_submission", ""
+            ),
+            "submission_official_task_count": chosen.get("submission_official_task_count", np.nan),
+            "submission_official_trial_count": chosen.get("submission_official_trial_count", np.nan),
+            "submission_official_success_count": chosen.get("submission_official_success_count", np.nan),
+            "submission_official_pass_rate": chosen.get("submission_official_pass_rate", np.nan),
+            "submission_match_status": status,
+            "submission_match_method": match_method,
+            "submission_candidate_count": int(len(candidates)),
+            "submission_candidate_ids": "|".join(candidates["submission_id"].astype(str).tolist()),
+        }
+
     full_key = submission_key(row.get("scaffold"), row.get("agent_version"), row.get("model_dir"))
     no_version_key = submission_key_without_version(row.get("scaffold"), row.get("model_dir"))
     candidates = by_full.get(full_key)
@@ -322,9 +354,10 @@ def pick_submission_match(
 
 
 def attach_submission_metadata(trajectories: pd.DataFrame, submissions: pd.DataFrame) -> pd.DataFrame:
+    by_url = candidate_map(submissions, "submission_url")
     by_full = candidate_map(submissions, "submission_key_full")
     by_no_version = candidate_map(submissions, "submission_key_no_version")
-    matches = [pick_submission_match(row, by_full, by_no_version) for _, row in trajectories.iterrows()]
+    matches = [pick_submission_match(row, by_url, by_full, by_no_version) for _, row in trajectories.iterrows()]
     matched = pd.concat([trajectories.reset_index(drop=True), pd.DataFrame(matches)], axis=1)
     matched["submission_timestamp"] = pd.to_datetime(
         matched["submission_timestamp"], errors="coerce", utc=True
@@ -347,8 +380,19 @@ def read_task_metadata(path: Path) -> pd.DataFrame:
         "terminal_bench_task_name",
         "difficulty",
         "category",
+        "subcategory",
         "tags",
         "keywords",
+        "instruction_sha256",
+        "instruction_normalized_sha256",
+        "task_toml_sha256",
+        "readme_sha256",
+        "package_manifest_sha256",
+        "instruction_chars",
+        "instruction_normalized_chars",
+        "package_file_count",
+        "package_total_listed_bytes",
+        "hf_revision",
         "expert_time_estimate_min",
         "junior_time_estimate_min",
         "agent_timeout_sec",
@@ -360,6 +404,10 @@ def read_task_metadata(path: Path) -> pd.DataFrame:
         "storage_mb",
         "gpus",
         "description",
+        "difficulty_explanation",
+        "solution_explanation",
+        "verification_explanation",
+        "relevant_experience",
     ]
     keep = [column for column in keep if column in tasks.columns]
     tasks = tasks[keep].drop_duplicates("task_name").copy()

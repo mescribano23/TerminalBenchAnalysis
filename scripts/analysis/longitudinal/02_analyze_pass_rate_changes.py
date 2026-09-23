@@ -17,6 +17,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
+from scripts.analysis.plot_style import FAIL_COLOR, PASS_COLOR
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -29,9 +30,9 @@ FIGURES_DIR = REPO_ROOT / "reports" / "longitudinal"
 VERSION_ORDER = ["2.0", "2.1"]
 DIFFICULTY_ORDER = ["easy", "medium", "hard"]
 DIFFICULTY_COLORS = {
-    "easy": "#2f6f73",
-    "medium": "#9a6a2f",
-    "hard": "#9b4a4a",
+    "easy": PASS_COLOR,
+    "medium": "#E69F00",
+    "hard": FAIL_COLOR,
 }
 DIFFICULTY_MARKERS = {
     "easy": "o",
@@ -300,7 +301,7 @@ def plot_category(summary: pd.DataFrame, path: Path, max_categories: int) -> Non
     )
     height = max(3.2, 0.32 * len(plot_df) + 0.8)
     fig, ax = plt.subplots(figsize=(6.2, height))
-    colors = np.where(plot_df["pass_rate_change_pp"] >= 0, "#54A24B", "#E45756")
+    colors = np.where(plot_df["pass_rate_change_pp"] >= 0, PASS_COLOR, FAIL_COLOR)
     ax.barh(plot_df["category"], plot_df["pass_rate_change_pp"], color=colors)
     ax.axvline(0, color="#555555", linewidth=0.8)
     ax.set_xlabel("TB2.1 - TB2.0 pass-rate change (percentage points)")

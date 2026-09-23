@@ -34,6 +34,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, PASS_COLOR
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -331,9 +332,9 @@ def plot_token_text_over_time(monthly: pd.DataFrame, out: Path) -> None:
     ax_chars = ax_tokens.twinx()
 
     token_series = [
-        ("median_prompt_tokens", "Input tokens", "#1F4E79"),
-        ("median_completion_tokens", "Output tokens", "#9A7A24"),
-        ("median_total_tokens", "Total tokens", "#7A4D7E"),
+        ("median_prompt_tokens", "Input tokens", COLORBLIND_PALETTE[0]),
+        ("median_completion_tokens", "Output tokens", COLORBLIND_PALETTE[4]),
+        ("median_total_tokens", "Total tokens", COLORBLIND_PALETTE[3]),
     ]
     handles = []
     labels = []
@@ -356,7 +357,7 @@ def plot_token_text_over_time(monthly: pd.DataFrame, out: Path) -> None:
         marker="o",
         markersize=3.5,
         linewidth=1.7,
-        color="#4F7D5A",
+        color=COLORBLIND_PALETTE[2],
         label="Logged characters",
     )
     handles.extend(char_line)
@@ -813,8 +814,8 @@ def plot_input_accumulation(examples: pd.DataFrame, out: Path) -> None:
     for ax, row in zip(axes, examples.itertuples(index=False)):
         calls = list(row.prompt_calls)
         x = np.arange(1, len(calls) + 1)
-        ax.plot(x, np.array(calls) / 1000.0, marker="o", linewidth=1.8, color="#4E79A7")
-        ax.fill_between(x, np.array(calls) / 1000.0, color="#4E79A7", alpha=0.12)
+        ax.plot(x, np.array(calls) / 1000.0, marker="o", linewidth=1.8, color=PASS_COLOR)
+        ax.fill_between(x, np.array(calls) / 1000.0, color=PASS_COLOR, alpha=0.12)
         title = f"{scaffold_label(row.scaffold)} / {model_label(row.model_dir)} / {row.task_name}"
         ax.set_title(title, loc="left")
         ax.set_ylabel("Input tokens\n(thousands)")
@@ -875,10 +876,10 @@ def plot_input_context_distribution(eligible: pd.DataFrame, out: Path) -> None:
         tick_labels=labels,
         showfliers=False,
         patch_artist=True,
-        boxprops={"facecolor": "#D7E3EF", "edgecolor": "#4E79A7"},
-        medianprops={"color": "#1F4E79", "linewidth": 1.5},
-        whiskerprops={"color": "#4E79A7"},
-        capprops={"color": "#4E79A7"},
+        boxprops={"facecolor": "#D7E3EF", "edgecolor": PASS_COLOR},
+        medianprops={"color": PASS_COLOR, "linewidth": 1.5},
+        whiskerprops={"color": PASS_COLOR},
+        capprops={"color": PASS_COLOR},
     )
     ax_dist.axvline(1.0, color="#777777", linestyle="--", linewidth=1.0)
     ax_dist.set_xlabel("Final-call input / first-call input")

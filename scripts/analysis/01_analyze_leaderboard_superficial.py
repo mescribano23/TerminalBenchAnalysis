@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from scripts.analysis.plot_style import FAIL_COLOR, PASS_COLOR
 from scripts.benchmark_paths import SUPPORTED_BENCHMARKS, paths_for_benchmark
 
 
@@ -233,8 +234,8 @@ def plot_violin_box(
 
     parts = ax.violinplot(values, vert=True, showmeans=False, showmedians=False, showextrema=False)
     for body in parts["bodies"]:
-        body.set_facecolor("#7aa6c2")
-        body.set_edgecolor("#3d5f73")
+        body.set_facecolor(PASS_COLOR)
+        body.set_edgecolor(PASS_COLOR)
         body.set_alpha(0.45)
 
     ax.boxplot(
@@ -244,7 +245,7 @@ def plot_violin_box(
         patch_artist=True,
         showfliers=False,
         boxprops={"facecolor": "#ffffff", "edgecolor": "#243b4a", "linewidth": 1.1},
-        medianprops={"color": "#c44e52", "linewidth": 1.6},
+        medianprops={"color": FAIL_COLOR, "linewidth": 1.6},
         whiskerprops={"color": "#243b4a", "linewidth": 1.0},
         capprops={"color": "#243b4a", "linewidth": 1.0},
     )

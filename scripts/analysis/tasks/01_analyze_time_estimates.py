@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import wilcoxon
 
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, NEUTRAL_COLOR
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -62,8 +63,8 @@ TIME_ESTIMATE_LABELS = {
     "junior_time_estimate_min": "Junior estimate",
 }
 TIME_ESTIMATE_COLORS = {
-    "expert_time_estimate_min": "#4f8f63",
-    "junior_time_estimate_min": "#73a6c8",
+    "expert_time_estimate_min": COLORBLIND_PALETTE[2],
+    "junior_time_estimate_min": COLORBLIND_PALETTE[0],
 }
 TASK_DURATION_OUTPUT_COLUMNS = [
     "task_name",
@@ -85,8 +86,8 @@ TASK_DURATION_OUTPUT_COLUMNS = [
 ]
 OBSERVED_MEDIAN_DURATION_LABEL = "Observed median duration"
 OBSERVED_MEAN_DURATION_LABEL = "Observed mean duration (sensitivity)"
-OBSERVED_MEDIAN_DURATION_COLOR = "#c65d4a"
-OBSERVED_MEAN_DURATION_COLOR = "#8f8f8f"
+OBSERVED_MEDIAN_DURATION_COLOR = COLORBLIND_PALETTE[4]
+OBSERVED_MEAN_DURATION_COLOR = NEUTRAL_COLOR
 PERCENTILES = {
     "p10_min": 0.10,
     "p25_min": 0.25,

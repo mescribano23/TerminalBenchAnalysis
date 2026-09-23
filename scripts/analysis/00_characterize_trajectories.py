@@ -31,6 +31,7 @@ DATA_DIR = REPO_ROOT / "data"
 ROOT_DEFAULT = DATA_DIR / "trajectories" / "terminal_bench_2_0"
 OUT_DEFAULT = DATA_DIR / "processed"
 LEADERBOARD_DEFAULT = DATA_DIR / "raw" / "terminal_bench_2_0" / "leaderboard_submissions.json"
+LEADERBOARD_TRIALS_DEFAULT = DATA_DIR / "raw" / "terminal_bench_2_0" / "leaderboard_trials.json"
 INDEX_DEFAULT = DATA_DIR / "indexes" / "terminal_bench_2_0" / "trajectory_trials.json"
 
 BASH_FENCE_RE = re.compile(r"```(?:bash|sh|shell)?\s*\n(.*?)```", re.IGNORECASE | re.DOTALL)
@@ -97,6 +98,33 @@ def load_trajectory_index(path: Path, root: Path) -> dict[str, dict[str, Any]]:
             by_rel[rel_key] = entry
 
     return by_rel
+
+
+def load_leaderboard_trial_rows(path: Path) -> dict[str, str]:
+    """Return Harbor trial id -> leaderboard row id mappings when available."""
+    if not path.exists():
+        return {}
+    entries = load_json(path)
+    if not isinstance(entries, list):
+        return {}
+
+    by_trial_id: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        trial_id = str(entry.get("id") or "").strip()
+        row_id = str(entry.get("harbor_leaderboard_row_id") or "").strip()
+        if trial_id and row_id:
+            by_trial_id[trial_id] = row_id
+    return by_trial_id
+
+
+def harbor_row_id_from_url(url: Any) -> str:
+    text = str(url or "").strip().rstrip("/")
+    marker = "/rows/"
+    if marker not in text:
+        return ""
+    return text.rsplit(marker, 1)[-1]
 
 
 def reward_outcome(reward: Any) -> str:
@@ -505,6 +533,7 @@ def main() -> None:
     ap.add_argument("--root", type=Path, default=None)
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--leaderboard", type=Path, default=None)
+    ap.add_argument("--leaderboard-trials", type=Path, default=None)
     ap.add_argument("--trajectory-index", type=Path, default=None)
     args = ap.parse_args()
 
@@ -520,6 +549,10 @@ def main() -> None:
         args.leaderboard
         or (benchmark_paths.leaderboard_submissions if benchmark_paths else LEADERBOARD_DEFAULT)
     )
+    leaderboard_trials_path = (
+        args.leaderboard_trials
+        or (benchmark_paths.leaderboard_trials if benchmark_paths else LEADERBOARD_TRIALS_DEFAULT)
+    )
     trajectory_index = (
         args.trajectory_index
         or (benchmark_paths.trajectory_index if benchmark_paths else INDEX_DEFAULT)
@@ -529,7 +562,9 @@ def main() -> None:
 
     paths = sorted(root.rglob("*.json"))
     index_by_rel = load_trajectory_index(trajectory_index, root)
+    leaderboard_row_by_trial_id = load_leaderboard_trial_rows(leaderboard_trials_path)
     leaderboard_by_checksum: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    leaderboard_by_row_id: dict[str, dict[str, Any]] = {}
     leaderboard_task_names: dict[str, str] = {}
     leaderboard_submissions: list[dict[str, Any]] = []
     if leaderboard_path.exists():
@@ -551,6 +586,18 @@ def main() -> None:
                         **submission_accuracy_summary(entry, rank),
                     }
                     leaderboard_submissions.append(submission_summary)
+                    row_id = harbor_row_id_from_url(submission_summary.get("submission_url", ""))
+                    if row_id:
+                        leaderboard_by_row_id[row_id] = {
+                            "scaffold": entry.get("scaffold", ""),
+                            "scaffold_version": entry.get("scaffold_version", ""),
+                            "provider": entry.get("provider", ""),
+                            "leaderboard_model": entry.get("model", ""),
+                            "leaderboard_date": entry.get("leaderboard_date", ""),
+                            "submission_url": entry.get("submission_url", ""),
+                            "leaderboard_accuracy": submission_summary["leaderboard_accuracy"],
+                            "leaderboard_model_organization": submission_summary["leaderboard_model_organization"],
+                        }
                     for task in entry.get("tasks", []):
                         if not isinstance(task, dict):
                             continue
@@ -602,6 +649,7 @@ def main() -> None:
         filename = path.stem
         file_task_id = filename.split("_", 1)[0] if "_" in filename else filename
         file_run_id = filename.split("_", 1)[1] if "_" in filename else ""
+        index_meta = index_by_rel.get(rel_key, {})
         agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
         model_name = textish(agent.get("model_name") or model_dir, 300)
         version = textish(agent.get("version") or "", 100)
@@ -623,8 +671,15 @@ def main() -> None:
             ]
             if exactish:
                 leaderboard_matches = exactish
-        leaderboard_meta = leaderboard_matches[0] if leaderboard_matches else {}
-        index_meta = index_by_rel.get(rel_key, {})
+        exact_row_id = (
+            leaderboard_row_by_trial_id.get(file_run_id)
+            or leaderboard_row_by_trial_id.get(str(index_meta.get("trialId") or ""))
+        )
+        leaderboard_meta = (
+            leaderboard_by_row_id.get(exact_row_id, {})
+            if exact_row_id
+            else {}
+        ) or (leaderboard_matches[0] if leaderboard_matches else {})
         reward = index_meta.get("reward", "")
         outcome_from_reward = reward_outcome(reward)
         outcome = outcome_from_reward or outcome_label(data)

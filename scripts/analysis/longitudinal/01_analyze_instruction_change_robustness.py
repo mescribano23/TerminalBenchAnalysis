@@ -23,6 +23,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
+from scripts.analysis.plot_style import PASS_COLOR
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -31,7 +32,10 @@ REPO_ROOT = find_repo_root(SCRIPT_DIR)
 LONGITUDINAL_DIR = REPO_ROOT / "data" / "processed_live" / "longitudinal"
 TRAJECTORY_CSV = LONGITUDINAL_DIR / "trajectory_longitudinal.csv"
 AUDIT_CSV = LONGITUDINAL_DIR / "task_version_audit.csv"
-FIGURE_PATH = REPO_ROOT / "reports" / "longitudinal" / "pass_rate_instruction_change_robustness.png"
+TB3_TB4_CHANGES_CSV = LONGITUDINAL_DIR / "task_composition" / "adjacent_version_task_changes.csv"
+FOUR_VERSION_FIGURE_PATH = (
+    REPO_ROOT / "reports" / "longitudinal" / "pass_rate_instruction_change_robustness_all_versions.png"
+)
 VERSION_ORDER = ["2.0", "2.1"]
 
 EXPECTED_COUNTS = {
@@ -40,15 +44,18 @@ EXPECTED_COUNTS = {
 }
 
 TB2_0_COLOR = "#6F6F6F"
-TB2_1_COLOR = "#2F6F73"
+TB2_1_COLOR = PASS_COLOR
+TB3_0_COLOR = "#D55E00"
+TB4_0_COLOR = "#009E73"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trajectory-csv", type=Path, default=TRAJECTORY_CSV)
     parser.add_argument("--audit-csv", type=Path, default=AUDIT_CSV)
+    parser.add_argument("--tb3-tb4-changes-csv", type=Path, default=TB3_TB4_CHANGES_CSV)
     parser.add_argument("--task-changes-csv", type=Path, default=None)
-    parser.add_argument("--out", type=Path, default=FIGURE_PATH)
+    parser.add_argument("--four-version-out", type=Path, default=FOUR_VERSION_FIGURE_PATH)
     return parser.parse_args()
 
 
@@ -313,48 +320,120 @@ def annotate_bar(ax: plt.Axes, bar: plt.Rectangle, value: float) -> None:
     )
 
 
-def plot(summary: pd.DataFrame, out: Path) -> None:
-    thesis_style()
-    fig, ax = plt.subplots(figsize=(6.3, 3.7))
+def subset_summary(
+    task_changes: pd.DataFrame,
+    old_col: str,
+    new_col: str,
+    status_col: str,
+    unchanged_values: set[str],
+    changed_values: set[str],
+) -> pd.DataFrame:
+    rows = []
+    subsets = [
+        ("all_tasks", "All tasks", task_changes),
+        (
+            "instruction_unchanged",
+            "Instruction-unchanged",
+            task_changes[task_changes[status_col].isin(unchanged_values)],
+        ),
+        (
+            "instruction_changed",
+            "Instruction-changed",
+            task_changes[task_changes[status_col].isin(changed_values)],
+        ),
+    ]
+    for task_set, label, subset in subsets:
+        if subset.empty:
+            raise ValueError(f"Task subset {task_set} is empty for {status_col}.")
+        rows.append(
+            {
+                "task_set": task_set,
+                "label": label,
+                "n_tasks": int(subset["task_name"].nunique()),
+                "old_pass_rate": percent(float(subset[old_col].mean())),
+                "new_pass_rate": percent(float(subset[new_col].mean())),
+            }
+        )
+    return pd.DataFrame(rows)
 
+
+def load_tb3_tb4_change_summary(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing TB3/TB4 adjacent-change CSV: {path}. "
+            "Run `python -m scripts.analysis.longitudinal.07_analyze_task_composition_over_versions` first."
+        )
+    changes = pd.read_csv(path, low_memory=False)
+    required = {
+        "version_pair",
+        "task_name",
+        "task_weighted_pass_rate_old",
+        "task_weighted_pass_rate_new",
+        "tb3_tb4_change_classification_new",
+    }
+    missing = sorted(required.difference(changes.columns))
+    if missing:
+        raise ValueError(f"{path} is missing required columns: {', '.join(missing)}")
+    changes = changes[changes["version_pair"].astype(str).eq("3.0->4.0")].copy()
+    if changes.empty:
+        raise ValueError(f"{path} contains no 3.0->4.0 adjacent-change rows.")
+    return subset_summary(
+        changes,
+        old_col="task_weighted_pass_rate_old",
+        new_col="task_weighted_pass_rate_new",
+        status_col="tb3_tb4_change_classification_new",
+        unchanged_values={"Only release boilerplate changed", "Package identical"},
+        changed_values={"Instruction changed"},
+    )
+
+
+def plot_pair_panel(
+    ax: plt.Axes,
+    summary: pd.DataFrame,
+    title: str,
+    old_label: str,
+    new_label: str,
+    old_color: str,
+    new_color: str,
+) -> None:
     plot_df = summary.copy()
     plot_df["plot_label"] = [
-        f"All tasks\n(n={int(row.n_tasks)})"
+        f"All\n(n={int(row.n_tasks)})"
         if row.task_set == "all_tasks"
-        else f"{row.label}\n(n={int(row.n_tasks)})"
+        else f"{row.label.replace('Instruction-', '')}\n(n={int(row.n_tasks)})"
         for row in plot_df.itertuples(index=False)
     ]
-    x = np.arange(plot_df.shape[0])
-    width = 0.28
-    tb2_0_values = plot_df["tb2_0_pass_rate"].astype(float).to_numpy()
-    tb2_1_values = plot_df["tb2_1_pass_rate"].astype(float).to_numpy()
-
-    bars_20 = ax.bar(
-        x - width / 2,
-        tb2_0_values,
-        width,
-        label="TB2.0",
-        color=TB2_0_COLOR,
+    bar_width = 0.18
+    gap = 0.0
+    group_spacing = 3.2 * bar_width
+    x = np.arange(plot_df.shape[0]) * group_spacing
+    old_values = plot_df["old_pass_rate"].astype(float).to_numpy()
+    new_values = plot_df["new_pass_rate"].astype(float).to_numpy()
+    offset = (bar_width + gap) / 2
+    bars_old = ax.bar(
+        x - offset,
+        old_values,
+        bar_width,
+        label=old_label,
+        color=old_color,
         edgecolor="none",
     )
-    bars_21 = ax.bar(
-        x + width / 2,
-        tb2_1_values,
-        width,
-        label="TB2.1",
-        color=TB2_1_COLOR,
+    bars_new = ax.bar(
+        x + offset,
+        new_values,
+        bar_width,
+        label=new_label,
+        color=new_color,
         edgecolor="none",
     )
-
-    for bar, value in zip(bars_20, tb2_0_values):
+    for bar, value in zip(bars_old, old_values):
         annotate_bar(ax, bar, value)
-    for bar, value in zip(bars_21, tb2_1_values):
+    for bar, value in zip(bars_new, new_values):
         annotate_bar(ax, bar, value)
-
-    ax.set_title("Task-Weighted Pass Rates by Instruction-Change Subset")
-    ax.set_ylabel("Task-weighted pass rate (%)")
+    ax.set_title(title)
     ax.set_xticks(x)
     ax.set_xticklabels(plot_df["plot_label"])
+    ax.set_xlim(x[0] - 2 * bar_width, x[-1] + 2 * bar_width)
     ax.set_ylim(0, 100)
     ax.yaxis.set_major_locator(mticker.MultipleLocator(20))
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=100, decimals=0))
@@ -362,8 +441,40 @@ def plot(summary: pd.DataFrame, out: Path) -> None:
     ax.set_axisbelow(True)
     ax.legend(frameon=False, ncol=2, loc="upper left", bbox_to_anchor=(0.0, 1.0), handlelength=1.2)
 
+
+def plot_four_version_robustness(
+    tb2_summary: pd.DataFrame,
+    tb3_tb4_summary: pd.DataFrame,
+    out: Path,
+) -> None:
+    thesis_style()
+    fig, axes = plt.subplots(1, 2, figsize=(8.8, 3.45), sharey=True)
+
+    tb2_panel = tb2_summary.rename(
+        columns={"tb2_0_pass_rate": "old_pass_rate", "tb2_1_pass_rate": "new_pass_rate"}
+    )
+    plot_pair_panel(
+        axes[0],
+        tb2_panel,
+        "TB2.0 to TB2.1",
+        "TB2.0",
+        "TB2.1",
+        TB2_0_COLOR,
+        TB2_1_COLOR,
+    )
+    plot_pair_panel(
+        axes[1],
+        tb3_tb4_summary,
+        "TB3.0 to TB4.0",
+        "TB3.0",
+        "TB4.0",
+        TB3_0_COLOR,
+        TB4_0_COLOR,
+    )
+    axes[0].set_ylabel("Task-weighted pass rate (%)")
+    fig.suptitle("Task-Weighted Pass Rates by Instruction-Change Subset", y=1.02)
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
+    fig.tight_layout(w_pad=0.8)
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
@@ -400,6 +511,7 @@ def print_summary(
     bins: pd.DataFrame,
     gains: pd.DataFrame,
     args: argparse.Namespace,
+    four_version_out: Path | None = None,
 ) -> None:
     print("Task-weighted pass-rate summary")
     print(summary[["task_set", "n_tasks", "tb2_0_pass_rate", "tb2_1_pass_rate", "pass_rate_change_pp"]].to_csv(index=False))
@@ -410,7 +522,8 @@ def print_summary(
     print("Aggregation: each task has equal weight within each subset; task pass rates are means over that task's trajectories per benchmark version.")
     if args.task_changes_csv is not None:
         print(f"Wrote per-task CSV to {args.task_changes_csv}")
-    print(f"Wrote figure to {args.out}")
+    if four_version_out is not None:
+        print(f"Wrote four-version figure to {four_version_out}")
 
 
 def main() -> None:
@@ -420,9 +533,10 @@ def main() -> None:
     task_changes = build_task_changes(trajectories, audit)
     summary = build_robustness_summary(task_changes)
     validate_reconciliation(task_changes, summary)
-    plot(summary, args.out)
+    tb3_tb4_summary = load_tb3_tb4_change_summary(args.tb3_tb4_changes_csv)
+    plot_four_version_robustness(summary, tb3_tb4_summary, args.four_version_out)
     bins, gains = write_outputs(task_changes, args)
-    print_summary(summary, bins, gains, args)
+    print_summary(summary, bins, gains, args, args.four_version_out)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,6 @@ Outputs:
 - reports/tasks/category/task_domain_task_coverage.png
 - reports/tasks/category/pie_chart_task_domain_pass_fail_distribution.png
 - reports/tasks/category/effort_vars/heatmap_task_domain_effort_median.png
-- reports/tasks/difficulty/task_difficulty_success_effort_combined.png
 - data/processed_live/task_mining/category/model_scaffold/*.csv
 - data/processed_live/task_mining/difficulty/model_scaffold/*.csv
 - reports/tasks/category/model_scaffold/*.png
@@ -41,6 +40,15 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from scripts.benchmark_paths import find_repo_root
+from scripts.analysis.plot_style import (
+    FAIL_COLOR,
+    HEATMAP_DPI,
+    LOW_GOOD_CMAP,
+    PASS_COLOR,
+    colorblind_cmap,
+    colorblind_cycle,
+    heatmap_text_color,
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -676,6 +684,10 @@ def figure_width(column_count: int) -> float:
     return max(10.5, min(22.0, 4.0 + column_count * 0.8))
 
 
+def pass_fail_counts_height(column_count: int) -> float:
+    return min(7.0, max(3.8, 2.8 + column_count * 0.3))
+
+
 def category_count_label(row: pd.Series, dimension_column: str = "category") -> str:
     return (
         f"{row[dimension_column]} "
@@ -722,7 +734,7 @@ def plot_task_weighted_success(
             axis=1,
         )
         fig, ax = plt.subplots(figsize=(12.5, 6.2))
-        ax.bar(plot_df["category_label"], plot_df["task_mean_pass_rate"], width=0.78)
+        ax.bar(plot_df["category_label"], plot_df["task_mean_pass_rate"], width=0.78, color=PASS_COLOR)
         format_success_rate_y_axis(ax)
         format_category_axis(ax)
         ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:])
@@ -732,7 +744,7 @@ def plot_task_weighted_success(
         bar_height = 0.8
         plot_height = 2.5 if dimension_column == "difficulty" else figure_height(len(plot_df))
         fig, ax = plt.subplots(figsize=(9.5, plot_height))
-        ax.barh(plot_df["category_label"], plot_df["task_mean_pass_rate"], height=bar_height)
+        ax.barh(plot_df["category_label"], plot_df["task_mean_pass_rate"], height=bar_height, color=PASS_COLOR)
         ax.invert_yaxis()
         format_success_rate_axis(ax)
         ax.set_xlabel("Task-weighted pass rate")
@@ -765,7 +777,7 @@ def plot_task_coverage(
 ) -> Path:
     plot_df = domain_table.sort_values("n_tasks", ascending=False)
     fig, ax = plt.subplots(figsize=(9.5, figure_height(len(plot_df))))
-    ax.barh(plot_df[dimension_column], plot_df["n_tasks"])
+    ax.barh(plot_df[dimension_column], plot_df["n_tasks"], color=PASS_COLOR)
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=0.25)
     ax.set_xlabel("Distinct tasks")
@@ -788,17 +800,21 @@ def plot_pass_fail_counts(
     plot_df = domain_table.sort_values("n_trajectories", ascending=False).copy()
     plot_df["category_label"] = plot_df.apply(lambda row: category_count_label_multiline(row, dimension_column), axis=1)
 
-    fig, ax = plt.subplots(figsize=(figure_width(len(plot_df)), 7.0))
-    ax.bar(plot_df["category_label"], plot_df["pass_count"], label="Pass")
+    fig, ax = plt.subplots(figsize=(figure_width(len(plot_df)), pass_fail_counts_height(len(plot_df))))
+    ax.bar(plot_df["category_label"], plot_df["pass_count"], label="Pass", color=PASS_COLOR)
     ax.bar(
         plot_df["category_label"],
         plot_df["fail_count"],
         bottom=plot_df["pass_count"],
         label="Fail",
+        color=FAIL_COLOR,
     )
     ax.grid(axis="y", alpha=0.25)
     ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
-    format_category_axis(ax)
+    if len(plot_df) <= 4:
+        ax.tick_params(axis="x", labelrotation=0)
+    else:
+        format_category_axis(ax)
     ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:])
     ax.set_ylabel("Trajectory count")
     ax.set_title(f"Pass/fail trajectories by {dimension_label}")
@@ -827,7 +843,7 @@ def plot_pass_fail_pie_charts(
         ascending=[False, True],
     ).copy()
     labels = plot_df[dimension_column].tolist()
-    colors = plt.get_cmap("tab20").colors[: len(labels)]
+    colors = colorblind_cycle(len(labels))
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 8.2))
     legend_handles = None
@@ -924,6 +940,7 @@ def plot_effort_heatmap(
         x_labels = plot_values.columns.tolist()
         if dimension_column == "difficulty":
             y_labels = plot_values.index.tolist()
+            figsize = (11.5, 3.55)
         else:
             y_labels = [
                 f"{category} (tasks={int(domain_lookup.loc[category, 'n_tasks'])}, "
@@ -931,11 +948,10 @@ def plot_effort_heatmap(
                 f"{'*' if domain_lookup.loc[category, 'low_task_count'] else ''}"
                 for category in plot_values.index
             ]
-        figsize = (11.5, figure_height(len(plot_values)))
+            figsize = (11.5, figure_height(len(plot_values)))
 
     fig, ax = plt.subplots(figsize=figsize)
-    cmap = plt.get_cmap("RdYlGn_r").copy()
-    cmap.set_bad("#f2f2f2")
+    cmap = colorblind_cmap(LOW_GOOD_CMAP)
     matrix = np.ma.masked_invalid(plot_normalized.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
 
@@ -953,150 +969,23 @@ def plot_effort_heatmap(
             value = plot_values.iat[row_index, column_index]
             if pd.isna(value):
                 continue
-            text_color = "white" if plot_normalized.iat[row_index, column_index] > 0.55 else "black"
+            text_color = heatmap_text_color(float(plot_normalized.iat[row_index, column_index]), cmap, 0, 1)
             ax.text(
                 column_index,
                 row_index,
                 format_cell_value(float(value)),
                 ha="center",
                 va="center",
-                fontsize=9.5 if dimension_column == "category" else 12,
+                fontsize=10.5 if dimension_column == "category" else 12.5,
                 color=text_color,
             )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label("Column-normalized median (green=lower effort, red=higher effort)")
+    colorbar.set_label("Green=low, red=high")
     fig.tight_layout()
 
     path = effort_figures_dir / f"heatmap_{output_prefix}_effort_median.png"
-    fig.savefig(path, dpi=180)
-    plt.close(fig)
-    return path
-
-
-def plot_task_difficulty_success_effort_combined(
-    difficulty_table: pd.DataFrame,
-    difficulty_effort_summary: pd.DataFrame,
-    path: Path,
-) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    difficulty_order = ordered_dimension_values(difficulty_table, "difficulty")
-    success = difficulty_table.set_index("difficulty").reindex(difficulty_order)
-    heatmap = (
-        difficulty_effort_summary.pivot(index="difficulty", columns="variable_display", values="median")
-        .reindex(index=difficulty_order, columns=list(EFFORT_DISPLAY_NAMES.values()))
-        .astype(float)
-    )
-
-    normalized = heatmap.copy()
-    for column in normalized.columns:
-        values = normalized[column]
-        min_value = values.min(skipna=True)
-        max_value = values.max(skipna=True)
-        if pd.isna(min_value) or pd.isna(max_value) or min_value == max_value:
-            normalized[column] = np.nan
-        else:
-            normalized[column] = (values - min_value) / (max_value - min_value)
-
-    fig, (success_ax, effort_ax) = plt.subplots(
-        1,
-        2,
-        figsize=(11.2, 3.35),
-        gridspec_kw={"width_ratios": [1.0, 2.35], "wspace": 0.28},
-    )
-
-    x_positions = np.arange(len(success))
-    bar_color = "#4C78A8"
-    success_ax.bar(x_positions, success["task_mean_pass_rate"], width=0.64, color=bar_color)
-    success_ax.set_xticks(x_positions)
-    success_ax.set_xticklabels([str(value).title() for value in success.index])
-    success_ax.set_ylim(0, 1)
-    success_ax.set_xlabel("Difficulty")
-    success_ax.set_ylabel("Task-balanced pass rate")
-    success_ax.grid(axis="y", alpha=0.25)
-    success_ax.spines["top"].set_visible(False)
-    success_ax.spines["right"].set_visible(False)
-    for x_position, value in zip(x_positions, success["task_mean_pass_rate"]):
-        if pd.isna(value):
-            continue
-        success_ax.text(
-            x_position,
-            min(float(value) + 0.035, 0.98),
-            f"{float(value) * 100:.1f}%",
-            ha="center",
-            va="bottom",
-            fontsize=9.5,
-        )
-    success_ax.text(
-        -0.12,
-        1.04,
-        "(a)",
-        transform=success_ax.transAxes,
-        fontsize=11,
-        fontweight="bold",
-        va="bottom",
-    )
-
-    cmap = plt.get_cmap("RdYlGn_r").copy()
-    cmap.set_bad("#f2f2f2")
-    matrix = np.ma.masked_invalid(normalized.to_numpy(dtype=float))
-    image = effort_ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
-    effort_ax.set_xticks(range(len(heatmap.columns)))
-    effort_ax.set_xticklabels(
-        [
-            "Steps",
-            "Shell calls",
-            "Tool calls",
-            "Tokens",
-            "Duration (s)",
-            "Cost (USD)",
-        ],
-        rotation=35,
-        ha="right",
-    )
-    effort_ax.set_yticks(range(len(heatmap.index)))
-    effort_ax.set_yticklabels([str(value).title() for value in heatmap.index])
-    effort_ax.set_xlabel("Effort measure")
-    effort_ax.set_ylabel("Difficulty")
-    effort_ax.tick_params(axis="both", length=0)
-
-    for row_index in range(heatmap.shape[0]):
-        for column_index in range(heatmap.shape[1]):
-            value = heatmap.iat[row_index, column_index]
-            if pd.isna(value):
-                continue
-            text_color = "white" if normalized.iat[row_index, column_index] > 0.55 else "black"
-            effort_ax.text(
-                column_index,
-                row_index,
-                format_cell_value(float(value)),
-                ha="center",
-                va="center",
-                fontsize=8.8,
-                color=text_color,
-            )
-
-    for spine in effort_ax.spines.values():
-        spine.set_visible(False)
-    effort_ax.set_xticks(np.arange(-0.5, heatmap.shape[1], 1), minor=True)
-    effort_ax.set_yticks(np.arange(-0.5, heatmap.shape[0], 1), minor=True)
-    effort_ax.grid(which="minor", color="white", linewidth=1.2)
-    effort_ax.tick_params(which="minor", bottom=False, left=False)
-    effort_ax.text(
-        -0.08,
-        1.04,
-        "(b)",
-        transform=effort_ax.transAxes,
-        fontsize=11,
-        fontweight="bold",
-        va="bottom",
-    )
-
-    colorbar = fig.colorbar(image, ax=effort_ax, fraction=0.035, pad=0.02)
-    colorbar.set_label("Column-normalized median effort", fontsize=9)
-    colorbar.ax.tick_params(labelsize=8)
-    fig.savefig(path, dpi=240, bbox_inches="tight")
+    fig.savefig(path, dpi=HEATMAP_DPI, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -1150,8 +1039,7 @@ def plot_category_pass_rate_heatmap(
     fig_height = max(5.5, min(30.0, 1.8 + row_count * 0.32))
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
-    cmap = plt.get_cmap("RdYlGn").copy()
-    cmap.set_bad("#f2f2f2")
+    cmap = colorblind_cmap()
     matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
 
@@ -1175,21 +1063,21 @@ def plot_category_pass_rate_heatmap(
                 count = counts.loc[entity, category]
                 if pd.isna(rate) or count == 0:
                     continue
-                text_color = "white" if rate < 0.35 else "black"
+                text_color = heatmap_text_color(float(rate), cmap, 0, 1)
                 ax.text(
                     column_index,
                     row_index,
-                    f"{rate:.2f}\nn={count}",
+                    f"{rate:.2f}",
                     ha="center",
                     va="center",
-                    fontsize=5.5 if row_count > 20 else 6.5,
+                    fontsize=8.0 if row_count > 20 else 9.0,
                     color=text_color,
                 )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
     colorbar.set_label("Pass rate")
     fig.tight_layout()
-    fig.savefig(path, dpi=180)
+    fig.savefig(path, dpi=HEATMAP_DPI)
     plt.close(fig)
     return path
 
@@ -1220,7 +1108,7 @@ def plot_scaffold_category_composition(
 
     fig, ax = plt.subplots(figsize=(12.5, max(5.2, 1.4 + len(shares) * 0.38)))
     left = np.zeros(len(shares))
-    colors = plt.get_cmap("tab20").colors
+    colors = colorblind_cycle(len(category_order))
     for index, category in enumerate(category_order):
         values = shares[category].to_numpy(dtype=float)
         ax.barh(shares.index, values, left=left, label=category, color=colors[index % len(colors)])
@@ -1255,7 +1143,7 @@ def plot_category_difficulty_composition(
 
     fig, ax = plt.subplots(figsize=(12.5, max(5.2, 1.4 + len(shares) * 0.38)))
     left = np.zeros(len(shares))
-    colors = {"easy": "#4daf4a", "medium": "#ffbf50", "hard": "#e15759"}
+    colors = {"easy": PASS_COLOR, "medium": "#E69F00", "hard": FAIL_COLOR}
     for difficulty in difficulty_order:
         values = shares[difficulty].to_numpy(dtype=float)
         ax.barh(shares.index, values, left=left, label=difficulty, color=colors.get(difficulty))
@@ -1296,8 +1184,7 @@ def plot_category_difficulty_pass_rate_heatmap(
     )
 
     fig, ax = plt.subplots(figsize=(figure_width(len(category_order)), 5.2))
-    cmap = plt.get_cmap("RdYlGn").copy()
-    cmap.set_bad("#f2f2f2")
+    cmap = colorblind_cmap()
     matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
 
@@ -1319,21 +1206,21 @@ def plot_category_difficulty_pass_rate_heatmap(
             count = counts.loc[difficulty, category]
             if pd.isna(rate) or count == 0:
                 continue
-            text_color = "white" if rate < 0.35 else "black"
+            text_color = heatmap_text_color(float(rate), cmap, 0, 1)
             ax.text(
                 column_index,
                 row_index,
                 f"{rate:.2f}",
                 ha="center",
                 va="center",
-                fontsize=12,
+                fontsize=13,
                 color=text_color,
             )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
     colorbar.set_label("Pass rate")
     fig.tight_layout()
-    fig.savefig(path, dpi=180)
+    fig.savefig(path, dpi=HEATMAP_DPI)
     plt.close(fig)
     return path
 
@@ -1547,13 +1434,6 @@ def main() -> None:
         "difficulty",
         "task difficulty",
         "task_difficulty",
-        include_task_weighted_success=False,
-        include_effort_heatmap=False,
-    )
-    difficulty_success_effort_combined_path = plot_task_difficulty_success_effort_combined(
-        difficulty_table,
-        difficulty_effort_summary,
-        difficulty_figures_dir / "task_difficulty_success_effort_combined.png",
     )
     difficulty_model_scaffold_figure_paths = write_model_scaffold_outputs(
         difficulty_out_dir,
@@ -1590,7 +1470,6 @@ def main() -> None:
     print(f"Wrote {len(figure_paths)} category figures to {category_figures_dir}")
     print(f"Wrote {len(model_scaffold_figure_paths)} category model/scaffold figures to {category_figures_dir / 'model_scaffold'}")
     print(f"Wrote {len(difficulty_figure_paths)} difficulty figures to {difficulty_figures_dir}")
-    print(f"Wrote difficulty success/effort figure to {difficulty_success_effort_combined_path}")
     print(
         f"Wrote {len(difficulty_model_scaffold_figure_paths)} difficulty model/scaffold figures "
         f"to {difficulty_figures_dir / 'model_scaffold'}"

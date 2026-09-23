@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Analyze benchmark-version trajectory-effort changes for RQ4.
 
-This script compares Terminal-Bench 2.0 and 2.1 trajectory effort on the
-unified longitudinal dataset. The figure establishes the RQ4 token anomaly:
+This script compares two Terminal-Bench versions' trajectory effort on a
+longitudinal dataset. The default TB2.0/TB2.1 figure establishes the RQ4 token anomaly:
 observable trajectory-effort measures generally decrease or grow modestly,
 while reported token usage increases more strongly.
 """
@@ -22,6 +22,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, NEUTRAL_COLOR
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -29,12 +30,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = find_repo_root(SCRIPT_DIR)
 LONGITUDINAL_DIR = REPO_ROOT / "data" / "processed_live" / "longitudinal"
 TRAJECTORY_CSV = LONGITUDINAL_DIR / "trajectory_longitudinal.csv"
+TB3_TB4_TRAJECTORY_CSV = LONGITUDINAL_DIR / "tb3_tb4" / "trajectory_longitudinal.csv"
 TASK_AUDIT_CSV = LONGITUDINAL_DIR / "task_version_audit.csv"
-FIGURE_PATH = REPO_ROOT / "reports" / "longitudinal" / "performance_effort_change_over_time.png"
+TASK_CHANGES_CSV = LONGITUDINAL_DIR / "task_composition" / "adjacent_version_task_changes.csv"
+FIGURE_DIR = REPO_ROOT / "reports" / "longitudinal"
+BASELINE_FIGURE_PATH = FIGURE_DIR / "performance_effort_change_over_time_tb2_0_to_tb2_1.png"
+TB3_TB4_FIGURE_PATH = FIGURE_DIR / "performance_effort_change_over_time_tb3_0_to_tb4_0.png"
 POOLED_SUMMARY_CSV = LONGITUDINAL_DIR / "task_balanced_effort_pooled_summary.csv"
 TASK_BALANCED_SUMMARY_CSV = LONGITUDINAL_DIR / "task_balanced_effort_summary.csv"
-TASK_BALANCED_DETAIL_CSV = LONGITUDINAL_DIR / "task_balanced_effort_by_task.csv"
-COMPARABLE_CONFIG_CSV = LONGITUDINAL_DIR / "comparable_configuration_audit.csv"
 
 BASELINE_LABEL = "Terminal-Bench 2.0"
 COMPARISON_LABEL = "Terminal-Bench 2.1"
@@ -44,8 +47,6 @@ COMPARISON_VERSION = "2.1"
 REQUIRED_COLUMNS = {
     "benchmark_version",
     "task_name",
-    "scaffold",
-    "model_dir",
     "step_count",
     "shell_invocation_count",
     "tool_call_count",
@@ -56,14 +57,13 @@ REQUIRED_COLUMNS = {
     "prompt_tokens",
     "completion_tokens",
     "total_tokens",
-    "passed",
 }
 
-EFFORT_COLOR = "#595959"
-TEXT_COLOR = "#4F7D5A"
-INPUT_TOKEN_COLOR = "#2F6FAD"
-OUTPUT_TOKEN_COLOR = "#9A7A24"
-TOTAL_TOKEN_COLOR = "#7A4D7E"
+EFFORT_COLOR = NEUTRAL_COLOR
+TEXT_COLOR = COLORBLIND_PALETTE[2]
+INPUT_TOKEN_COLOR = COLORBLIND_PALETTE[0]
+OUTPUT_TOKEN_COLOR = COLORBLIND_PALETTE[4]
+TOTAL_TOKEN_COLOR = COLORBLIND_PALETTE[3]
 
 
 def metric_spec(key: str, label: str, column: str, color: str) -> dict[str, str]:
@@ -88,11 +88,21 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--trajectory-csv", type=Path, default=TRAJECTORY_CSV)
     parser.add_argument("--task-audit-csv", type=Path, default=TASK_AUDIT_CSV)
+    parser.add_argument("--task-changes-csv", type=Path, default=TASK_CHANGES_CSV)
+    parser.add_argument("--baseline-version", default=BASELINE_VERSION)
+    parser.add_argument("--comparison-version", default=COMPARISON_VERSION)
+    parser.add_argument("--baseline-label", default=None)
+    parser.add_argument("--comparison-label", default=None)
+    parser.add_argument(
+        "--include-tb3-tb4",
+        action="store_true",
+        help="Also write a separate TB3.0->TB4.0 effort-change figure.",
+    )
+    parser.add_argument("--tb3-tb4-trajectory-csv", type=Path, default=TB3_TB4_TRAJECTORY_CSV)
     parser.add_argument("--pooled-summary-csv", type=Path, default=POOLED_SUMMARY_CSV)
     parser.add_argument("--task-balanced-summary-csv", type=Path, default=TASK_BALANCED_SUMMARY_CSV)
-    parser.add_argument("--task-balanced-detail-csv", type=Path, default=TASK_BALANCED_DETAIL_CSV)
-    parser.add_argument("--comparable-config-csv", type=Path, default=COMPARABLE_CONFIG_CSV)
-    parser.add_argument("--out", type=Path, default=FIGURE_PATH)
+    parser.add_argument("--out", type=Path, default=BASELINE_FIGURE_PATH)
+    parser.add_argument("--tb3-tb4-out", type=Path, default=TB3_TB4_FIGURE_PATH)
     return parser.parse_args()
 
 
@@ -127,15 +137,51 @@ def load_trajectories(path: Path) -> pd.DataFrame:
     require_columns(df, REQUIRED_COLUMNS, str(path))
     df = df.copy()
     df["benchmark_version"] = df["benchmark_version"].astype(str)
-    for column in REQUIRED_COLUMNS.difference({"benchmark_version", "task_name", "scaffold", "model_dir"}):
+    for column in REQUIRED_COLUMNS.difference({"benchmark_version", "task_name"}):
         df[column] = pd.to_numeric(df[column], errors="coerce")
     df["logged_chars"] = df["message_chars"] + df["reasoning_chars"] + df["observation_chars"]
     return df.dropna(subset=["benchmark_version"])
 
 
-def load_instruction_unchanged_tasks(path: Path) -> set[str]:
+def version_display_label(version: str) -> str:
+    return f"TB{version}"
+
+
+def full_version_label(version: str) -> str:
+    return f"Terminal-Bench {version}"
+
+
+def load_tb2_instruction_unchanged_tasks(path: Path) -> set[str]:
     audit = pd.read_csv(path, usecols=["task_name", "classification"])
     return set(audit.loc[audit["classification"].eq("Identical"), "task_name"].astype(str))
+
+
+def load_adjacent_instruction_unchanged_tasks(path: Path, baseline_version: str, comparison_version: str) -> set[str]:
+    if not path.exists():
+        return set()
+    changes = pd.read_csv(path, low_memory=False)
+    required = {"version_pair", "task_name", "tb3_tb4_change_classification_new"}
+    if not required.issubset(changes.columns):
+        return set()
+    pair = f"{baseline_version}->{comparison_version}"
+    unchanged_labels = {"Only release boilerplate changed", "Package identical"}
+    unchanged = changes[
+        changes["version_pair"].astype(str).eq(pair)
+        & changes["tb3_tb4_change_classification_new"].astype(str).isin(unchanged_labels)
+    ]
+    return set(unchanged["task_name"].astype(str))
+
+
+def load_instruction_unchanged_tasks(args: argparse.Namespace) -> set[str]:
+    baseline_version = str(args.baseline_version)
+    comparison_version = str(args.comparison_version)
+    if baseline_version == BASELINE_VERSION and comparison_version == COMPARISON_VERSION:
+        return load_tb2_instruction_unchanged_tasks(args.task_audit_csv)
+    return load_adjacent_instruction_unchanged_tasks(
+        args.task_changes_csv,
+        baseline_version,
+        comparison_version,
+    )
 
 
 def version_subset(df: pd.DataFrame, version: str) -> pd.DataFrame:
@@ -153,10 +199,14 @@ def metric_value(series: pd.Series, aggregation: str) -> float:
     raise ValueError(f"Unknown aggregation: {aggregation}")
 
 
-def summarize_periods(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+def summarize_periods(
+    df: pd.DataFrame,
+    baseline_version: str,
+    comparison_version: str,
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
     periods = {
-        "early": version_subset(df, BASELINE_VERSION),
-        "late": version_subset(df, COMPARISON_VERSION),
+        "early": version_subset(df, baseline_version),
+        "late": version_subset(df, comparison_version),
     }
     empty_periods = [name for name, subset in periods.items() if subset.empty]
     if empty_periods:
@@ -205,8 +255,9 @@ def direction(change: float) -> str:
 def build_task_balanced_outputs(
     df: pd.DataFrame,
     unchanged_tasks: set[str],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    detail_rows: list[dict[str, object]] = []
+    baseline_version: str,
+    comparison_version: str,
+) -> pd.DataFrame:
     summary_rows: list[dict[str, object]] = []
     for metric in METRICS:
         column = str(metric["column"])
@@ -217,31 +268,17 @@ def build_task_balanced_outputs(
             .median()
             .unstack()
         )
-        if BASELINE_VERSION not in medians.columns or COMPARISON_VERSION not in medians.columns:
+        if baseline_version not in medians.columns or comparison_version not in medians.columns:
             continue
-        medians = medians.dropna(subset=[BASELINE_VERSION, COMPARISON_VERSION]).copy()
-        medians["paired_change"] = medians[COMPARISON_VERSION] - medians[BASELINE_VERSION]
+        medians = medians.dropna(subset=[baseline_version, comparison_version]).copy()
+        medians["paired_change"] = medians[comparison_version] - medians[baseline_version]
         medians["paired_relative_change_pct"] = (
-            medians[COMPARISON_VERSION] / medians[BASELINE_VERSION] - 1.0
+            medians[comparison_version] / medians[baseline_version] - 1.0
         ) * 100.0
-        for task_name, row in medians.iterrows():
-            detail_rows.append(
-                {
-                    "metric": metric["key"],
-                    "metric_display": metric["label"],
-                    "task_name": task_name,
-                    "task_set": "instruction_unchanged" if str(task_name) in unchanged_tasks else "instruction_changed",
-                    "tb2_0_task_median": row[BASELINE_VERSION],
-                    "tb2_1_task_median": row[COMPARISON_VERSION],
-                    "paired_change": row["paired_change"],
-                    "paired_relative_change_pct": row["paired_relative_change_pct"],
-                    "direction": direction(row["paired_change"]),
-                }
-            )
-        for task_set, subset in [
-            ("all_shared_tasks", medians),
-            ("instruction_unchanged", medians.loc[medians.index.intersection(unchanged_tasks)]),
-        ]:
+        subsets = [("all_shared_tasks", medians)]
+        if unchanged_tasks:
+            subsets.append(("instruction_unchanged", medians.loc[medians.index.intersection(unchanged_tasks)]))
+        for task_set, subset in subsets:
             n_tasks = int(len(subset))
             increasing = int((subset["paired_change"] > 0).sum())
             decreasing = int((subset["paired_change"] < 0).sum())
@@ -267,39 +304,7 @@ def build_task_balanced_outputs(
                     "tasks_tied_n": ties,
                 }
             )
-    return pd.DataFrame(summary_rows), pd.DataFrame(detail_rows)
-
-
-def build_comparable_config_audit(df: pd.DataFrame) -> pd.DataFrame:
-    config_versions = (
-        df.groupby(["scaffold", "model_dir"])["benchmark_version"]
-        .agg(lambda values: set(values.astype(str)))
-        .reset_index(name="versions")
-    )
-    shared_configs = config_versions[
-        config_versions["versions"].map(lambda versions: {BASELINE_VERSION, COMPARISON_VERSION}.issubset(versions))
-    ][["scaffold", "model_dir"]]
-    rows: list[dict[str, object]] = []
-    for config in shared_configs.itertuples(index=False):
-        subset = df[df["scaffold"].eq(config.scaffold) & df["model_dir"].eq(config.model_dir)].copy()
-        task_sets = {
-            version: set(subset.loc[subset["benchmark_version"].eq(version), "task_name"].astype(str))
-            for version in [BASELINE_VERSION, COMPARISON_VERSION]
-        }
-        row: dict[str, object] = {
-            "scaffold": config.scaffold,
-            "model_dir": config.model_dir,
-            "shared_task_count": len(task_sets[BASELINE_VERSION] & task_sets[COMPARISON_VERSION]),
-        }
-        for version in [BASELINE_VERSION, COMPARISON_VERSION]:
-            version_subset = subset[subset["benchmark_version"].eq(version)]
-            row[f"tb{version.replace('.', '_')}_trajectory_count"] = int(version_subset.shape[0])
-            row[f"tb{version.replace('.', '_')}_task_count"] = int(version_subset["task_name"].nunique())
-            row[f"tb{version.replace('.', '_')}_pass_rate"] = float(version_subset["passed"].mean())
-            for metric in ["step_count", "shell_invocation_count", "tool_call_count", "duration_seconds", "total_tokens"]:
-                row[f"tb{version.replace('.', '_')}_{metric}_median"] = float(version_subset[metric].median())
-        rows.append(row)
-    return pd.DataFrame(rows).sort_values(["scaffold", "model_dir"]).reset_index(drop=True)
+    return pd.DataFrame(summary_rows)
 
 
 def format_raw(key: str, value: float) -> str:
@@ -326,19 +331,19 @@ def annotate_bar(ax: plt.Axes, y: float, change: float, early_label: str, late_l
     if change >= 0:
         ax.text(change + 1.2, y, label, ha="left", va="center", fontsize=8, color="#333333")
     else:
-        ax.text(change - 1.2, y, label, ha="right", va="center", fontsize=8, color="#333333")
+        ax.text(1.2, y, label, ha="left", va="center", fontsize=8, color="#333333")
 
 
-def plot(summary: pd.DataFrame, out: Path) -> None:
-    thesis_style()
-    fig_height = max(2.65, 0.28 * len(summary) + 0.55)
-    fig, ax = plt.subplots(figsize=(6.6, fig_height))
-
+def plot_summary_panel(
+    ax: plt.Axes,
+    summary: pd.DataFrame,
+    title: str,
+    max_abs: float,
+) -> None:
     y_positions = np.arange(len(summary), dtype=float)
     summary = summary.copy()
     summary["y"] = y_positions
 
-    max_abs = max(5.0, float(summary["relative_change_pct"].abs().max()))
     ax.set_xlim(-max_abs - 18.0, max_abs + 38.0)
     ax.set_ylim(-0.42, len(summary) - 0.58)
     ax.axvline(0.0, color="#666666", linewidth=0.8, linestyle=(0, (2, 2)), zorder=0)
@@ -349,8 +354,7 @@ def plot(summary: pd.DataFrame, out: Path) -> None:
         ax.barh(y, change, height=0.42, color=str(row.color), edgecolor="none")
         annotate_bar(ax, y, change, str(row.early_label), str(row.late_label))
 
-    ax.set_title("Trajectory-effort changes from Terminal-Bench 2.0 to 2.1")
-    ax.set_xlabel("Median change from TB2.0 to TB2.1")
+    ax.set_title(title)
     ax.set_yticks(y_positions)
     ax.set_yticklabels(summary["metric"])
     ax.invert_yaxis()
@@ -359,21 +363,49 @@ def plot(summary: pd.DataFrame, out: Path) -> None:
     ax.grid(axis="x", color="#D0D0D0", alpha=0.5, linewidth=0.7)
     ax.set_axisbelow(True)
 
+
+def plot(
+    summary: pd.DataFrame,
+    out: Path,
+    baseline_label: str,
+    comparison_label: str,
+    baseline_short: str,
+    comparison_short: str,
+) -> None:
+    thesis_style()
+    fig_height = max(2.65, 0.28 * len(summary) + 0.55)
+    fig, ax = plt.subplots(figsize=(6.6, fig_height))
+    max_abs = max(5.0, float(summary["relative_change_pct"].abs().max()))
+    plot_summary_panel(
+        ax,
+        summary,
+        f"Trajectory-effort changes from {baseline_label} to {comparison_label}",
+        max_abs,
+    )
+    ax.set_xlabel(f"Median change from {baseline_short} to {comparison_short}")
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-def print_summary(summary: pd.DataFrame, periods: dict[str, pd.DataFrame], out: Path) -> None:
-    print("Benchmark-version comparison: Terminal-Bench 2.0 versus Terminal-Bench 2.1.")
-    for name, label in [("early", BASELINE_LABEL), ("late", COMPARISON_LABEL)]:
+def print_summary(
+    summary: pd.DataFrame,
+    periods: dict[str, pd.DataFrame],
+    out: Path,
+    baseline_version: str,
+    comparison_version: str,
+    baseline_label: str,
+    comparison_label: str,
+) -> None:
+    print(f"Benchmark-version comparison: {baseline_label} versus {comparison_label}.")
+    for name, label in [("early", baseline_label), ("late", comparison_label)]:
         subset = periods[name]
         print(f"{label}: {subset.shape[0]} trajectories")
     print("Duration field: duration_seconds (benchmark-reported; no timestamp reconstruction).")
     print("Missing values are handled per metric via valid/non-missing observations.")
     print("")
-    print("Metric,2.0,2.1,2.0_valid_n,2.1_valid_n,relative_change_pct")
+    print(f"Metric,{baseline_version},{comparison_version},{baseline_version}_valid_n,{comparison_version}_valid_n,relative_change_pct")
     for row in summary.itertuples(index=False):
         print(
             f"{row.metric},{row.early_label},{row.late_label},"
@@ -386,23 +418,51 @@ def print_summary(summary: pd.DataFrame, periods: dict[str, pd.DataFrame], out: 
 
 def main() -> None:
     args = parse_args()
+    baseline_version = str(args.baseline_version)
+    comparison_version = str(args.comparison_version)
+    baseline_label = args.baseline_label or full_version_label(baseline_version)
+    comparison_label = args.comparison_label or full_version_label(comparison_version)
+    baseline_short = version_display_label(baseline_version)
+    comparison_short = version_display_label(comparison_version)
     trajectories = load_trajectories(args.trajectory_csv)
-    summary, periods = summarize_periods(trajectories)
+    summary, periods = summarize_periods(trajectories, baseline_version, comparison_version)
     summary = add_formatted_columns(summary)
-    unchanged_tasks = load_instruction_unchanged_tasks(args.task_audit_csv)
-    task_balanced_summary, task_balanced_detail = build_task_balanced_outputs(trajectories, unchanged_tasks)
-    comparable_config = build_comparable_config_audit(trajectories)
+    unchanged_tasks = load_instruction_unchanged_tasks(args)
+    task_balanced_summary = build_task_balanced_outputs(
+        trajectories,
+        unchanged_tasks,
+        baseline_version,
+        comparison_version,
+    )
     args.pooled_summary_csv.parent.mkdir(parents=True, exist_ok=True)
     summary.to_csv(args.pooled_summary_csv, index=False)
     task_balanced_summary.to_csv(args.task_balanced_summary_csv, index=False)
-    task_balanced_detail.to_csv(args.task_balanced_detail_csv, index=False)
-    comparable_config.to_csv(args.comparable_config_csv, index=False)
-    plot(summary, args.out)
-    print_summary(summary, periods, args.out)
+    plot(summary, args.out, baseline_label, comparison_label, baseline_short, comparison_short)
+    if args.include_tb3_tb4:
+        tb3_tb4_trajectories = load_trajectories(args.tb3_tb4_trajectory_csv)
+        tb3_tb4_summary, _ = summarize_periods(tb3_tb4_trajectories, "3.0", "4.0")
+        tb3_tb4_summary = add_formatted_columns(tb3_tb4_summary)
+        plot(
+            tb3_tb4_summary,
+            args.tb3_tb4_out,
+            "Terminal-Bench 3.0",
+            "Terminal-Bench 4.0",
+            "TB3.0",
+            "TB4.0",
+        )
+    print_summary(
+        summary,
+        periods,
+        args.out,
+        baseline_version,
+        comparison_version,
+        baseline_label,
+        comparison_label,
+    )
     print(f"Wrote {args.pooled_summary_csv}")
     print(f"Wrote {args.task_balanced_summary_csv}")
-    print(f"Wrote {args.task_balanced_detail_csv}")
-    print(f"Wrote {args.comparable_config_csv}")
+    if args.include_tb3_tb4:
+        print(f"Wrote TB3.0/TB4.0 figure to {args.tb3_tb4_out}")
 
 
 if __name__ == "__main__":

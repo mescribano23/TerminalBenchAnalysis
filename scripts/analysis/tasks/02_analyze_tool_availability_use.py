@@ -40,6 +40,14 @@ if str(REPO_ROOT_CANDIDATE) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_CANDIDATE))
 
 from scripts.analysis.support_thresholds import MINIMUM_SUPPORT_PER_COMPARISON_CELL
+from scripts.analysis.plot_style import (
+    DIVERGING_CMAP,
+    FAIL_COLOR,
+    HEATMAP_DPI,
+    PASS_COLOR,
+    colorblind_cmap,
+    heatmap_text_color,
+)
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -927,8 +935,8 @@ def plot_overall_pass_rates(overall: pd.DataFrame, out_path: Path) -> None:
     width = 0.36
 
     fig, ax = plt.subplots(figsize=(8.4, 4.8))
-    used_bars = ax.bar(x - width / 2, df["pass_rate_used"], width, label="Used", color="#277da1")
-    not_used_bars = ax.bar(x + width / 2, df["pass_rate_not_used"], width, label="Not used", color="#f9844a")
+    used_bars = ax.bar(x - width / 2, df["pass_rate_used"], width, label="Used", color=PASS_COLOR)
+    not_used_bars = ax.bar(x + width / 2, df["pass_rate_not_used"], width, label="Not used", color=FAIL_COLOR)
 
     ax.set_title("Tool-use association with success overall")
     ax.set_ylabel("Pass rate")
@@ -971,7 +979,7 @@ def plot_difference_heatmap(
     family_display_column: str = "tool_family_display",
     family_display_order: list[str] | None = None,
     transpose: bool = False,
-    annotation_fontsize: int = 8,
+    annotation_fontsize: float = 9.5,
     colorbar_label: str | None = "Mean task-level pass-rate difference (used - not used, pp)",
     x_label_map: dict[str, str] | None = None,
     x_label_rotation: int = 35,
@@ -1019,7 +1027,8 @@ def plot_difference_heatmap(
     fig_width = max(7.0, min(18.0, 1.0 + 1.1 * len(display.columns)))
     fig_height = max(3.8, 1.05 + figure_height_scale * len(display.index))
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-    image = ax.imshow(values, cmap="RdBu", vmin=-max_abs, vmax=max_abs, aspect="auto")
+    cmap = colorblind_cmap(DIVERGING_CMAP)
+    image = ax.imshow(values, cmap=cmap, vmin=-max_abs, vmax=max_abs, aspect="auto")
     ax.set_title(title)
     ax.set_xticks(np.arange(len(display.columns)))
     x_labels = [x_label_map.get(str(value), str(value)) if x_label_map else str(value) for value in display.columns]
@@ -1033,14 +1042,22 @@ def plot_difference_heatmap(
         for j in range(values.shape[1]):
             value = values[i, j]
             if np.isfinite(value):
-                ax.text(j, i, pp_label(value), ha="center", va="center", fontsize=annotation_fontsize)
+                ax.text(
+                    j,
+                    i,
+                    pp_label(value),
+                    ha="center",
+                    va="center",
+                    fontsize=annotation_fontsize,
+                    color=heatmap_text_color(float(value), cmap, -max_abs, max_abs),
+                )
 
     cbar = fig.colorbar(image, ax=ax)
     if colorbar_label:
         cbar.set_label(colorbar_label)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=200)
+    fig.savefig(out_path, dpi=HEATMAP_DPI)
     plt.close(fig)
     return True
 
@@ -1566,7 +1583,7 @@ def main() -> None:
         dimension_order=category_order,
         family_display_column="behavior_family_display",
         family_display_order=functional_category_family_order,
-        annotation_fontsize=7,
+        annotation_fontsize=9.0,
         x_label_map=CATEGORY_DISPLAY_LABELS,
         x_label_rotation=0,
         figure_height_scale=0.42,

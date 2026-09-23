@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from scripts.analysis.plot_style import HEATMAP_DPI, LOW_GOOD_CMAP, colorblind_cmap, heatmap_text_color
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -250,7 +251,7 @@ def build_effort_summary(
 
 
 def figure_height(n_rows: int) -> float:
-    return max(4.8, min(15.0, 1.0 + n_rows * 0.42))
+    return max(5.2, min(16.0, 1.2 + n_rows * 0.52))
 
 
 def format_heatmap_value(value: float, variable: str) -> str:
@@ -314,9 +315,8 @@ def plot_effort_lift_heatmap(
         )
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(13.5, figure_height(len(lift))))
-    cmap = plt.get_cmap("RdYlBu_r").copy()
-    cmap.set_bad("#f2f2f2")
+    fig, ax = plt.subplots(figsize=(14.5, figure_height(len(lift))))
+    cmap = colorblind_cmap(LOW_GOOD_CMAP)
     matrix = np.ma.masked_invalid(lift.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0.4, vmax=2.4)
 
@@ -335,19 +335,19 @@ def plot_effort_lift_heatmap(
             if pd.isna(lift_value) or pd.isna(median_value):
                 continue
             variable = variable_by_label[str(lift.columns[column_index])]
-            text_color = "white" if lift_value >= 1.65 else "black"
+            text_color = heatmap_text_color(float(lift_value), cmap, 0.4, 2.4)
             ax.text(
                 column_index,
                 row_index,
                 f"{lift_value:.1f}x\n{format_heatmap_value(median_value, variable)}",
                 ha="center",
                 va="center",
-                fontsize=7,
+                fontsize=8.5,
                 color=text_color,
             )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label("Median effort lift vs global median")
+    colorbar.set_label("Median effort lift vs global median (green=lower, red=higher)")
     fig.text(
         0.5,
         0.015,
@@ -357,7 +357,7 @@ def plot_effort_lift_heatmap(
         va="top",
     )
     fig.tight_layout(rect=(0, 0.06, 1, 1))
-    fig.savefig(path, dpi=180)
+    fig.savefig(path, dpi=HEATMAP_DPI)
     plt.close(fig)
     return path
 
