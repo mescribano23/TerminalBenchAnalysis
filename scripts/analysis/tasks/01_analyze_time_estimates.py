@@ -72,6 +72,7 @@ TASK_DURATION_OUTPUT_COLUMNS = [
     "n_passed",
     "pass_rate",
     "median_duration_min",
+    "median_successful_duration_min",
     "mean_duration_min",
     "expert_time_estimate_min",
     "junior_time_estimate_min",
@@ -85,8 +86,10 @@ TASK_DURATION_OUTPUT_COLUMNS = [
     "mean_duration_below_junior_estimate",
 ]
 OBSERVED_MEDIAN_DURATION_LABEL = "Observed median duration"
+SUCCESSFUL_MEDIAN_DURATION_LABEL = "Successful-only median duration"
 OBSERVED_MEAN_DURATION_LABEL = "Observed mean duration (sensitivity)"
 OBSERVED_MEDIAN_DURATION_COLOR = COLORBLIND_PALETTE[4]
+SUCCESSFUL_MEDIAN_DURATION_COLOR = COLORBLIND_PALETTE[3]
 OBSERVED_MEAN_DURATION_COLOR = NEUTRAL_COLOR
 PERCENTILES = {
     "p10_min": 0.10,
@@ -237,6 +240,7 @@ def summarize_task_time_distributions(
     if not task_duration_comparison.empty:
         for label, column in [
             (OBSERVED_MEDIAN_DURATION_LABEL, "median_duration_min"),
+            (SUCCESSFUL_MEDIAN_DURATION_LABEL, "median_successful_duration_min"),
             (OBSERVED_MEAN_DURATION_LABEL, "mean_duration_min"),
         ]:
             row = distribution_row(label, task_duration_comparison[column])
@@ -278,6 +282,16 @@ def build_task_average_duration_comparison(comparison: pd.DataFrame) -> pd.DataF
         )
         .sort_values("task_name")
     )
+    successful_submission_task = (
+        duration_df[duration_df["passed"].eq(1)]
+        .groupby(["submission_id", "task_name"], as_index=False)
+        .agg(submission_task_successful_duration_min=("duration_min", "median"))
+    )
+    successful_task = (
+        successful_submission_task.groupby("task_name", as_index=False)
+        .agg(median_successful_duration_min=("submission_task_successful_duration_min", "median"))
+    )
+    grouped = grouped.merge(successful_task, on="task_name", how="left", validate="one_to_one")
     grouped["pass_rate"] = grouped["n_passed"] / grouped["n_trajectories"]
     grouped["mean_duration_vs_expert_estimate"] = (
         grouped["mean_duration_min"] / grouped["expert_time_estimate_min"]
@@ -424,6 +438,12 @@ def plot_task_time_estimate_distribution(
             OBSERVED_MEDIAN_DURATION_COLOR,
             0.54,
         ),
+        (
+            SUCCESSFUL_MEDIAN_DURATION_LABEL,
+            duration_df["median_successful_duration_min"],
+            SUCCESSFUL_MEDIAN_DURATION_COLOR,
+            0.48,
+        ),
     ]
     all_values = pd.concat([series for _, series, _, _ in distribution_series], ignore_index=True).dropna()
     axis_max = float(all_values.max())
@@ -456,7 +476,7 @@ def plot_task_time_estimate_distribution(
         shared_bins = np.append(shared_bins, axis_max)
 
     fig, ax = plt.subplots(figsize=(10.8, 5.9))
-    median_annotations: list[tuple[float, str, str]] = []
+    median_annotations: list[tuple[float, str, str, str]] = []
 
     for label, series, color, alpha in distribution_series:
         values = series.dropna().to_numpy(dtype=float)
@@ -480,11 +500,18 @@ def plot_task_time_estimate_distribution(
             linewidth=1.1,
             alpha=0.85,
         )
+        annotation_label = {
+            OBSERVED_MEDIAN_DURATION_LABEL: "All-trajectory median",
+            SUCCESSFUL_MEDIAN_DURATION_LABEL: "Successful-only median",
+        }.get(label, f"{label} median")
         median_annotations.append(
-            (median_value, f"{label} median: {format_minutes(median_value)}", color)
+            (median_value, label, f"{annotation_label}: {format_minutes(median_value)}", color)
         )
 
-    note = "Observed median uses one median trajectory duration per task; distributions are normalized by task count."
+    note = (
+        "Observed series use one median trajectory duration per task; successful-only excludes failed trajectories.\n"
+        "Each distribution is normalized by its task count."
+    )
     ax.text(
         0.012,
         0.96,
@@ -499,21 +526,26 @@ def plot_task_time_estimate_distribution(
     ax.set_xlim(0, axis_max)
     ax.set_xlabel("Time per task (minutes, symlog scale)")
     ax.set_ylabel("Share of tasks per bin")
-    ax.set_title("Task-level distributions of estimates and observed median duration")
+    ax.set_title("Task-level distributions of estimates and observed median durations")
     ax.grid(axis="y", alpha=0.25)
     ax.legend(frameon=False, loc="upper right")
-    for label_y, (median_value, label, color) in zip(
-        [0.78, 0.68, 0.58],
-        median_annotations,
-    ):
+    annotation_positions = {
+        TIME_ESTIMATE_LABELS["expert_time_estimate_min"]: (0.78, "right"),
+        TIME_ESTIMATE_LABELS["junior_time_estimate_min"]: (0.68, "right"),
+        OBSERVED_MEDIAN_DURATION_LABEL: (0.50, "right"),
+        SUCCESSFUL_MEDIAN_DURATION_LABEL: (0.50, "left"),
+    }
+    for median_value, series_label, annotation, color in median_annotations:
+        label_y, horizontal_alignment = annotation_positions[series_label]
         ax.text(
             median_value,
             label_y,
-            label,
+            annotation,
             transform=ax.get_xaxis_transform(),
             rotation=90,
-            ha="right",
-            va="top",
+            rotation_mode="anchor",
+            ha=horizontal_alignment,
+            va="center",
             fontsize=8.5,
             color=color,
         )

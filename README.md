@@ -191,7 +191,12 @@ bins at the trajectory level, aggregates trajectories within each
 effective-submission/task/bin cell, averages those cells within task, and then
 averages tasks within each effort bin. RQ1.3 configuration efficiency uses the
 same submission-task hierarchy before rolling up to scaffold/model
-configurations. The descriptive/visual outputs are:
+configurations. The consolidated efficiency figures use one point per complete
+model + scaffold configuration: color identifies the scaffold, labels name the
+important model + scaffold combinations, point size reflects trajectory
+support, and the black line traces the configuration-level Pareto frontier.
+These figures do not estimate separate causal effects of models or scaffolds.
+The descriptive/visual outputs are:
 
 ```text
 data/processed_live/diminishing_returns/rq1_effort_bin_summary.csv
@@ -201,18 +206,12 @@ data/processed_live/terminal_bench_2_0/rq1_task_balanced_effort_success.csv
 data/processed_live/diminishing_returns/rq1_task_balanced_effort_success_change_summary.csv
 data/processed_live/diminishing_returns/rq1_3_configuration_efficiency.csv
 reports/diminishing_returns/effort_bins/rq1_pooled_vs_task_balanced_effort_success.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_token_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_duration_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_steps_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_shell_invocations_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_tool_calls_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_observed_cost_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_token_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_duration_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_steps_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_shell_invocations_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_tool_calls_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_observed_cost_pareto.png
+reports/diminishing_returns/configuration_pareto/rq1_3_configuration_token_pareto.png
+reports/diminishing_returns/configuration_pareto/rq1_3_configuration_duration_pareto.png
+reports/diminishing_returns/configuration_pareto/rq1_3_configuration_steps_pareto.png
+reports/diminishing_returns/configuration_pareto/rq1_3_configuration_shell_invocations_pareto.png
+reports/diminishing_returns/configuration_pareto/rq1_3_configuration_tool_calls_pareto.png
+reports/diminishing_returns/configuration_pareto/rq1_3_configuration_observed_cost_pareto.png
 reports/diminishing_returns/**/*.png
 ```
 

@@ -8,18 +8,12 @@ counts define the main configuration summaries.
 
 Outputs:
 - data/processed_live/diminishing_returns/rq1_3_configuration_efficiency.csv
- - reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_token_pareto.png
- - reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_duration_pareto.png
- - reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_steps_pareto.png
- - reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_shell_invocations_pareto.png
- - reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_tool_calls_pareto.png
- - reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_observed_cost_pareto.png
- - reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_token_pareto.png
- - reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_duration_pareto.png
- - reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_steps_pareto.png
- - reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_shell_invocations_pareto.png
- - reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_tool_calls_pareto.png
- - reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_observed_cost_pareto.png
+ - reports/diminishing_returns/configuration_pareto/rq1_3_configuration_token_pareto.png
+ - reports/diminishing_returns/configuration_pareto/rq1_3_configuration_duration_pareto.png
+ - reports/diminishing_returns/configuration_pareto/rq1_3_configuration_steps_pareto.png
+ - reports/diminishing_returns/configuration_pareto/rq1_3_configuration_shell_invocations_pareto.png
+ - reports/diminishing_returns/configuration_pareto/rq1_3_configuration_tool_calls_pareto.png
+ - reports/diminishing_returns/configuration_pareto/rq1_3_configuration_observed_cost_pareto.png
 """
 
 from __future__ import annotations
@@ -36,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.benchmark_paths import find_repo_root
-from scripts.analysis.plot_style import OTHER_COLOR, PRINT_DPI, colorblind_cycle
+from scripts.analysis.plot_style import PRINT_DPI, colorblind_cycle
 from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
 
 
@@ -49,7 +43,6 @@ TOTAL_TASKS = 89
 MIN_CONFIG_TASKS = 80
 MIN_CONFIG_TRAJECTORIES = 300
 MIN_SHARED_TASKS = 50
-MAX_MODEL_PARETO_MODELS = 17
 SIMILAR_PASS_RATE_PP = 5.0
 
 CONFIG_COLUMNS = ["scaffold", "model_dir"]
@@ -71,8 +64,6 @@ PARETO_METRICS = [
         "task_count_col": "total_tokens_task_count",
         "status_col": "token_pareto",
         "figure_name": "rq1_3_configuration_token_pareto.png",
-        "scaffold_figure_name": "rq1_3_by_scaffold_configuration_token_pareto.png",
-        "model_figure_name": "rq1_3_by_model_configuration_token_pareto.png",
         "xlabel": "Task-balanced median total tokens",
         "title": "RQ1.3 configuration efficiency: token Pareto frontier",
         "formatter": "count",
@@ -85,8 +76,6 @@ PARETO_METRICS = [
         "task_count_col": "duration_seconds_task_count",
         "status_col": "duration_pareto",
         "figure_name": "rq1_3_configuration_duration_pareto.png",
-        "scaffold_figure_name": "rq1_3_by_scaffold_configuration_duration_pareto.png",
-        "model_figure_name": "rq1_3_by_model_configuration_duration_pareto.png",
         "xlabel": "Task-balanced median duration",
         "title": "RQ1.3 configuration efficiency: duration Pareto frontier",
         "formatter": "duration",
@@ -99,8 +88,6 @@ PARETO_METRICS = [
         "task_count_col": "step_count_task_count",
         "status_col": "steps_pareto",
         "figure_name": "rq1_3_configuration_steps_pareto.png",
-        "scaffold_figure_name": "rq1_3_by_scaffold_configuration_steps_pareto.png",
-        "model_figure_name": "rq1_3_by_model_configuration_steps_pareto.png",
         "xlabel": "Task-balanced median steps",
         "title": "RQ1.3 configuration efficiency: step-count Pareto frontier",
         "formatter": "count",
@@ -113,8 +100,6 @@ PARETO_METRICS = [
         "task_count_col": "shell_invocation_count_task_count",
         "status_col": "shell_invocations_pareto",
         "figure_name": "rq1_3_configuration_shell_invocations_pareto.png",
-        "scaffold_figure_name": "rq1_3_by_scaffold_configuration_shell_invocations_pareto.png",
-        "model_figure_name": "rq1_3_by_model_configuration_shell_invocations_pareto.png",
         "xlabel": "Task-balanced median shell invocations",
         "title": "RQ1.3 configuration efficiency: shell-invocation Pareto frontier",
         "formatter": "count",
@@ -127,8 +112,6 @@ PARETO_METRICS = [
         "task_count_col": "tool_call_count_task_count",
         "status_col": "tool_calls_pareto",
         "figure_name": "rq1_3_configuration_tool_calls_pareto.png",
-        "scaffold_figure_name": "rq1_3_by_scaffold_configuration_tool_calls_pareto.png",
-        "model_figure_name": "rq1_3_by_model_configuration_tool_calls_pareto.png",
         "xlabel": "Task-balanced median tool calls",
         "title": "RQ1.3 configuration efficiency: tool-call Pareto frontier",
         "formatter": "count",
@@ -141,8 +124,6 @@ PARETO_METRICS = [
         "task_count_col": "cost_usd_positive_task_count",
         "status_col": "observed_cost_pareto",
         "figure_name": "rq1_3_configuration_observed_cost_pareto.png",
-        "scaffold_figure_name": "rq1_3_by_scaffold_configuration_observed_cost_pareto.png",
-        "model_figure_name": "rq1_3_by_model_configuration_observed_cost_pareto.png",
         "xlabel": "Task-balanced median observed positive cost (USD)",
         "title": "RQ1.3 configuration efficiency: observed-cost Pareto frontier",
         "formatter": "currency",
@@ -166,8 +147,6 @@ SCAFFOLD_ORDER = [
 ]
 
 SCAFFOLD_COLORS = dict(zip(SCAFFOLD_ORDER, colorblind_cycle(len(SCAFFOLD_ORDER))))
-MODEL_COLORS = colorblind_cycle(24)
-OTHER_MODEL_COLOR = OTHER_COLOR
 
 
 def parse_args() -> argparse.Namespace:
@@ -178,7 +157,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-config-tasks", type=int, default=MIN_CONFIG_TASKS)
     parser.add_argument("--min-config-trajectories", type=int, default=MIN_CONFIG_TRAJECTORIES)
     parser.add_argument("--min-shared-tasks", type=int, default=MIN_SHARED_TASKS)
-    parser.add_argument("--max-model-pareto-models", type=int, default=MAX_MODEL_PARETO_MODELS)
     return parser.parse_args()
 
 
@@ -282,11 +260,11 @@ def config_plot_label(row: Any) -> str:
         "openai_gpt-oss-20b": "GPT-OSS 20B",
     }
     model = labels.get(str(row.model_dir), model_label(str(row.model_dir)))
-    return f"{model}\n{scaffold_short_label(str(row.scaffold))}"
+    return f"{model} +\n{scaffold_short_label(str(row.scaffold))}"
 
 
 def config_label(row: Any) -> str:
-    return f"{model_label(str(row.model_dir))} / {scaffold_label(str(row.scaffold))}"
+    return f"{model_label(str(row.model_dir))} + {scaffold_label(str(row.scaffold))}"
 
 
 def compact_count(value: float) -> str:
@@ -552,37 +530,6 @@ def add_metric_pareto_status(configs: pd.DataFrame, spec: dict[str, Any], args: 
     return out
 
 
-def representative_models(configs: pd.DataFrame, max_models: int) -> list[str]:
-    if max_models <= 0:
-        return []
-
-    selected: list[str] = []
-
-    def add_model(model: str) -> None:
-        if model not in selected and len(selected) < max_models:
-            selected.append(model)
-
-    for spec in PARETO_METRICS[:2]:
-        frontier = pareto_frontier(configs, spec["effort_col"], spec["status_col"])
-        for model in frontier["model_dir"]:
-            add_model(str(model))
-
-    status_cols = [spec["status_col"] for spec in PARETO_METRICS if spec["status_col"] in configs.columns]
-    frontier_configs = configs[configs[status_cols].any(axis=1)].copy()
-    model_priority = (
-        frontier_configs.groupby("model_dir", as_index=False)
-        .agg(frontier_points=("config_id", "size"), best_pass_rate=("task_balanced_pass_rate_pct", "max"))
-        .sort_values(["frontier_points", "best_pass_rate"], ascending=False)
-    )
-    for model in model_priority["model_dir"]:
-        add_model(str(model))
-
-    for model in configs.sort_values("task_balanced_pass_rate_pct", ascending=False)["model_dir"]:
-        add_model(str(model))
-
-    return selected
-
-
 def pareto_frontier(configs: pd.DataFrame, effort_col: str, status_col: str) -> pd.DataFrame:
     return configs[configs[status_col]].sort_values([effort_col, "task_balanced_pass_rate_pct"]).reset_index(drop=True)
 
@@ -770,102 +717,6 @@ def plot_pareto(
         ncol=4,
         frameon=False,
         columnspacing=1.1,
-        handletextpad=0.4,
-    )
-    fig.tight_layout()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=PRINT_DPI, bbox_inches="tight")
-    plt.close(fig)
-
-
-def plot_pareto_by_model(
-    configs: pd.DataFrame,
-    effort_col: str,
-    status_col: str,
-    xlabel: str,
-    title: str,
-    out: Path,
-    formatter: str,
-    highlighted_models: list[str],
-) -> None:
-    thesis_style()
-    fig, ax = plt.subplots(figsize=(8.0, 5.1))
-    sizes = marker_sizes(configs["trajectory_count"])
-    frontier = pareto_frontier(configs, effort_col, status_col)
-    model_colors = {model: MODEL_COLORS[index % len(MODEL_COLORS)] for index, model in enumerate(highlighted_models)}
-    plot_data = configs.copy()
-    plot_data["model_group"] = np.where(plot_data["model_dir"].isin(highlighted_models), plot_data["model_dir"], "Other models")
-
-    other = plot_data[plot_data["model_group"].eq("Other models")]
-    if not other.empty:
-        ax.scatter(
-            other[effort_col],
-            other["task_balanced_pass_rate_pct"],
-            s=sizes[other.index],
-            color=OTHER_MODEL_COLOR,
-            alpha=0.42,
-            edgecolor="white",
-            linewidth=0.45,
-            label="Other models",
-        )
-
-    for model in highlighted_models:
-        subset = plot_data[plot_data["model_group"].eq(model)]
-        if subset.empty:
-            continue
-        ax.scatter(
-            subset[effort_col],
-            subset["task_balanced_pass_rate_pct"],
-            s=sizes[subset.index],
-            color=model_colors[model],
-            alpha=0.72,
-            edgecolor="white",
-            linewidth=0.6,
-            label=model_label(model),
-        )
-
-    ax.scatter(
-        frontier[effort_col],
-        frontier["task_balanced_pass_rate_pct"],
-        s=marker_sizes(frontier["trajectory_count"]) + 45,
-        facecolor="none",
-        edgecolor="#222222",
-        linewidth=1.3,
-        zorder=4,
-    )
-    ax.plot(frontier[effort_col], frontier["task_balanced_pass_rate_pct"], color="#222222", linewidth=1.0, zorder=3)
-
-    label_ids = set(frontier["config_id"])
-    for i, row in enumerate(configs[configs["config_id"].isin(label_ids)].itertuples(index=False)):
-        dx, dy = label_offset(row.config_id, effort_col, i)
-        ax.annotate(
-            config_plot_label(row),
-            (getattr(row, effort_col), row.task_balanced_pass_rate_pct),
-            xytext=(dx, dy),
-            textcoords="offset points",
-            fontsize=5.9,
-            color="#222222",
-            zorder=5,
-        )
-
-    ax.set_xscale("log")
-    ax.xaxis.set_major_formatter(axis_formatter(formatter))
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel("Task-balanced pass rate (%)")
-    ax.set_title(title)
-    ax.grid(color="#DADADA", linewidth=0.7, alpha=0.65)
-    ax.set_axisbelow(True)
-    ax.margins(x=0.08)
-    ax.set_ylim(0, min(95, max(88, configs["task_balanced_pass_rate_pct"].max() + 8)))
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(
-        handles,
-        labels,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.48),
-        ncol=4,
-        frameon=False,
-        columnspacing=1.0,
         handletextpad=0.4,
     )
     fig.tight_layout()
@@ -1222,12 +1073,12 @@ def print_results(configs: pd.DataFrame, config_task: pd.DataFrame, support: dic
     print("Candidate answer to RQ1.3")
     print(
         "Agent configurations vary substantially in both task-balanced performance and resource use. "
-        "The empirical token frontier identifies a small set of nondominated scaffold-model combinations, "
+        "The empirical token frontier identifies a small set of nondominated model + scaffold combinations, "
         "while many retained configurations are dominated by alternatives with equal or higher success and lower token use. "
         "Shared-task checks show that several same-model scaffold differences remain after controlling task composition, "
         "although some apparent global advantages weaken or reverse on matched tasks. Observed efficiency is therefore "
-        "best described as a property of the complete model-scaffold configuration, without treating these descriptive "
-        "comparisons as causal scaffold effects."
+        "best described as a property of the complete model + scaffold configuration, without treating these descriptive "
+        "comparisons as causal component effects."
     )
 
 
@@ -1251,7 +1102,6 @@ def main() -> None:
     token_frontier = set(configs.loc[configs[token_spec["status_col"]], "config_id"])
     duration_frontier = set(configs.loc[configs[duration_spec["status_col"]], "config_id"])
     duration_plot_written = duration_frontier != token_frontier
-    highlighted_models = representative_models(configs, args.max_model_pareto_models)
 
     for spec in PARETO_METRICS:
         if spec["name"] == "duration" and not duration_plot_written:
@@ -1259,38 +1109,20 @@ def main() -> None:
         plot_configs = metric_configs(configs, spec, args)
         if plot_configs.empty:
             continue
-        scaffold_fig_path = args.figures_dir / "by_scaffold_pareto" / spec["scaffold_figure_name"]
+        figure_path = args.figures_dir / "configuration_pareto" / spec["figure_name"]
         plot_pareto(
             plot_configs,
             spec["effort_col"],
             spec["status_col"],
             spec["xlabel"],
             spec["title"],
-            scaffold_fig_path,
+            figure_path,
             spec["formatter"],
             spec["label_domination"],
         )
-        figure_paths.append(scaffold_fig_path)
-        model_fig_path = args.figures_dir / "by_model_pareto" / spec["model_figure_name"]
-        plot_pareto_by_model(
-            plot_configs,
-            spec["effort_col"],
-            spec["status_col"],
-            spec["xlabel"],
-            spec["title"].replace("configuration efficiency:", "configuration efficiency by model:"),
-            model_fig_path,
-            spec["formatter"],
-            highlighted_models,
-        )
-        figure_paths.append(model_fig_path)
+        figure_paths.append(figure_path)
 
     print_results(configs, config_task, support, duration_plot_written, args)
-    print("By-model Pareto highlighting")
-    print(
-        f"- Highlighted {len(highlighted_models)} representative models; "
-        f"the remaining {configs['model_dir'].nunique() - len(highlighted_models)} retained models are grouped as Other models."
-    )
-    print("- " + "; ".join(model_label(model) for model in highlighted_models))
     print("Files written")
     print(f"- {out_csv}")
     for fig_path in figure_paths:
