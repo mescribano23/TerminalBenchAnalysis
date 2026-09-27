@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze the RQ4 instruction-change robustness check.
+"""Analyze the RQ3.1 instruction-change robustness check.
 
 The instruction-changed/unchanged task split is loaded from the repository's
 processed longitudinal audit rather than from an external changelog.
@@ -115,7 +115,7 @@ def load_audit(path: Path) -> pd.DataFrame:
 
 
 def load_trajectories(path: Path) -> pd.DataFrame:
-    usecols = ["benchmark_version", "task_name", "passed", "difficulty", "category"]
+    usecols = ["benchmark_version", "submission_id", "task_name", "passed", "difficulty", "category"]
     df = pd.read_csv(path, usecols=usecols, low_memory=False)
     df = df.copy()
     df["benchmark_version"] = df["benchmark_version"].astype(str)
@@ -123,6 +123,8 @@ def load_trajectories(path: Path) -> pd.DataFrame:
     df["difficulty"] = df["difficulty"].fillna("unknown").astype(str)
     df["category"] = df["category"].fillna("unknown").astype(str)
     df["passed"] = pd.to_numeric(df["passed"], errors="coerce")
+    if df["submission_id"].isna().any():
+        raise ValueError("Instruction-change robustness requires non-missing submission_id values.")
     return df[df["benchmark_version"].isin(VERSION_ORDER)].dropna(subset=["passed"])
 
 
@@ -157,9 +159,16 @@ def build_task_changes(df: pd.DataFrame, audit: pd.DataFrame) -> pd.DataFrame:
         df.groupby("task_name", as_index=False)
         .agg(difficulty=("difficulty", modal_value), category=("category", modal_value))
     )
+    submission_task = (
+        df.groupby(["submission_id", "task_name", "benchmark_version"], as_index=False)
+        .agg(n_trajectories=("passed", "size"), submission_task_pass_rate=("passed", "mean"))
+    )
     rates = (
-        df.groupby(["task_name", "benchmark_version"], as_index=False)
-        .agg(n_trajectories=("passed", "size"), pass_rate=("passed", "mean"))
+        submission_task.groupby(["task_name", "benchmark_version"], as_index=False)
+        .agg(
+            n_trajectories=("n_trajectories", "sum"),
+            pass_rate=("submission_task_pass_rate", "mean"),
+        )
     )
     rate_wide = rates.pivot(index="task_name", columns="benchmark_version", values="pass_rate")
     n_wide = rates.pivot(index="task_name", columns="benchmark_version", values="n_trajectories")
@@ -519,7 +528,10 @@ def print_summary(
     print(bins.to_csv(index=False))
     print("Gain distribution")
     print(gains.to_csv(index=False))
-    print("Aggregation: each task has equal weight within each subset; task pass rates are means over that task's trajectories per benchmark version.")
+    print(
+        "Aggregation: trajectories are averaged within submission-task pairs, then submissions within tasks, "
+        "then tasks receive equal weight within each subset."
+    )
     if args.task_changes_csv is not None:
         print(f"Wrote per-task CSV to {args.task_changes_csv}")
     if four_version_out is not None:

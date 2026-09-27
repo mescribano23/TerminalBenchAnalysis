@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Analyze benchmark-version trajectory-effort changes for RQ4.
+"""Analyze benchmark-version trajectory-effort changes for RQ3.3.
 
 This script compares two Terminal-Bench versions' trajectory effort on a
-longitudinal dataset. The default TB2.0/TB2.1 figure establishes the RQ4 token anomaly:
+longitudinal dataset. The default TB2.0/TB2.1 figure establishes the RQ3.3 token anomaly:
 observable trajectory-effort measures generally decrease or grow modestly,
 while reported token usage increases more strongly.
 """
@@ -46,6 +46,7 @@ COMPARISON_VERSION = "2.1"
 
 REQUIRED_COLUMNS = {
     "benchmark_version",
+    "submission_id",
     "task_name",
     "step_count",
     "shell_invocation_count",
@@ -137,7 +138,7 @@ def load_trajectories(path: Path) -> pd.DataFrame:
     require_columns(df, REQUIRED_COLUMNS, str(path))
     df = df.copy()
     df["benchmark_version"] = df["benchmark_version"].astype(str)
-    for column in REQUIRED_COLUMNS.difference({"benchmark_version", "task_name"}):
+    for column in REQUIRED_COLUMNS.difference({"benchmark_version", "submission_id", "task_name"}):
         df[column] = pd.to_numeric(df[column], errors="coerce")
     df["logged_chars"] = df["message_chars"] + df["reasoning_chars"] + df["observation_chars"]
     return df.dropna(subset=["benchmark_version"])
@@ -261,13 +262,7 @@ def build_task_balanced_outputs(
     summary_rows: list[dict[str, object]] = []
     for metric in METRICS:
         column = str(metric["column"])
-        medians = (
-            df[["task_name", "benchmark_version", column]]
-            .dropna()
-            .groupby(["task_name", "benchmark_version"])[column]
-            .median()
-            .unstack()
-        )
+        medians = task_metric_pairs(df, column)
         if baseline_version not in medians.columns or comparison_version not in medians.columns:
             continue
         medians = medians.dropna(subset=[baseline_version, comparison_version]).copy()
@@ -305,6 +300,23 @@ def build_task_balanced_outputs(
                 }
             )
     return pd.DataFrame(summary_rows)
+
+
+def task_metric_pairs(df: pd.DataFrame, column: str) -> pd.DataFrame:
+    """Return submission-balanced task medians, with versions as columns."""
+    work = df[["submission_id", "task_name", "benchmark_version", column]].dropna().copy()
+    if work["submission_id"].astype(str).str.strip().eq("").any():
+        raise ValueError(f"Metric {column!r} has rows with empty submission_id values.")
+    submission_task = (
+        work.groupby(["submission_id", "task_name", "benchmark_version"], as_index=False)[column]
+        .median()
+        .rename(columns={column: "submission_task_median"})
+    )
+    return (
+        submission_task.groupby(["task_name", "benchmark_version"])["submission_task_median"]
+        .median()
+        .unstack()
+    )
 
 
 def format_raw(key: str, value: float) -> str:

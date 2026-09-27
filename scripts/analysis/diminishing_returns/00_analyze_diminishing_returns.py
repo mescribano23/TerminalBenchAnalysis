@@ -22,8 +22,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy.special import logsumexp
-from scipy.stats import norm, wilcoxon
+from scipy.stats import norm
 
+from scripts.analysis.statistical_helpers import paired_cohens_dz, two_sided_signed_rank
 from scripts.analysis.support_thresholds import MINIMUM_SUPPORT_PER_COMPARISON_CELL
 from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
 from scripts.benchmark_paths import find_repo_root
@@ -107,13 +108,8 @@ def direction(pass_median: float, fail_median: float) -> str:
 
 
 def signed_rank(values: pd.Series) -> tuple[float, float]:
-    diffs = pd.to_numeric(values, errors="coerce").dropna().to_numpy(dtype=float)
-    if len(diffs) == 0:
-        return np.nan, np.nan
-    if np.all(diffs == 0):
-        return 0.0, 1.0
-    result = wilcoxon(diffs, alternative="two-sided", zero_method="wilcox", method="auto")
-    return float(result.statistic), float(result.pvalue)
+    statistic, p_value, _ = two_sided_signed_rank(values)
+    return statistic, p_value
 
 
 def task_medians(df: pd.DataFrame, metric: str) -> tuple[pd.DataFrame, int, float, float, str]:
@@ -236,6 +232,7 @@ def within_task_rows(df: pd.DataFrame) -> pd.DataFrame:
                 and pooled_direction != dominant_direction,
                 "wilcoxon_statistic": statistic,
                 "wilcoxon_p": p_value,
+                "cohens_dz": paired_cohens_dz(per_task["difference"]),
             }
         )
 
@@ -283,6 +280,7 @@ def within_task_direction_summary(df: pd.DataFrame) -> pd.DataFrame:
                 "within_task_difference_iqr": q3 - q1,
                 "wilcoxon_statistic": statistic,
                 "wilcoxon_p": p_value,
+                "cohens_dz": paired_cohens_dz(per_task["difference"]),
                 "agree_with_pooled_task_count": agree,
                 "agree_with_pooled_task_fraction": agree / eligible if eligible else np.nan,
                 "reverse_pooled_task_count": reverse,
@@ -458,8 +456,6 @@ def fit_quadratic_conditional_logit(work: pd.DataFrame) -> dict[str, Any]:
     finite_covariance = bool(np.isfinite(covariance).all())
     finite_se = bool(np.isfinite(se).all())
     p_values = 2 * norm.sf(np.abs(beta / se))
-    ci_low = beta - 1.96 * se
-    ci_high = beta + 1.96 * se
     z_min = float(work["E"].min())
     z_max = float(work["E"].max())
     turning_point_z = float(-beta[0] / (2 * beta[1])) if beta[1] != 0 else np.nan
@@ -480,10 +476,6 @@ def fit_quadratic_conditional_logit(work: pd.DataFrame) -> dict[str, Any]:
         "beta_2_log_effort_z_squared": float(beta[1]),
         "se_beta_1": float(se[0]),
         "se_beta_2": float(se[1]),
-        "beta_1_ci_low": float(ci_low[0]),
-        "beta_1_ci_high": float(ci_high[0]),
-        "beta_2_ci_low": float(ci_low[1]),
-        "beta_2_ci_high": float(ci_high[1]),
         "beta_1_p": float(p_values[0]),
         "beta_2_p": float(p_values[1]),
         "quadratic_coefficient": float(beta[1]),
@@ -543,6 +535,7 @@ def final_results(df: pd.DataFrame) -> pd.DataFrame:
             "direction_reversal",
             "wilcoxon_statistic",
             "wilcoxon_p",
+            "cohens_dz",
             "wilcoxon_significant",
             "model_observation_count",
             "model_task_strata_count",
@@ -551,10 +544,6 @@ def final_results(df: pd.DataFrame) -> pd.DataFrame:
             "beta_2_log_effort_z_squared",
             "se_beta_1",
             "se_beta_2",
-            "beta_1_ci_low",
-            "beta_1_ci_high",
-            "beta_2_ci_low",
-            "beta_2_ci_high",
             "beta_1_p",
             "beta_2_p",
             "quadratic_coefficient",
@@ -596,6 +585,41 @@ def within_task_detail_rows(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def rq1_1_inference_table(within_summary: pd.DataFrame) -> pd.DataFrame:
+    """Compact RQ1.1 table; all quantities use the same paired task contrasts."""
+    return (
+        within_summary.rename(
+            columns={
+                "eligible_task_count": "eligible_tasks",
+                "median_within_task_difference_pass_minus_fail": "median_task_difference",
+                "wilcoxon_p": "p_value",
+            }
+        )[
+            [
+                "metric",
+                "eligible_tasks",
+                "median_task_difference",
+                "cohens_dz",
+                "wilcoxon_statistic",
+                "p_value",
+            ]
+        ]
+    )
+
+
+def rq1_2_regression_table(table: pd.DataFrame) -> pd.DataFrame:
+    """Compact RQ1.2 table for the two-sided H0: beta_2 = 0 tests."""
+    return table[
+        ["metric", "beta_1_log_effort_z", "beta_2_log_effort_z_squared", "beta_2_p"]
+    ].rename(
+        columns={
+            "beta_1_log_effort_z": "beta_1",
+            "beta_2_log_effort_z_squared": "beta_2",
+            "beta_2_p": "p_value_beta_2",
+        }
+    )
+
+
 def metric_list(series: pd.Series) -> str:
     values = series.astype(str).tolist()
     return ", ".join(values) if values else "none"
@@ -614,10 +638,14 @@ def main() -> None:
     within_summary_path = args.out / "rq1_within_task_effort_summary.csv"
     within_detail_path = args.out / "rq1_within_task_effort_by_task.csv"
     eligibility_path = args.out / "rq1_task_outcome_eligibility_thresholds.csv"
+    rq1_1_path = args.out / "rq1_1_success_failure_inference.csv"
+    rq1_2_path = args.out / "rq1_2_quadratic_regression.csv"
     table.to_csv(output_path, index=False)
     within_summary.to_csv(within_summary_path, index=False)
     within_detail.to_csv(within_detail_path, index=False)
     eligibility.to_csv(eligibility_path, index=False)
+    rq1_1_inference_table(within_summary).to_csv(rq1_1_path, index=False)
+    rq1_2_regression_table(table).to_csv(rq1_2_path, index=False)
 
     reversals = table.loc[table["direction_reversal"], "metric"]
     wilcoxon_sig = table.loc[table["wilcoxon_significant"], "metric"]
@@ -629,6 +657,8 @@ def main() -> None:
     print(f"Wrote {within_summary_path}")
     print(f"Wrote {within_detail_path}")
     print(f"Wrote {eligibility_path}")
+    print(f"Wrote {rq1_1_path}")
+    print(f"Wrote {rq1_2_path}")
 
 
 if __name__ == "__main__":

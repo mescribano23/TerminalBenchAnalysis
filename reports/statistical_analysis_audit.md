@@ -1,0 +1,151 @@
+# Statistical analysis audit
+
+## Audit summary
+
+The repository already contained RQ1.1 and RQ2.3 Wilcoxon tests, the RQ1.2 quadratic conditional logistic regressions, the RQ2.1 Spearman analysis, and RQ2.2 human-time Wilcoxon tests. Paired Cohen's dz was missing from all paired comparisons; RQ3.1 version performance, the direct changed-versus-unchanged improvement comparison, and RQ3.3 task-paired inference were also missing.
+
+The current task-balanced definition is hierarchical where submission identifiers are available: trajectories are summarized within submission-task pairs, then across submissions to form one task observation, and inference operates on tasks. Two older RQ3 scripts previously skipped the submission layer; they were aligned with this definition. RQ2.3 is intentionally different: its support rule is at least three trajectories in each within-task use/non-use cell, and it does not aggregate those probabilities within submissions. Thus thesis wording that describes the RQ2.3 threshold as distinct submissions would not match the implementation.
+
+RQ1.3 remains a descriptive Pareto analysis. The media comparison is post-hoc exploratory. RQ3.2 composition analyses and exact shared-configuration token comparisons remain descriptive. Cost is not a current longitudinal headline metric and its incomplete, configuration-dependent coverage does not support adding a primary RQ3.3 test. No confidence intervals, multiplicity correction, or extra subgroup tests were added.
+
+For RQ1.1 shell invocations and output tokens, the median task difference and dz have opposite signs. This is not a coding discrepancy: dz follows the mean paired difference by definition, while the requested raw effect is the median paired difference; skewed task differences can make their signs differ.
+
+## Formulas and implementation
+
+For paired task differences D, Cohen's dz is mean(D) / sd(D) with sample SD (ddof=1). The two-sided Wilcoxon test uses the same D values, `zero_method='wilcox'`, and reports W=0, p=1 for an all-zero contrast. Cliff's delta is (# changed>unchanged - # changed<unchanged)/(n_changed*n_unchanged), paired with a two-sided Mann-Whitney U test. The RQ1.2 test is H0: beta2=0 versus H1: beta2!=0.
+
+## Thesis-ready results
+
+### RQ1.1
+
+- Steps: median delta = 2.000, dz = 0.131, W = 1479.5, p = 0.127 (not significant; n = 86).
+- Shell invocations: median delta = 0.500, dz = -0.006, W = 1481.0, p = 0.398 (not significant; n = 86).
+- Structured tool calls: median delta = 1.125, dz = 0.104, W = 1398.5, p = 0.118 (not significant; n = 86).
+- Input tokens: median delta = 21618.000, dz = 0.254, W = 1274.0, p = 0.0153 (significant; n = 85).
+- Output tokens: median delta = -29.500, dz = 0.164, W = 1711.0, p = 0.61 (not significant; n = 85).
+- Total tokens: median delta = 20272.000, dz = 0.246, W = 1316.0, p = 0.025 (significant; n = 85).
+- Duration: median delta = -44.887, dz = -0.275, W = 1190.0, p = 0.00339 (significant; n = 86).
+- Cost: median delta = 0.086, dz = 0.457, W = 385.0, p = 7.03e-10 (significant; n = 83).
+
+### RQ1.2
+
+- Steps: beta1 = 0.181, beta2 = -0.425, p(beta2) = 0.00283.
+- Shell invocations: beta1 = -0.092, beta2 = -0.296, p(beta2) = 0.106.
+- Structured tool calls: beta1 = -0.018, beta2 = -0.250, p(beta2) = 0.242.
+- Total tokens: beta1 = 0.207, beta2 = -0.341, p(beta2) = 0.0102.
+- Duration: beta1 = -0.252, beta2 = -0.486, p(beta2) = 0.00194.
+- Cost: beta1 = 0.852, beta2 = -0.289, p(beta2) = 0.0254.
+
+### RQ2.1
+
+- Difficulty and task pass rate: Spearman rho = -0.483, p = 1.61e-06, n = 89 tasks.
+
+### RQ2.2
+
+- Post-hoc exploratory media finding: 7 media tasks averaged 16.0% versus 38.4% for 82 other tasks (delta = -22.4 pp); no confirmatory test or Cliff's delta is reported.
+- Agent vs expert: median agent duration = 7.11 min, median estimate = 60.00 min, median paired delta = -47.08 min, dz = -0.509, W = 47.0, p = 1.84e-15 (n = 88). Success-only median = 7.25 min; median paired delta = -46.06 min and median agent/estimate ratio = 0.124 (descriptive only).
+- Agent vs junior: median agent duration = 7.11 min, median estimate = 240.00 min, median paired delta = -235.27 min, dz = -0.403, W = 1.0, p = 3.86e-16 (n = 88). Success-only median = 7.25 min; median paired delta = -235.46 min and median agent/estimate ratio = 0.022 (descriptive only).
+
+### RQ2.3
+
+- Inspect/search: use rate = 88.4%, mean/median delta = 9.50/7.42 pp, dz = 0.784, W = 428.0, p = 3.19e-10 (significant; n = 89).
+- Modify/write: use rate = 77.2%, mean/median delta = 5.70/3.90 pp, dz = 0.510, W = 854.0, p = 7.25e-06 (significant; n = 89).
+- Execute/run: use rate = 61.0%, mean/median delta = 7.71/5.79 pp, dz = 0.521, W = 769.0, p = 1.26e-06 (significant; n = 89).
+- Test/validate: use rate = 12.0%, mean/median delta = 7.81/6.91 pp, dz = 0.498, W = 722.0, p = 1.65e-05 (significant; n = 82).
+- Environment/dependencies: use rate = 37.3%, mean/median delta = 2.35/2.19 pp, dz = 0.120, W = 1273.0, p = 0.183 (not significant; n = 80).
+- Version control: use rate = 10.6%, mean/median delta = -2.31/-1.94 pp, dz = -0.120, W = 543.0, p = 0.489 (not significant; n = 50).
+- Data query/transform: use rate = 4.0%, mean/median delta = -3.75/-2.96 pp, dz = -0.183, W = 38.0, p = 0.635 (not significant; n = 13).
+- Network/external: use rate = 10.1%, mean/median delta = -2.40/-3.01 pp, dz = -0.100, W = 450.0, p = 0.228 (not significant; n = 48).
+- Media/specialized: use rate = 2.2%, mean/median delta = 2.06/5.43 pp, dz = 0.101, W = 32.0, p = 0.622 (not significant; n = 12).
+
+### RQ3.1
+
+- 2.0->2.1: 36.6% -> 75.1% (delta = 38.45 pp; mean/median task delta = 38.45/36.79 pp), dz = 1.803, W = 1.0, p = 2.64e-16 (n = 89).
+- 3.0->4.0: 21.8% -> 36.2% (delta = 14.34 pp; mean/median task delta = 14.34/14.38 pp), dz = 0.908, W = 173.5, p = 1.8e-08 (n = 66).
+- Instruction-change comparison, 2.0->2.1: changed tasks improved by 41.70 pp on average (median 40.13) versus 37.38 pp (median 36.04) for unchanged tasks; between-group mean difference = 4.31 pp, Cliff's delta = 0.104, U = 814.0, p = 0.467 (n = 22/67).
+- Instruction-change comparison, 3.0->4.0: changed tasks improved by 19.63 pp on average (median 17.78) versus 13.28 pp (median 12.78) for unchanged tasks; between-group mean difference = 6.35 pp, Cliff's delta = 0.183, U = 358.0, p = 0.344 (n = 11/55).
+
+### RQ3.3
+
+- 2.0->2.1, Steps: headline median 21 -> 18 (-14.3%); mean/median paired task delta = -3.31/-3.5, dz = -0.313, W = 1129.0, p = 0.000889 (n = 89).
+- 2.0->2.1, Shell invocations: headline median 20 -> 15 (-25.0%); mean/median paired task delta = -5.75/-4.5, dz = -0.522, W = 750.0, p = 1.38e-06 (n = 89).
+- 2.0->2.1, Structured tool calls: headline median 23 -> 19 (-17.4%); mean/median paired task delta = -5.19/-5, dz = -0.417, W = 929.0, p = 3.05e-05 (n = 89).
+- 2.0->2.1, Duration: headline median 409 -> 377 (-7.8%); mean/median paired task delta = -39/-57.8, dz = -0.139, W = 1312.0, p = 0.00473 (n = 89).
+- 2.0->2.1, Total tokens: headline median 2.06e+05 -> 2.82e+05 (+36.6%); mean/median paired task delta = 2.13e+05/6.31e+04, dz = 0.312, W = 1032.0, p = 7.17e-05 (n = 89).
+- 3.0->4.0, Steps: headline median 71 -> 60 (-15.5%); mean/median paired task delta = -9.48/-11.2, dz = -0.365, W = 430.5, p = 1.61e-05 (n = 66).
+- 3.0->4.0, Shell invocations: headline median 55 -> 47 (-14.5%); mean/median paired task delta = -3.48/-6, dz = -0.166, W = 632.5, p = 0.00251 (n = 66).
+- 3.0->4.0, Structured tool calls: headline median 75 -> 63 (-16.0%); mean/median paired task delta = -10.3/-9.75, dz = -0.441, W = 407.0, p = 8.11e-06 (n = 66).
+- 3.0->4.0, Duration: headline median 1.97e+03 -> 1.64e+03 (-16.8%); mean/median paired task delta = -589/-546, dz = -0.586, W = 180.0, p = 3.38e-09 (n = 66).
+- 3.0->4.0, Total tokens: headline median 8.03e+06 -> 5.3e+06 (-34.0%); mean/median paired task delta = -2.54e+06/-2.17e+06, dz = -0.536, W = 381.0, p = 3.69e-06 (n = 66).
+
+### Shared TB3.0/TB4.0 configurations (descriptive)
+
+- claude-code / claude-fable-5: 5,474,905 -> 5,202,921 tokens (-5.0%, decrease; 66 shared tasks).
+- claude-code / claude-opus-4-8: 9,832,830 -> 12,224,736 tokens (+24.3%, increase; 66 shared tasks).
+- claude-code / claude-sonnet-5: 32,988,530 -> 39,208,232 tokens (+18.9%, increase; 66 shared tasks).
+- claude-code / glm-5.3: 10,022,539 -> 17,812,942 tokens (+77.7%, increase; 65 shared tasks).
+- codex / gpt-5.6-luna: 9,173,580 -> 11,789,155 tokens (+28.5%, increase; 66 shared tasks).
+- codex / gpt-5.6-sol: 4,731,088 -> 5,002,708 tokens (+5.7%, increase; 66 shared tasks).
+- codex / gpt-5.6-terra: 6,730,560 -> 7,290,234 tokens (+8.3%, increase; 66 shared tasks).
+- Summary: 6/7 increased; median change +18.9%, range -5.0% to +77.7%; no significance test.
+
+## Suggested methodology wording
+
+Statistical inference used tasks as the unit of analysis after task-balanced aggregation: where submission identifiers were available, trajectories were first summarized within submission-task pairs and then across submissions. Paired task comparisons used two-sided Wilcoxon signed-rank tests with paired Cohen's dz, while comparisons of independent task groups used two-sided Mann-Whitney U tests with Cliff's delta. Ordinal difficulty associations used Spearman's rho, and RQ1.2 retained the quadratic conditional-logistic coefficient beta2 and its two-sided test of H0: beta2=0. Post-hoc media, Pareto, composition, subgroup, diagnostic token, and sparse shared-configuration analyses remained descriptive.
+
+## Thesis wording changes
+
+No thesis manuscript or Results-section source file is present in the repository, so exact sentence-level edits could not be marked in place. Apply these claim-level replacements:
+
+- RQ1.1: reserve 'statistically significant' for metrics with p<0.05 in the table above, and always pair it with the signed median difference and dz. Do not infer the task-level direction from pooled success/failure medians where the repository flags a reversal.
+- RQ2.3: use 'was associated with' rather than causal language. State that support means three use and three non-use trajectories per task, not three distinct submissions, and do not claim subgroup significance from category/difficulty figures.
+- RQ3.1: state improvement using the paired shared-task results. The instruction conclusion must be based on the changed-versus-unchanged Mann-Whitney/Cliff comparison, not separate within-group p-values.
+- RQ3.3: distinguish pooled headline percentage changes from paired task-level inference. Describe increases/decreases as statistically supported only where the paired Wilcoxon p-value is below 0.05, and include dz.
+- Cost: do not add a longitudinal cost test. Cost is not a current headline RQ3.3 metric; positive-cost coverage is 25,840/38,604 (66.9%) for TB2.0/TB2.1 and 7,362/10,239 (71.9%) for TB3.0/TB4.0, and coverage is configuration-dependent, so comparability is inadequate for the requested primary analysis.
+
+## Master inferential table
+
+The machine-readable table contains 40 inferential rows. Descriptive-only analyses are deliberately excluded.
+
+| RQ | Analysis | Comparison | Metric | n | Raw effect | Effect size | Test statistic | p | Direction |
+| --- | --- | --- | --- | --: | --: | ---: | --: | --: | --- |
+| RQ1.1 | successful vs failed trajectories | success - failure | Steps | 86 | 2 steps | cohens_dz=0.1306 | 1480 | 0.1272 | positive = higher for successful trajectories |
+| RQ1.1 | successful vs failed trajectories | success - failure | Shell invocations | 86 | 0.5 invocations | cohens_dz=-0.006439 | 1481 | 0.398 | positive = higher for successful trajectories |
+| RQ1.1 | successful vs failed trajectories | success - failure | Structured tool calls | 86 | 1.125 calls | cohens_dz=0.1042 | 1398 | 0.1177 | positive = higher for successful trajectories |
+| RQ1.1 | successful vs failed trajectories | success - failure | Input tokens | 85 | 2.162e+04 tokens | cohens_dz=0.2541 | 1274 | 0.0153 | positive = higher for successful trajectories |
+| RQ1.1 | successful vs failed trajectories | success - failure | Output tokens | 85 | -29.5 tokens | cohens_dz=0.1644 | 1711 | 0.6097 | positive = higher for successful trajectories |
+| RQ1.1 | successful vs failed trajectories | success - failure | Total tokens | 85 | 2.027e+04 tokens | cohens_dz=0.2462 | 1316 | 0.02501 | positive = higher for successful trajectories |
+| RQ1.1 | successful vs failed trajectories | success - failure | Duration | 86 | -44.89 seconds | cohens_dz=-0.2747 | 1190 | 0.003387 | positive = higher for successful trajectories |
+| RQ1.1 | successful vs failed trajectories | success - failure | Cost | 83 | 0.08621 USD | cohens_dz=0.4572 | 385 | 7.026e-10 | positive = higher for successful trajectories |
+| RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Steps | 87 | -0.4255 standardized quadratic log-effort coefficient | beta_2=-0.4255 | -2.986 | 0.002831 | negative = concave-down conditional relationship |
+| RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Shell invocations | 87 | -0.2961 standardized quadratic log-effort coefficient | beta_2=-0.2961 | -1.616 | 0.106 | negative = concave-down conditional relationship |
+| RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Structured tool calls | 87 | -0.2499 standardized quadratic log-effort coefficient | beta_2=-0.2499 | -1.169 | 0.2424 | negative = concave-down conditional relationship |
+| RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Total tokens | 87 | -0.3411 standardized quadratic log-effort coefficient | beta_2=-0.3411 | -2.57 | 0.01018 | negative = concave-down conditional relationship |
+| RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Duration | 87 | -0.486 standardized quadratic log-effort coefficient | beta_2=-0.486 | -3.1 | 0.001937 | negative = concave-down conditional relationship |
+| RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Cost | 86 | -0.2887 standardized quadratic log-effort coefficient | beta_2=-0.2887 | -2.235 | 0.0254 | negative = concave-down conditional relationship |
+| RQ2.1 | difficulty vs task pass rate | ordinal difficulty | Task-balanced pass rate | 89 | -0.4833 rho | spearman_rho=-0.4833 | -0.4833 | 1.609e-06 | negative = lower pass rate at greater difficulty |
+| RQ2.2 | agent duration vs human estimate | agent - expert | Duration | 88 | -47.08 minutes | cohens_dz=-0.5091 | 47 | 1.844e-15 | negative = agent duration is shorter |
+| RQ2.2 | agent duration vs human estimate | agent - junior | Duration | 88 | -235.3 minutes | cohens_dz=-0.403 | 1 | 3.863e-16 | negative = agent duration is shorter |
+| RQ2.3 | functional behavior use vs success | used - not used | Inspect/search | 89 | 9.501 percentage points (mean task contrast) | cohens_dz=0.7839 | 428 | 3.188e-10 | positive = behavior use associated with higher success |
+| RQ2.3 | functional behavior use vs success | used - not used | Modify/write | 89 | 5.704 percentage points (mean task contrast) | cohens_dz=0.5102 | 854 | 7.246e-06 | positive = behavior use associated with higher success |
+| RQ2.3 | functional behavior use vs success | used - not used | Execute/run | 89 | 7.706 percentage points (mean task contrast) | cohens_dz=0.5205 | 769 | 1.259e-06 | positive = behavior use associated with higher success |
+| RQ2.3 | functional behavior use vs success | used - not used | Test/validate | 82 | 7.812 percentage points (mean task contrast) | cohens_dz=0.4981 | 722 | 1.654e-05 | positive = behavior use associated with higher success |
+| RQ2.3 | functional behavior use vs success | used - not used | Environment/dependencies | 80 | 2.345 percentage points (mean task contrast) | cohens_dz=0.1202 | 1273 | 0.1827 | positive = behavior use associated with higher success |
+| RQ2.3 | functional behavior use vs success | used - not used | Version control | 50 | -2.309 percentage points (mean task contrast) | cohens_dz=-0.1204 | 543 | 0.4894 | positive = behavior use associated with higher success |
+| RQ2.3 | functional behavior use vs success | used - not used | Data query/transform | 13 | -3.747 percentage points (mean task contrast) | cohens_dz=-0.1829 | 38 | 0.6355 | positive = behavior use associated with higher success |
+| RQ2.3 | functional behavior use vs success | used - not used | Network/external | 48 | -2.405 percentage points (mean task contrast) | cohens_dz=-0.1003 | 450 | 0.2277 | positive = behavior use associated with higher success |
+| RQ2.3 | functional behavior use vs success | used - not used | Media/specialized | 12 | 2.058 percentage points (mean task contrast) | cohens_dz=0.1013 | 32 | 0.6221 | positive = behavior use associated with higher success |
+| RQ3.1 | benchmark-version performance | 2.0->2.1 | Task-balanced pass rate | 89 | 38.45 percentage points | cohens_dz=1.803 | 1 | 2.639e-16 | positive = higher performance in the newer version |
+| RQ3.1 | benchmark-version performance | 3.0->4.0 | Task-balanced pass rate | 66 | 14.34 percentage points | cohens_dz=0.9079 | 173.5 | 1.801e-08 | positive = higher performance in the newer version |
+| RQ3.1 | instruction-change robustness | 2.0->2.1 | Task pass-rate improvement | 89 | 4.314 percentage points | cliffs_delta=0.1045 | 814 | 0.4669 | positive = changed tasks tended to improve more |
+| RQ3.1 | instruction-change robustness | 3.0->4.0 | Task pass-rate improvement | 66 | 6.349 percentage points | cliffs_delta=0.1835 | 358 | 0.3439 | positive = changed tasks tended to improve more |
+| RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Steps | 89 | -3.5 steps | cohens_dz=-0.3129 | 1129 | 0.0008895 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Shell invocations | 89 | -4.5 invocations | cohens_dz=-0.522 | 750 | 1.383e-06 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Structured tool calls | 89 | -5 calls | cohens_dz=-0.4169 | 929 | 3.051e-05 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Duration | 89 | -57.8 seconds | cohens_dz=-0.1385 | 1312 | 0.004727 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Total tokens | 89 | 6.315e+04 tokens | cohens_dz=0.3117 | 1032 | 7.169e-05 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Steps | 66 | -11.25 steps | cohens_dz=-0.3649 | 430.5 | 1.614e-05 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Shell invocations | 66 | -6 invocations | cohens_dz=-0.1655 | 632.5 | 0.002511 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Structured tool calls | 66 | -9.75 calls | cohens_dz=-0.4407 | 407 | 8.105e-06 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Duration | 66 | -546.5 seconds | cohens_dz=-0.5864 | 180 | 3.376e-09 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Total tokens | 66 | -2.167e+06 tokens | cohens_dz=-0.5357 | 381 | 3.689e-06 | positive = metric increased in the newer version |

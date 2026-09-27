@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Descriptive RQ2.3 tool-use association analysis.
+"""RQ2.3 tool-use association analysis.
 
 Main question:
 How does trajectory-level tool use relate to success across task domains?
@@ -9,12 +9,14 @@ Outputs:
 - reports/tasks/tools/rq2_3_tool_success_association_by_difficulty.png, only if informative
 - reports/tasks/tools/rq2_3_functional_success_association_by_category.png
 - reports/tasks/tools/rq2_3_functional_success_association_by_difficulty.png, only if informative
+- data/processed_live/task_mining/tools/rq2_3_functional_behavior_inference.csv
 
-This is a descriptive, trajectory-level analysis. Repeated trials are not
-aggregated within submissions. Overall results are pooled over trajectories.
+Behavior use is measured per trajectory. Repeated trials are not aggregated
+within submissions. Overall descriptive results are pooled over trajectories.
 Category and difficulty summaries are task-balanced: tool use is still measured
 per trajectory, but used-vs-not-used success contrasts are first computed within
-each task and then averaged across eligible tasks.
+each task and then averaged across eligible tasks. Overall functional contrasts
+also receive paired task-level Cohen's dz and Wilcoxon signed-rank inference.
 """
 
 from __future__ import annotations
@@ -31,7 +33,6 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.stats import wilcoxon
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -40,6 +41,7 @@ if str(REPO_ROOT_CANDIDATE) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_CANDIDATE))
 
 from scripts.analysis.support_thresholds import MINIMUM_SUPPORT_PER_COMPARISON_CELL
+from scripts.analysis.statistical_helpers import paired_cohens_dz, two_sided_signed_rank
 from scripts.analysis.plot_style import (
     DIVERGING_CMAP,
     FAIL_COLOR,
@@ -890,20 +892,22 @@ def summarize_functional_wilcoxon(task_contrasts: pd.DataFrame) -> pd.DataFrame:
             & task_contrasts["pass_rate_difference_pp"].notna()
         ].copy()
         differences = eligible["pass_rate_difference_pp"].astype(float).to_numpy()
-        statistic = np.nan
-        p_value = np.nan
-        if len(differences) > 0 and not np.all(differences == 0):
-            result = wilcoxon(differences, alternative="two-sided")
-            statistic = float(result.statistic)
-            p_value = float(result.pvalue)
+        statistic, p_value, nonzero_pairs = two_sided_signed_rank(differences)
+        all_family = task_contrasts[task_contrasts["behavior_family"].eq(family)]
+        n_total = int(all_family["n_total"].sum())
+        n_used = int(all_family["n_used"].sum())
         rows.append(
             {
+                "behavior": FUNCTIONAL_FAMILY_DISPLAY[family],
                 "behavior_family": family,
+                "use_rate": n_used / n_total if n_total else np.nan,
                 "eligible_tasks": int(eligible["task_name"].nunique()),
-                "mean_task_difference_pp": float(np.mean(differences)) if len(differences) else np.nan,
-                "median_task_difference_pp": float(np.median(differences)) if len(differences) else np.nan,
+                "mean_pass_rate_difference_pp": float(np.mean(differences)) if len(differences) else np.nan,
+                "median_pass_rate_difference_pp": float(np.median(differences)) if len(differences) else np.nan,
+                "cohens_dz": paired_cohens_dz(differences),
                 "wilcoxon_statistic": statistic,
                 "p_value": p_value,
+                "nonzero_task_pairs": nonzero_pairs,
             }
         )
     return pd.DataFrame(rows)
@@ -1231,20 +1235,16 @@ def print_functional_overall_association(overall: pd.DataFrame) -> None:
 
 def print_functional_wilcoxon(wilcoxon_results: pd.DataFrame) -> None:
     print("\nFunctional Wilcoxon signed-rank checks")
-    print("| Behavior family | Eligible tasks | Mean diff | Median diff | p-value |")
-    print("| --------------- | -------------: | --------: | ----------: | ------: |")
+    print("| Behavior family | Eligible tasks | Mean diff | Median diff | Cohen's dz | p-value |")
+    print("| --------------- | -------------: | --------: | ----------: | ----------: | ------: |")
     for row in wilcoxon_results.itertuples(index=False):
         p_value = "" if pd.isna(row.p_value) else f"{row.p_value:.4g}"
         marker = " *" if not pd.isna(row.p_value) and row.p_value < 0.05 else ""
         print(
             f"| {FUNCTIONAL_FAMILY_DISPLAY[row.behavior_family]} | {row.eligible_tasks:,} | "
-            f"{pp_label(row.mean_task_difference_pp)} | {pp_label(row.median_task_difference_pp)} | "
-            f"{p_value}{marker} |"
+            f"{pp_label(row.mean_pass_rate_difference_pp)} | {pp_label(row.median_pass_rate_difference_pp)} | "
+            f"{row.cohens_dz:.3f} | {p_value}{marker} |"
         )
-    undefined = wilcoxon_results[wilcoxon_results["p_value"].isna() & wilcoxon_results["eligible_tasks"].gt(0)]
-    if not undefined.empty:
-        families = ", ".join(FUNCTIONAL_FAMILY_DISPLAY[value] for value in undefined["behavior_family"])
-        print(f"- Undefined p-values indicate all eligible task-level differences were zero: {families}.")
 
 
 def category_findings(by_category: pd.DataFrame) -> list[dict[str, Any]]:
@@ -1518,6 +1518,7 @@ def print_level_comparison(interface_overall: pd.DataFrame, functional_overall: 
 
 def main() -> None:
     args = parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
     trajectories = load_trajectories(args.trajectory_summary, args.max_trajectories)
     tasks = load_tasks(args.tasks)
     task_counts = tasks.groupby("category", as_index=False).agg(n_tasks=("task_name", "nunique"))
@@ -1547,6 +1548,8 @@ def main() -> None:
         "difficulty",
     )
     functional_wilcoxon = summarize_functional_wilcoxon(functional_task_contrasts)
+    functional_inference_path = args.out / "rq2_3_functional_behavior_inference.csv"
+    functional_wilcoxon.to_csv(functional_inference_path, index=False)
 
     removed_tables = cleanup_obsolete_tables(args.out)
 
@@ -1661,6 +1664,7 @@ def main() -> None:
     print_level_comparison(overall, functional_overall)
 
     print("\nFinal figures")
+    print(f"- {functional_inference_path}: overall task-level functional-behavior inference.")
     if category_plotted:
         print(f"- {category_figure}: task-balanced category-level pass-rate differences.")
     if difficulty_informative and difficulty_figure.resolve() in retained_figures:

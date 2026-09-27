@@ -6,6 +6,7 @@ Outputs:
 - data/processed_live/task_mining/time_estimates/task_average_duration_comparison.csv
 - data/processed_live/task_mining/time_estimates/task_time_estimate_distribution_summary.csv
 - data/processed_live/task_mining/rq2_2_time_significance.csv
+- data/processed_live/task_mining/time_estimates/rq2_2_human_time_inference.csv
 - reports/tasks/time_estimates/distribution_task_time_estimates.png
 """
 
@@ -17,9 +18,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.stats import wilcoxon
-
 from scripts.analysis.plot_style import COLORBLIND_PALETTE, NEUTRAL_COLOR
+from scripts.analysis.statistical_helpers import paired_cohens_dz, two_sided_signed_rank
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -355,20 +355,11 @@ def build_rq2_2_time_significance(task_duration_comparison: pd.DataFrame) -> pd.
     for comparison, estimate_column in comparisons:
         paired = task_duration_comparison[["median_duration_min", estimate_column]].dropna().copy()
         differences = paired["median_duration_min"] - paired[estimate_column]
-        if paired.empty:
-            statistic = np.nan
-            p_value = np.nan
-        elif np.allclose(differences, 0):
-            statistic = 0.0
-            p_value = 1.0
-        else:
-            result = wilcoxon(
-                paired["median_duration_min"],
-                paired[estimate_column],
-                alternative="two-sided",
-            )
-            statistic = float(result.statistic)
-            p_value = float(result.pvalue)
+        statistic, p_value, nonzero_pairs = two_sided_signed_rank(differences)
+        success_only = task_duration_comparison[
+            ["median_successful_duration_min", estimate_column]
+        ].dropna().copy()
+        success_differences = success_only["median_successful_duration_min"] - success_only[estimate_column]
 
         rows.append(
             {
@@ -379,8 +370,32 @@ def build_rq2_2_time_significance(task_duration_comparison: pd.DataFrame) -> pd.
                 ),
                 "median_human_estimate_min": float(paired[estimate_column].median()) if not paired.empty else np.nan,
                 "median_difference_min": float(differences.median()) if not differences.empty else np.nan,
+                "cohens_dz": paired_cohens_dz(differences),
                 "wilcoxon_statistic": statistic,
                 "p_value": p_value,
+                "nonzero_task_pairs": nonzero_pairs,
+                "success_only_eligible_tasks": int(success_only.shape[0]),
+                "success_only_median_agent_duration_min": (
+                    float(success_only["median_successful_duration_min"].median())
+                    if not success_only.empty
+                    else np.nan
+                ),
+                "success_only_median_human_estimate_min": (
+                    float(success_only[estimate_column].median()) if not success_only.empty else np.nan
+                ),
+                "success_only_median_difference_min": (
+                    float(success_differences.median()) if not success_differences.empty else np.nan
+                ),
+                "success_only_median_agent_to_human_ratio": (
+                    float(
+                        (
+                            success_only["median_successful_duration_min"]
+                            / success_only[estimate_column]
+                        ).median()
+                    )
+                    if not success_only.empty
+                    else np.nan
+                ),
             }
         )
     return pd.DataFrame(rows)
@@ -575,6 +590,7 @@ def main() -> None:
     task_duration_headline_path = args.out / "task_duration_estimate_headline_summary.csv"
     estimate_distribution_summary_path = args.out / "task_time_estimate_distribution_summary.csv"
     time_significance_path = args.out.parent / "rq2_2_time_significance.csv"
+    human_time_inference_path = args.out / "rq2_2_human_time_inference.csv"
 
     comparison.loc[:, COMPARISON_OUTPUT_COLUMNS].to_csv(comparison_path, index=False)
     task_duration_comparison = build_task_average_duration_comparison(comparison)
@@ -582,6 +598,7 @@ def main() -> None:
     build_duration_headline_summary(task_duration_comparison).to_csv(task_duration_headline_path, index=False)
     time_significance = build_rq2_2_time_significance(task_duration_comparison)
     time_significance.to_csv(time_significance_path, index=False)
+    time_significance.to_csv(human_time_inference_path, index=False)
     summarize_task_time_distributions(estimates, task_duration_comparison).to_csv(
         estimate_distribution_summary_path,
         index=False,
@@ -602,6 +619,7 @@ def main() -> None:
     print(f"Wrote {task_duration_comparison_path}")
     print(f"Wrote {task_duration_headline_path}")
     print(f"Wrote {time_significance_path}")
+    print(f"Wrote {human_time_inference_path}")
     print(f"Wrote {estimate_distribution_summary_path}")
     for figure_path in [distribution_path]:
         if figure_path is not None:

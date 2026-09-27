@@ -148,7 +148,11 @@ Compare trajectory durations with expert and junior task time estimates:
 python -m scripts.analysis.tasks.01_analyze_time_estimates
 ```
 
-The human-time comparison uses median observed trajectory duration per task as the primary agent-duration statistic and retains mean duration as a sensitivity statistic. It is a descriptive comparison to benchmark time estimates, not a causal or literal human-versus-agent speed comparison.
+The human-time comparison uses the submission-balanced median observed duration
+per task as the primary agent-duration statistic. It reports paired Cohen's
+`dz` and a two-sided Wilcoxon signed-rank test against expert and junior
+estimates. Successful-only task duration remains a descriptive robustness
+check; this is not a causal or literal human-versus-agent speed comparison.
 
 ### 5. Analyze Effort, Success, and Diminishing Returns
 
@@ -165,8 +169,9 @@ units before averaging over tasks, so duplicated retries do not reweight a
 task. Task-balanced contrasts use the shared minimum-support rule defined in
 `scripts/analysis/support_thresholds.py`. RQ1.1 task pass/fail contrasts require
 at least three distinct effective submissions in each outcome for a task-metric
-pair; the retained six effort measures are tested with Wilcoxon and
-task-conditioned quadratic logistic specifications.
+pair. All eight success/failure effort measures receive paired Cohen's `dz`
+and a two-sided Wilcoxon test. The six pre-existing curvature measures retain
+their task-conditioned quadratic logistic specifications.
 
 The paper-facing source of truth for RQ1 statistics is:
 
@@ -175,6 +180,8 @@ data/processed_live/diminishing_returns/rq1_final_statistical_results.csv
 data/processed_live/diminishing_returns/rq1_within_task_effort_summary.csv
 data/processed_live/diminishing_returns/rq1_within_task_effort_by_task.csv
 data/processed_live/diminishing_returns/rq1_task_outcome_eligibility_thresholds.csv
+data/processed_live/diminishing_returns/rq1_1_success_failure_inference.csv
+data/processed_live/diminishing_returns/rq1_2_quadratic_regression.csv
 ```
 
 Regenerate the descriptive effort-bin success-rate figures and appendix-style
@@ -237,7 +244,10 @@ population level:
 - reported output tokens: 8,788 -> 13,562 (+54.3%)
 - reported total tokens: 206,147 -> 281,590 (+36.6%)
 
-The main RQ4 effort figure keeps pooled trajectory medians as descriptive headline statistics. A task-balanced robustness table is also retained: for each of the 89 shared tasks, it computes the within-version task median in TB2.0 and TB2.1 and then summarizes paired changes over all shared tasks and over the 67 instruction-unchanged tasks.
+The main RQ3.3 effort figure keeps pooled trajectory medians as descriptive
+headline statistics. The task-balanced table first takes the median within
+each submission-task pair, then the median across submissions for each shared
+task, and finally summarizes paired task changes.
 
 ```text
 data/processed_live/longitudinal/task_balanced_effort_pooled_summary.csv
@@ -258,6 +268,28 @@ are required.
 - 34,862 = the subset where the raw trajectory contains at least two valid per-call prompt token values.
   The excluded 3,742 trajectories are still valid for pass-rate, effort, logged-character, and benchmark-level token summaries. They are excluded only from the per-call context accumulation analysis because they lack enough per-call prompt-token detail to measure within-trajectory growth.
   Instruction-change robustness uses the audited stored-instruction split: 67 instruction-unchanged tasks (29,011 trajectories) and 22 instruction-changed tasks (9,593 trajectories).
+
+### 7. Build the Statistical Audit and Master Table
+
+After regenerating the RQ-specific analyses above, build the integrated audit:
+
+```powershell
+python -m scripts.analysis.10_build_statistical_audit
+```
+
+This writes the compact master inferential table, provenance/unit audit, RQ3
+paired tables, exploratory media summary, shared TB3.0/TB4.0 configuration
+summary, and the thesis-ready report:
+
+```text
+data/processed_live/statistical_analysis/master_inferential_results.csv
+data/processed_live/statistical_analysis/analysis_provenance_and_units.csv
+data/processed_live/statistical_analysis/validation_checks.csv
+data/processed_live/longitudinal/rq3_1_version_performance_inference.csv
+data/processed_live/longitudinal/rq3_1_instruction_change_inference.csv
+data/processed_live/longitudinal/rq3_3_effort_inference.csv
+reports/statistical_analysis_audit.md
+```
 
 ## Useful Maintenance Commands
 

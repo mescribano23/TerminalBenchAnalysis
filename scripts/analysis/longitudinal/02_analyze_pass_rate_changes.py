@@ -133,9 +133,16 @@ def task_metadata(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def task_level_changes(df: pd.DataFrame) -> pd.DataFrame:
+    submission_task = (
+        df.groupby(["submission_id", "task_name", "benchmark_version"], as_index=False)
+        .agg(n_trajectories=("passed", "size"), submission_task_pass_rate=("passed", "mean"))
+    )
     rates = (
-        df.groupby(["task_name", "benchmark_version"], as_index=False)
-        .agg(n_trajectories=("passed", "size"), pass_rate=("passed", "mean"))
+        submission_task.groupby(["task_name", "benchmark_version"], as_index=False)
+        .agg(
+            n_trajectories=("n_trajectories", "sum"),
+            pass_rate=("submission_task_pass_rate", "mean"),
+        )
     )
     rate_wide = rates.pivot(index="task_name", columns="benchmark_version", values="pass_rate")
     n_wide = rates.pivot(index="task_name", columns="benchmark_version", values="n_trajectories")
