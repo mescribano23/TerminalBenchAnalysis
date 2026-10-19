@@ -25,6 +25,7 @@ import argparse
 import json
 import re
 import sys
+import textwrap
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -120,6 +121,12 @@ TOOL_FAMILY_DISPLAY = {
     "unknown_other": "Unknown/other",
 }
 TOOL_FAMILY_DISPLAY_ORDER = [TOOL_FAMILY_DISPLAY[family] for family in MAIN_TOOL_FAMILIES]
+TOOL_FAMILY_HEATMAP_LABELS = {
+    "Terminal": "Terminal",
+    "File search/read": "File search/\nread",
+    "File edit": "File edit",
+    "Web/network": "Web/\nnetwork",
+}
 
 FUNCTIONAL_FAMILY_DISPLAY = {
     "inspect_search": "Inspect/search",
@@ -133,6 +140,17 @@ FUNCTIONAL_FAMILY_DISPLAY = {
     "media_specialized": "Media/specialized",
 }
 FUNCTIONAL_FAMILY_DISPLAY_ORDER = [FUNCTIONAL_FAMILY_DISPLAY[family] for family in FUNCTIONAL_FAMILIES]
+FUNCTIONAL_FAMILY_HEATMAP_LABELS = {
+    "Inspect/search": "Inspect/\nsearch",
+    "Modify/write": "Modify/\nwrite",
+    "Execute/run": "Execute/\nrun",
+    "Test/validate": "Test/\nvalidate",
+    "Environment/dependencies": "Environment/\ndependencies",
+    "Version control": "Version\ncontrol",
+    "Data query/transform": "Data query/\ntransform",
+    "Network/external": "Network/\nexternal",
+    "Media/specialized": "Media/\nspecialized",
+}
 CORE_FUNCTIONAL_FAMILY_DISPLAY_ORDER = [
     FUNCTIONAL_FAMILY_DISPLAY[family]
     for family in ("inspect_search", "modify_write", "execute_run", "test_validate")
@@ -187,21 +205,21 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def textish(value: Any, max_len: int = 20000) -> str:
+def textish(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return value[:max_len]
+        return value
     if isinstance(value, (int, float, bool)):
         return str(value)
     try:
-        return json.dumps(value, ensure_ascii=False)[:max_len]
+        return json.dumps(value, ensure_ascii=False)
     except TypeError:
-        return str(value)[:max_len]
+        return str(value)
 
 
 def normalize_name(value: Any) -> str:
-    return re.sub(r"\s+", "_", textish(value, 300).strip().lower()).replace("-", "_")
+    return re.sub(r"\s+", "_", textish(value).strip().lower()).replace("-", "_")
 
 
 def tool_family(tool_name: str, has_command: bool = False) -> str:
@@ -223,7 +241,7 @@ def command_from_args(args: Any) -> str:
     if isinstance(args, dict):
         for key in COMMAND_ARGUMENT_KEYS:
             if key in args:
-                return textish(args[key], 5000)
+                return textish(args[key])
     return ""
 
 
@@ -235,7 +253,7 @@ def extract_structured_tool_calls(step: dict[str, Any]) -> list[tuple[str, bool,
     calls: list[tuple[str, bool, str]] = []
     for call in raw_calls:
         if not isinstance(call, dict):
-            command = textish(call, 1000)
+            command = textish(call)
             calls.append(("", bool(command), command))
             continue
         tool = textish(
@@ -244,12 +262,11 @@ def extract_structured_tool_calls(step: dict[str, Any]) -> list[tuple[str, bool,
             or call.get("function_name")
             or call.get("type")
             or "",
-            200,
         )
         args = call.get("arguments") or call.get("args") or call.get("input")
         fn = call.get("function")
         if isinstance(fn, dict):
-            tool = tool or textish(fn.get("name") or "", 200)
+            tool = tool or textish(fn.get("name") or "")
             args = args if args is not None else fn.get("arguments")
         command = command_from_args(args)
         if not command:
@@ -407,11 +424,9 @@ def functional_families_for_invocation(tool_name: str, command: str) -> set[str]
     return behaviors
 
 
-def clean_example(value: str, max_len: int = 120) -> str:
+def clean_example(value: str) -> str:
     cleaned = re.sub(r"\s+", " ", value or "").strip()
-    if len(cleaned) <= max_len:
-        return cleaned
-    return cleaned[: max_len - 3].rstrip() + "..."
+    return cleaned
 
 
 def add_behavior_examples(
@@ -435,7 +450,7 @@ def declared_families_from_steps(steps: list[Any]) -> set[str]:
     for step in steps:
         if not isinstance(step, dict) or step.get("source") not in {"system", "developer"}:
             continue
-        message = textish(step.get("message"), 30000).lower()
+        message = textish(step.get("message")).lower()
         for pattern, family in DECLARATION_PATTERNS:
             if re.search(pattern, message, re.IGNORECASE):
                 families.add(family)
@@ -515,7 +530,7 @@ def parse_trajectory(row: Any, trajectory_root: Path) -> dict[str, Any]:
         for step in steps:
             if not isinstance(step, dict) or step.get("source") != "agent":
                 continue
-            message = textish(step.get("message"), 30000)
+            message = textish(step.get("message"))
             calls = extract_structured_tool_calls(step)
             calls.extend(extract_embedded_function_calls(message))
             if not calls:
@@ -925,6 +940,10 @@ def pp_label(value: float | None) -> str:
     return f"{value:+.0f} pp"
 
 
+def wrap_label(value: Any, width: int) -> str:
+    return "\n".join(textwrap.wrap(str(value), width=width, break_long_words=False))
+
+
 def supported_difference(df: pd.DataFrame, min_cell_support: int) -> pd.Series:
     return (
         df["n_used"].ge(min_cell_support)
@@ -984,10 +1003,16 @@ def plot_difference_heatmap(
     family_display_order: list[str] | None = None,
     transpose: bool = False,
     annotation_fontsize: float = 9.5,
-    colorbar_label: str | None = "Mean task-level pass-rate difference (used - not used, pp)",
+    colorbar_label: str | None = "Used - not used (pp)",
     x_label_map: dict[str, str] | None = None,
+    y_label_map: dict[str, str] | None = None,
     x_label_rotation: int = 35,
     figure_height_scale: float = 0.55,
+    x_axis_label: str | None = None,
+    y_axis_label: str | None = None,
+    x_tick_fontsize: float = 10.0,
+    y_tick_fontsize: float = 10.0,
+    title_fontsize: float = 14.0,
 ) -> bool:
     if df.empty:
         return False
@@ -1033,32 +1058,42 @@ def plot_difference_heatmap(
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     cmap = colorblind_cmap(DIVERGING_CMAP)
     image = ax.imshow(values, cmap=cmap, vmin=-max_abs, vmax=max_abs, aspect="auto")
-    ax.set_title(title)
+    ax.set_title(title, fontsize=title_fontsize, pad=14)
     ax.set_xticks(np.arange(len(display.columns)))
     x_labels = [x_label_map.get(str(value), str(value)) if x_label_map else str(value) for value in display.columns]
     x_label_alignment = "right" if x_label_rotation else "center"
-    ax.set_xticklabels(x_labels, rotation=x_label_rotation, ha=x_label_alignment)
+    ax.set_xticklabels(x_labels, rotation=x_label_rotation, ha=x_label_alignment, fontsize=x_tick_fontsize)
     ax.set_yticks(np.arange(len(display.index)))
-    ax.set_yticklabels(display.index)
+    y_labels = [y_label_map.get(str(value), str(value)) if y_label_map else str(value) for value in display.index]
+    ax.set_yticklabels(y_labels, fontsize=y_tick_fontsize)
+    if x_axis_label:
+        ax.set_xlabel(x_axis_label, fontsize=11.5)
+    if y_axis_label:
+        ax.set_ylabel(y_axis_label, fontsize=11.5)
+    ax.set_xticks(np.arange(values.shape[1] + 1) - 0.5, minor=True)
+    ax.set_yticks(np.arange(values.shape[0] + 1) - 0.5, minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.2)
     ax.tick_params(axis="both", length=0)
+    ax.tick_params(which="minor", bottom=False, left=False)
 
     for i in range(values.shape[0]):
         for j in range(values.shape[1]):
             value = values[i, j]
-            if np.isfinite(value):
-                ax.text(
-                    j,
-                    i,
-                    pp_label(value),
-                    ha="center",
-                    va="center",
-                    fontsize=annotation_fontsize,
-                    color=heatmap_text_color(float(value), cmap, -max_abs, max_abs),
-                )
+            label = pp_label(value) if np.isfinite(value) else "n/a"
+            color = heatmap_text_color(float(value), cmap, -max_abs, max_abs) if np.isfinite(value) else "#666666"
+            ax.text(
+                j,
+                i,
+                label,
+                ha="center",
+                va="center",
+                fontsize=annotation_fontsize if np.isfinite(value) else max(8.0, annotation_fontsize - 2.0),
+                color=color,
+            )
 
-    cbar = fig.colorbar(image, ax=ax)
+    cbar = fig.colorbar(image, ax=ax, fraction=0.035, pad=0.03)
     if colorbar_label:
-        cbar.set_label(colorbar_label)
+        cbar.set_label(colorbar_label, fontsize=10.5)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=HEATMAP_DPI)
@@ -1571,6 +1606,16 @@ def main() -> None:
         category_figure,
         dimension_order=category_order,
         family_display_order=TOOL_FAMILY_DISPLAY_ORDER,
+        annotation_fontsize=10.0,
+        x_label_map=CATEGORY_DISPLAY_LABELS,
+        y_label_map=TOOL_FAMILY_HEATMAP_LABELS,
+        x_label_rotation=0,
+        figure_height_scale=0.58,
+        x_axis_label="Task category",
+        y_axis_label="Tool family",
+        x_tick_fontsize=9.5,
+        y_tick_fontsize=10.5,
+        title_fontsize=16.0,
     )
     retained_figures = {category_figure.resolve()} if category_plotted else set()
     removed_current_figures: list[Path] = []
@@ -1586,10 +1631,16 @@ def main() -> None:
         dimension_order=category_order,
         family_display_column="behavior_family_display",
         family_display_order=functional_category_family_order,
-        annotation_fontsize=9.0,
+        annotation_fontsize=10.0,
         x_label_map=CATEGORY_DISPLAY_LABELS,
+        y_label_map=FUNCTIONAL_FAMILY_HEATMAP_LABELS,
         x_label_rotation=0,
         figure_height_scale=0.42,
+        x_axis_label="Task category",
+        y_axis_label="Functional behavior family",
+        x_tick_fontsize=9.5,
+        y_tick_fontsize=9.5,
+        title_fontsize=16.0,
     )
     if functional_category_plotted:
         retained_figures.add(functional_category_figure.resolve())
@@ -1609,6 +1660,15 @@ def main() -> None:
             difficulty_figure,
             dimension_order=DIFFICULTY_ORDER,
             family_display_order=TOOL_FAMILY_DISPLAY_ORDER,
+            annotation_fontsize=12,
+            y_label_map=TOOL_FAMILY_HEATMAP_LABELS,
+            x_label_rotation=0,
+            figure_height_scale=0.68,
+            x_axis_label="Task difficulty",
+            y_axis_label="Tool family",
+            x_tick_fontsize=11.0,
+            y_tick_fontsize=11.0,
+            title_fontsize=16.0,
         ):
             retained_figures.add(difficulty_figure.resolve())
     elif difficulty_figure.exists():
@@ -1630,8 +1690,16 @@ def main() -> None:
             family_display_column="behavior_family_display",
             family_display_order=FUNCTIONAL_FAMILY_DISPLAY_ORDER,
             transpose=True,
-            annotation_fontsize=11,
-            colorbar_label=None,
+            annotation_fontsize=12,
+            colorbar_label="Used - not used (pp)",
+            x_label_map=FUNCTIONAL_FAMILY_HEATMAP_LABELS,
+            x_label_rotation=0,
+            figure_height_scale=0.72,
+            x_axis_label="Functional behavior family",
+            y_axis_label="Task difficulty",
+            x_tick_fontsize=10.5,
+            y_tick_fontsize=11.0,
+            title_fontsize=16.0,
         ):
             retained_figures.add(functional_difficulty_figure.resolve())
     elif functional_difficulty_figure.exists():

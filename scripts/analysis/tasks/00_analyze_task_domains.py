@@ -75,6 +75,14 @@ EFFORT_DISPLAY_NAMES = {
     "duration_seconds": "Duration seconds",
     "cost_usd_positive": "Positive cost USD",
 }
+EFFORT_HEATMAP_LABELS = {
+    "Step count": "Steps",
+    "Shell invocation count": "Shell calls",
+    "Structured tool call count": "Tool calls",
+    "Total tokens": "Tokens",
+    "Duration seconds": "Duration",
+    "Positive cost USD": "Cost",
+}
 EFFORT_SOURCE_COLUMNS = set(EFFORT_DISPLAY_NAMES) - {"cost_usd_positive"} | {"cost_usd"}
 OPEN_SOURCE_MODEL_KEYWORDS = (
     "deepseek",
@@ -888,10 +896,20 @@ def plot_pass_fail_pie_charts(
     return path
 
 
-def format_cell_value(value: float) -> str:
+def format_cell_value(value: float, variable_display: str | None = None) -> str:
+    if variable_display == "Total tokens":
+        return f"{value / 1_000:,.0f}k"
+    if variable_display == "Duration seconds":
+        return f"{value / 60:,.1f}m"
+    if variable_display == "Positive cost USD":
+        return f"${value:,.2f}"
     if abs(value) < 10 and value != int(value):
         return f"{value:,.2f}"
     return f"{value:,.0f}"
+
+
+def wrap_heatmap_label(label: str, width: int = 16) -> str:
+    return "\n".join(textwrap.wrap(label, width=width, break_long_words=False))
 
 
 def plot_effort_heatmap(
@@ -931,16 +949,20 @@ def plot_effort_heatmap(
         normalized = normalized.reindex(category_order)
         plot_values = heatmap
         plot_normalized = normalized
-        x_labels = plot_values.columns.tolist()
+        x_labels = [
+            wrap_heatmap_label(EFFORT_HEATMAP_LABELS.get(label, label), 11) for label in plot_values.columns
+        ]
         y_labels = plot_values.index.tolist()
-        figsize = (14.0, 5.2)
+        figsize = (13.2, 5.8)
     else:
         plot_values = heatmap
         plot_normalized = normalized
-        x_labels = plot_values.columns.tolist()
+        x_labels = [
+            wrap_heatmap_label(EFFORT_HEATMAP_LABELS.get(label, label), 11) for label in plot_values.columns
+        ]
         if dimension_column == "difficulty":
             y_labels = plot_values.index.tolist()
-            figsize = (11.5, 3.55)
+            figsize = (10.8, 4.4)
         else:
             y_labels = [
                 f"{category} (tasks={int(domain_lookup.loc[category, 'n_tasks'])}, "
@@ -956,13 +978,25 @@ def plot_effort_heatmap(
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
 
     ax.set_xticks(range(len(x_labels)))
-    ax.set_xticklabels(x_labels, rotation=35, ha="right")
+    if dimension_column == "category":
+        ax.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=11.0)
+    else:
+        ax.set_xticklabels(x_labels, rotation=0, ha="center", fontsize=10.5)
     ax.set_yticks(range(len(y_labels)))
-    ax.set_yticklabels(y_labels)
-    ax.set_xlabel("Effort variable")
-    ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
+    y_label_fontsize = 11.0 if dimension_column == "category" else 11 if dimension_column == "difficulty" else None
+    ax.set_yticklabels(y_labels, fontsize=y_label_fontsize)
+    ax.set_xlabel("Effort variable", fontsize=11.5 if dimension_column == "category" else None)
+    ax.set_ylabel(
+        dimension_label[:1].upper() + dimension_label[1:],
+        fontsize=11.5 if dimension_column == "category" else None,
+    )
     order_note = "overall normalized effort" if dimension_column == "category" else "task coverage"
-    ax.set_title(f"Median trajectory effort by {dimension_label}, ordered by {order_note}")
+    ax.set_title(f"Median trajectory effort by {dimension_label}", pad=16)
+
+    ax.set_xticks(np.arange(plot_values.shape[1] + 1) - 0.5, minor=True)
+    ax.set_yticks(np.arange(plot_values.shape[0] + 1) - 0.5, minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.5)
+    ax.tick_params(which="minor", bottom=False, left=False)
 
     for row_index in range(plot_values.shape[0]):
         for column_index in range(plot_values.shape[1]):
@@ -973,15 +1007,15 @@ def plot_effort_heatmap(
             ax.text(
                 column_index,
                 row_index,
-                format_cell_value(float(value)),
+                format_cell_value(float(value), str(plot_values.columns[column_index])),
                 ha="center",
                 va="center",
-                fontsize=10.5 if dimension_column == "category" else 12.5,
+                fontsize=12.25 if dimension_column == "category" else 15.0,
                 color=text_color,
             )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label("Green=low, red=high")
+    colorbar.set_label("Column-normalized effort (green=low, red=high)", fontsize=10.25)
     fig.tight_layout()
 
     path = effort_figures_dir / f"heatmap_{output_prefix}_effort_median.png"

@@ -8,6 +8,7 @@ Difficulty labels are intentionally author-intended/static labels:
 
 Observed pass rates are joined only after labels are fixed. Aggregation is
 hierarchical: trajectory -> submission-task -> task -> difficulty/version.
+TB3/TB4 labels estimate author-intended difficulty; they are not ground truth.
 
 Outputs:
 - data/processed_live/longitudinal/difficulty_over_versions/difficulty_distribution_over_versions.csv
@@ -34,6 +35,8 @@ if str(REPO_ROOT_GUESS) not in sys.path:
 
 from scripts.analysis.plot_style import COLORBLIND_PALETTE
 from scripts.benchmark_paths import find_repo_root
+from scripts.analysis.longitudinal.difficulty_protocol import require_difficulty_protocol
+from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -47,6 +50,10 @@ FIGURES_DIR_DEFAULT = REPO_ROOT / "reports" / "longitudinal" / "difficulty_over_
 
 VERSIONS = ["2.0", "2.1", "3.0", "4.0"]
 VERSION_LABELS = {"2.0": "TB2.0", "2.1": "TB2.1", "3.0": "TB3.0", "4.0": "TB4.0"}
+DIFFICULTY_VERSION_LABELS = {
+    version: f"{label}\n{'Native metadata' if version in {'2.0', '2.1'} else 'LLM estimate'}"
+    for version, label in VERSION_LABELS.items()
+}
 DIFFICULTY_ORDER = ["easy", "medium", "hard"]
 DIFFICULTY_COLORS = {
     "easy": COLORBLIND_PALETTE[2],
@@ -62,6 +69,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tb3-tb4-trajectories", type=Path, default=TB3_TB4_TRAJECTORY_DEFAULT)
     parser.add_argument("--tb3-tb4-labels", type=Path, default=TB3_TB4_LABELS_DEFAULT)
     parser.add_argument("--out-dir", type=Path, default=OUT_DIR_DEFAULT)
+    parser.add_argument("--submission-unit", choices=["effective", "leaderboard-url"], default="effective")
+    parser.add_argument("--include-sensitivities", action="store_true",
+                        help="Also write URL-grouped pass-rate tables using the same fixed labels.")
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR_DEFAULT)
     return parser.parse_args()
 
@@ -125,6 +135,7 @@ def load_tb3_tb4_labels(path: Path) -> pd.DataFrame:
             f"Missing {path}. Run `python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm` first."
         )
     labels = pd.read_csv(path, low_memory=False)
+    require_difficulty_protocol(labels, path)
     required = {"benchmark_version", "task_name", "llm_difficulty_label"}
     require_columns(labels, required, path)
     labels["benchmark_version"] = labels["benchmark_version"].astype(str)
@@ -151,8 +162,8 @@ def load_tb3_tb4_labels(path: Path) -> pd.DataFrame:
             f"{path} contains no valid easy/medium/hard TB3/TB4 labels. "
             f"Rows read: {raw_row_count}; label_source counts: {source_counts}; "
             f"error rows: {error_count}. Rerun "
-            "`python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm --model gpt-4o-mini` "
-            "after installing dependencies and setting OPENAI_API_KEY."
+            "`python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm` "
+            "after configuring the fixed three-LLM panel."
         )
     labels["difficulty_source"] = "llm_from_harbor_difficulty_explanation"
     labels["label_target"] = EXPECTED_LABEL_TARGET
@@ -183,12 +194,21 @@ def build_distribution(labels: pd.DataFrame) -> pd.DataFrame:
     return grouped.sort_values(["benchmark_version", "difficulty_order"])
 
 
-def build_task_pass_rates(trajectories: pd.DataFrame, labels: pd.DataFrame) -> pd.DataFrame:
+def build_task_pass_rates(
+    trajectories: pd.DataFrame, labels: pd.DataFrame, *, submission_unit: str = "effective"
+) -> pd.DataFrame:
+    if submission_unit == "effective":
+        trajectories = ensure_effective_submission_id(trajectories)
+        identity = EFFECTIVE_SUBMISSION_ID
+    elif submission_unit == "leaderboard-url":
+        identity = "submission_id"
+    else:
+        raise ValueError(f"Unknown submission unit: {submission_unit}")
     df = trajectories.merge(labels, on=["benchmark_version", "task_name"], how="inner", validate="many_to_one")
     if df.empty:
         raise ValueError("No trajectory rows matched difficulty labels.")
     submission_task = (
-        df.groupby(["benchmark_version", "difficulty_label", "task_name", "submission_id"], as_index=False)
+        df.groupby(["benchmark_version", "difficulty_label", "task_name", identity], as_index=False)
         .agg(
             n_trials=("passed", "size"),
             pass_count=("passed", "sum"),
@@ -198,13 +218,14 @@ def build_task_pass_rates(trajectories: pd.DataFrame, labels: pd.DataFrame) -> p
     task_rates = (
         submission_task.groupby(["benchmark_version", "difficulty_label", "task_name"], as_index=False)
         .agg(
-            n_submissions=("submission_id", "nunique"),
+            n_submissions=(identity, "nunique"),
             n_trials=("n_trials", "sum"),
             pass_count=("pass_count", "sum"),
             task_pass_rate=("submission_task_pass_rate", "mean"),
         )
     )
     task_rates["pooled_task_pass_rate"] = task_rates["pass_count"] / task_rates["n_trials"]
+    task_rates["submission_unit"] = submission_unit
     return task_rates
 
 
@@ -214,6 +235,8 @@ def build_pass_rate_summary(task_rates: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             {
                 "benchmark_version": version,
+                "task_weighting": "submission-balanced",
+                "submission_unit": str(subset["submission_unit"].iloc[0]),
                 "version_label": VERSION_LABELS.get(str(version), str(version)),
                 "difficulty_label": label,
                 "difficulty_order": DIFFICULTY_ORDER.index(label),
@@ -270,10 +293,10 @@ def plot_distribution(distribution: pd.DataFrame, path: Path) -> None:
             label=difficulty.capitalize(),
         )
         bottom += values
-    ax.set_title("Difficulty Distribution Across Terminal-Bench Versions")
+    ax.set_title("Task difficulty labels across Terminal-Bench versions")
     ax.set_ylabel("Share of tasks")
     ax.set_xticks(x)
-    ax.set_xticklabels([VERSION_LABELS[version] for version in VERSIONS])
+    ax.set_xticklabels([DIFFICULTY_VERSION_LABELS[version] for version in VERSIONS])
     ax.set_ylim(0, 1)
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1.0, decimals=0))
     ax.legend(frameon=False, ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.12))
@@ -309,10 +332,10 @@ def plot_pass_rates(summary: pd.DataFrame, path: Path) -> None:
         )
         for xi, yi in zip(x[present] + offsets[difficulty], values[present]):
             ax.text(xi, yi + 0.025, f"{yi:.0%}", ha="center", va="bottom", fontsize=8)
-    ax.set_title("Task-Weighted Pass Rate by Difficulty")
+    ax.set_title("Task-weighted pass rate by difficulty label")
     ax.set_ylabel("Pass rate")
     ax.set_xticks(x)
-    ax.set_xticklabels([VERSION_LABELS[version] for version in VERSIONS])
+    ax.set_xticklabels([DIFFICULTY_VERSION_LABELS[version] for version in VERSIONS])
     ax.set_ylim(0, min(1.05, max(0.2, float(summary["task_weighted_pass_rate"].max()) + 0.16)))
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1.0, decimals=0))
     ax.grid(axis="y", color="#D0D0D0", alpha=0.45, linewidth=0.7)
@@ -325,7 +348,7 @@ def plot_pass_rates(summary: pd.DataFrame, path: Path) -> None:
 
 
 def print_summary(distribution: pd.DataFrame, pass_summary: pd.DataFrame) -> None:
-    print("Difficulty distribution")
+    print("Difficulty labels: TB2.x native metadata; TB3/TB4 LLM estimates")
     for row in distribution.itertuples(index=False):
         print(f"{row.benchmark_version},{row.difficulty_label},{row.n_tasks},{row.task_share:.1%}")
     print("")
@@ -350,7 +373,7 @@ def main() -> None:
     )
     trajectories = pd.concat([tb2, tb3_tb4], ignore_index=True)
     distribution = build_distribution(labels)
-    task_rates = build_task_pass_rates(trajectories, labels)
+    task_rates = build_task_pass_rates(trajectories, labels, submission_unit=args.submission_unit)
     pass_summary = build_pass_rate_summary(task_rates)
     changes = build_adjacent_changes(pass_summary)
 
@@ -360,6 +383,14 @@ def main() -> None:
     distribution.to_csv(distribution_path, index=False)
     pass_summary.to_csv(pass_summary_path, index=False)
     changes.to_csv(changes_path, index=False)
+    if args.include_sensitivities:
+        url_summary = build_pass_rate_summary(build_task_pass_rates(
+            trajectories, labels, submission_unit="leaderboard-url",
+        ))
+        url_summary.to_csv(args.out_dir / "pass_rate_by_difficulty_over_versions_url_sensitivity.csv", index=False)
+        build_adjacent_changes(url_summary).to_csv(
+            args.out_dir / "pass_rate_change_by_difficulty_over_versions_url_sensitivity.csv", index=False,
+        )
 
     distribution_figure = args.figures_dir / "difficulty_distribution_over_versions.png"
     pass_rate_figure = args.figures_dir / "pass_rate_by_difficulty_over_versions.png"

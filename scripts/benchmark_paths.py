@@ -9,6 +9,8 @@ from pathlib import Path
 SUPPORTED_BENCHMARKS = (
     "terminal_bench_2_0",
     "terminal_bench_2_1",
+    "terminal_bench_3_0",
+    "terminal_bench_4_0",
 )
 
 

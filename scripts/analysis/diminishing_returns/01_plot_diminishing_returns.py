@@ -2,8 +2,8 @@
 """Descriptive RQ1 effort-bin figures.
 
 This script regenerates the full reports/diminishing_returns figure tree from
-trajectory-level data. The pooled curves remain trajectory-level. The
-task-balanced curve bins trajectories first, then averages within
+trajectory-level data. The pooled estimates remain trajectory-level. The
+task-balanced estimates bin trajectories first, then average within
 effective-submission/task/bin cells before averaging over tasks. It
 intentionally contains no statistical modeling.
 """
@@ -382,7 +382,7 @@ def heatmap_frames(subset: pd.DataFrame, variable: str) -> tuple[list[str], list
 def plot_overall_series(ax: plt.Axes, subset: pd.DataFrame) -> None:
     x = subset["bin_order"].to_numpy(dtype=float)
     y = subset["success_rate"].to_numpy(dtype=float)
-    ax.plot(x, y, marker="o", linewidth=1.8, color=PASS_COLOR)
+    ax.bar(x, y, width=0.72, color=PASS_COLOR, alpha=0.88)
 
 
 def plot_grouped_heatmap(
@@ -492,12 +492,13 @@ def plot_pooled_vs_task_balanced(task_balanced: pd.DataFrame, figures_dir: Path)
         subset = subset[subset["trajectory_count"] > 0]
         if subset.empty:
             continue
-        x = subset["bin_order"].to_numpy(dtype=float)
+        x = np.arange(len(subset), dtype=float)
         pooled = subset["pooled_pass_rate"].to_numpy(dtype=float)
         balanced = subset["task_balanced_pass_rate"].to_numpy(dtype=float)
+        width = 0.38
 
-        ax.plot(x, pooled, marker="o", linewidth=1.9, color=colors["pooled"], label="Pooled")
-        ax.plot(x, balanced, marker="s", linewidth=1.9, color=colors["task_balanced"], label="Task-balanced")
+        ax.bar(x - width / 2, pooled, width=width, color=colors["pooled"], label="Pooled")
+        ax.bar(x + width / 2, balanced, width=width, color=colors["task_balanced"], label="Task-balanced")
         ax.set_title(DISPLAY_NAMES[variable])
         ax.set_xticks(x)
         ax.set_xticklabels(subset["bin_label"].tolist(), rotation=28, ha="right")
@@ -508,7 +509,7 @@ def plot_pooled_vs_task_balanced(task_balanced: pd.DataFrame, figures_dir: Path)
     axes[0].set_ylabel("Pass rate")
     axes[2].set_ylabel("Pass rate")
     axes[-1].legend(frameon=False, loc="upper right")
-    fig.suptitle("Pooled vs task-balanced effort-success curves", y=0.995)
+    fig.suptitle("Pooled vs task-balanced effort-bin success rates", y=0.995)
     fig.tight_layout()
     path = output_dir / "rq1_pooled_vs_task_balanced_effort_success.png"
     fig.savefig(path, dpi=240, bbox_inches="tight")

@@ -9,6 +9,8 @@ The final thesis analysis keeps only three ideas:
 Outputs:
 - data/processed_live/longitudinal/token_accounting/token_vs_logged_text_monthly.csv
 - data/processed_live/longitudinal/token_accounting/token_accounting_comparisons.csv
+- data/processed_live/longitudinal/token_accounting/input_context_growth_summary.csv
+- data/processed_live/longitudinal/token_accounting/input_context_audit.json
 - reports/longitudinal/token_accounting/token_vs_logged_text_over_time.png
 - reports/longitudinal/token_accounting/input_token_accumulation.png
 - reports/longitudinal/token_accounting/input_context_growth_distribution.png
@@ -51,6 +53,8 @@ MONTHLY_TOKEN_TEXT_CSV = OUT_DIR / "token_vs_logged_text_monthly.csv"
 TOKEN_TEXT_OVER_TIME_FIG = FIGURES_DIR / "token_vs_logged_text_over_time.png"
 INPUT_ACCUMULATION_FIG = FIGURES_DIR / "input_token_accumulation.png"
 INPUT_CONTEXT_DISTRIBUTION_FIG = FIGURES_DIR / "input_context_growth_distribution.png"
+INPUT_CONTEXT_SUMMARY_CSV = OUT_DIR / "input_context_growth_summary.csv"
+INPUT_CONTEXT_AUDIT_JSON = OUT_DIR / "input_context_audit.json"
 MIN_RELIABLE_MONTH_TRAJECTORIES = 100
 
 REQUIRED_COLUMNS = {
@@ -535,7 +539,7 @@ def parse_raw_metrics(df: pd.DataFrame, root: Path, workers: int) -> pd.DataFram
             parsed.append(future.result())
             if idx % 2500 == 0:
                 print(f"Parsed {idx:,} raw trajectories...")
-    return pd.DataFrame(parsed)
+    return pd.DataFrame(parsed).sort_values(["benchmark", "rel_path"]).reset_index(drop=True)
 
 
 def task_balanced_median(df: pd.DataFrame, metric: str) -> float:
@@ -654,8 +658,10 @@ def validate_metrics(df: pd.DataFrame) -> dict[str, int]:
 
 
 def context_accumulation_trajectory_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """Measure prompt growth for trajectories with a positive initial count."""
     eligible = df[
-        df["prompt_calls"].apply(lambda x: isinstance(x, list) and len(x) >= 2)
+        df["prompt_call_count"].ge(2)
+        & df["first_call_prompt_tokens"].gt(0)
         & df["prompt_tokens"].notna()
     ].copy()
     eligible["per_call_prompt_sum"] = eligible["prompt_calls_sum"]
@@ -671,7 +677,9 @@ def context_accumulation_trajectory_metrics(df: pd.DataFrame) -> pd.DataFrame:
         diff <= 1e-6,
     )
     eligible["last_gt_first"] = eligible["last_call_prompt_tokens"] > eligible["first_call_prompt_tokens"]
-    eligible.loc[eligible["first_call_prompt_tokens"] <= 0, "final_to_first_prompt_ratio"] = math.nan
+    eligible["final_to_first_prompt_ratio"] = (
+        eligible["last_call_prompt_tokens"] / eligible["first_call_prompt_tokens"]
+    )
     return eligible
 
 
@@ -743,8 +751,8 @@ def summarize_context_accumulation(eligible: pd.DataFrame) -> pd.DataFrame:
 
 
 def context_audit(scanned: pd.DataFrame, all_eligible: pd.DataFrame) -> dict[str, Any]:
-    prompt_metric_rows = scanned["prompt_calls"].apply(lambda x: isinstance(x, list) and len(x) >= 1)
-    at_least_two_prompt_calls = scanned["prompt_calls"].apply(lambda x: isinstance(x, list) and len(x) >= 2)
+    prompt_metric_rows = scanned["prompt_call_count"].ge(1)
+    at_least_two_prompt_calls = scanned["prompt_call_count"].ge(2)
     exact_sum_rate = (
         float(all_eligible["sum_matches_trajectory_prompt"].mean() * 100.0) if not all_eligible.empty else math.nan
     )
@@ -753,6 +761,11 @@ def context_audit(scanned: pd.DataFrame, all_eligible: pd.DataFrame) -> dict[str
         "total_trajectories_scanned": int(scanned.shape[0]),
         "any_per_call_prompt_metrics": int(prompt_metric_rows.sum()),
         "at_least_two_valid_prompt_calls": int(at_least_two_prompt_calls.sum()),
+        "eligible_trajectories": int(all_eligible.shape[0]),
+        "excluded_trajectories": int(scanned.shape[0] - all_eligible.shape[0]),
+        "excluded_nonpositive_first_prompt": int(
+            (at_least_two_prompt_calls & scanned["first_call_prompt_tokens"].le(0)).sum()
+        ),
         "exact_sum_match_rate_overall": exact_sum_rate,
     }
 
@@ -770,6 +783,7 @@ def choose_accumulation_examples(df: pd.DataFrame, max_examples: int = 3) -> pd.
     tolerance = 1e-6
     candidates = df[
         df["prompt_calls"].apply(lambda x: isinstance(x, list) and len(x) >= 4)
+        & df["first_call_prompt_tokens"].gt(0)
         & df["prompt_tokens"].notna()
         & ((df["prompt_calls_sum"] - df["prompt_tokens"]).abs() <= tolerance)
     ].copy()
@@ -863,7 +877,7 @@ def plot_input_context_distribution(eligible: pd.DataFrame, out: Path) -> None:
     labels = []
     for scaffold in scaffold_order:
         values = eligible.loc[
-            eligible["scaffold"].eq(scaffold) & eligible["final_to_first_prompt_ratio"].gt(0),
+            eligible["scaffold"].eq(scaffold),
             "final_to_first_prompt_ratio",
         ].dropna()
         if values.empty:
@@ -885,7 +899,8 @@ def plot_input_context_distribution(eligible: pd.DataFrame, out: Path) -> None:
     ax_dist.set_xlabel("Final-call input / first-call input")
     ax_dist.set_title("Input context grows over the course of most trajectories")
     ax_dist.grid(axis="x", color="#E5E5E5", linewidth=0.8)
-    ax_dist.set_xscale("log")
+    ax_dist.set_xscale("symlog", linthresh=1.0)
+    ax_dist.set_xlim(left=0)
 
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -936,6 +951,10 @@ def main() -> None:
     all_context_eligible = context_accumulation_trajectory_metrics(parsed_all)
     context_summary = summarize_context_accumulation(all_context_eligible)
     audit = context_audit(parsed_all, all_context_eligible)
+    context_summary.to_csv(args.out_dir / INPUT_CONTEXT_SUMMARY_CSV.name, index=False)
+    (args.out_dir / INPUT_CONTEXT_AUDIT_JSON.name).write_text(
+        json.dumps(audit, indent=2), encoding="utf-8"
+    )
 
     examples = choose_accumulation_examples(parsed)
     accumulation_bad = examples[
@@ -960,8 +979,11 @@ def main() -> None:
     print(f"total_trajectories_scanned: {audit['total_trajectories_scanned']:,}")
     print(f"any_per_call_prompt_metrics: {audit['any_per_call_prompt_metrics']:,}")
     print(f"at_least_two_valid_prompt_calls: {audit['at_least_two_valid_prompt_calls']:,}")
+    print(f"eligible_trajectories: {audit['eligible_trajectories']:,}")
+    print(f"excluded_nonpositive_first_prompt: {audit['excluded_nonpositive_first_prompt']:,}")
     print(f"exact_sum_match_rate_overall: {audit['exact_sum_match_rate_overall']:.1f}%")
     print("\nInput-context accumulation summary")
+    print("Eligibility: at least two recorded prompt-token counts, a positive first count, and an available trajectory prompt-token total.")
     print(context_summary.to_string(index=False, float_format=lambda value: f"{value:.1f}"))
 
     print("\nInput-accumulation trajectories")
@@ -977,6 +999,8 @@ def main() -> None:
     print(f"- {monthly_csv_path}")
     print(f"- {monthly_fig_path}")
     print(f"- {args.out_dir / COMPARISONS_CSV.name}")
+    print(f"- {args.out_dir / INPUT_CONTEXT_SUMMARY_CSV.name}")
+    print(f"- {args.out_dir / INPUT_CONTEXT_AUDIT_JSON.name}")
     print(f"- {args.figures_dir / INPUT_ACCUMULATION_FIG.name}")
     print(f"- {args.figures_dir / INPUT_CONTEXT_DISTRIBUTION_FIG.name}")
 

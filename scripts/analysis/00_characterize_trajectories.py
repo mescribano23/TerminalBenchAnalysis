@@ -171,47 +171,61 @@ def scalar_value(data: Any, names: set[str], max_depth: int = 4) -> Any:
     return walk(data, 0)
 
 
-def textish(value: Any, max_len: int = 20000) -> str:
+def textish(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return value[:max_len]
+        return value
     if isinstance(value, (int, float, bool)):
         return str(value)
     try:
-        return json.dumps(value, ensure_ascii=False)[:max_len]
+        return json.dumps(value, ensure_ascii=False)
     except TypeError:
-        return str(value)[:max_len]
+        return str(value)
 
 
-def command_text(value: Any, max_len: int = 5000) -> str:
+def command_text(value: Any) -> str:
     """Normalize command-like tool arguments across scaffold schemas."""
     if isinstance(value, list) and all(isinstance(part, (str, int, float, bool)) for part in value):
-        return " ".join(shlex.quote(str(part)) for part in value)[:max_len]
-    return textish(value, max_len)
+        return " ".join(shlex.quote(str(part)) for part in value)
+    return textish(value)
 
 
-def extract_observation_text(step: dict[str, Any]) -> str:
-    chunks: list[str] = []
+def extract_observation_info(step: dict[str, Any]) -> tuple[int, bool]:
+    char_count = 0
+    chunk_count = 0
+    has_final_marker = False
     obs = step.get("observation")
     if obs is None:
-        return ""
+        return 0, False
+
+    def add_text(value: Any) -> None:
+        nonlocal char_count, chunk_count, has_final_marker
+        text = textish(value)
+        if not text:
+            return
+        if chunk_count:
+            char_count += 1
+        char_count += len(text)
+        chunk_count += 1
+        if COMPLETE_RE.search(text):
+            has_final_marker = True
 
     def walk(obj: Any) -> None:
         if isinstance(obj, dict):
             for k, v in obj.items():
                 if k in {"content", "output", "stdout", "stderr", "message", "text"} and not isinstance(v, (dict, list)):
-                    chunks.append(textish(v, 5000))
+                    add_text(v)
                 else:
                     walk(v)
         elif isinstance(obj, list):
-            for v in obj[:10]:
+            for v in obj:
                 walk(v)
         elif isinstance(obj, str):
-            chunks.append(obj[:5000])
+            add_text(obj)
 
     walk(obs)
-    return "\n".join(c for c in chunks if c)
+    return char_count, has_final_marker
 
 
 def extract_commands_from_text(text: str) -> list[str]:
@@ -230,13 +244,13 @@ def extract_tool_calls(step: dict[str, Any]) -> list[dict[str, str]]:
         raw_calls = [raw_calls]
     for call in raw_calls:
         if not isinstance(call, dict):
-            calls.append({"tool": "", "command": textish(call, 1000), "raw": textish(call, 2000)})
+            calls.append({"tool": "", "command": textish(call), "raw": "1"})
             continue
-        tool = textish(call.get("name") or call.get("tool_name") or call.get("function_name") or call.get("type") or "", 200)
+        tool = textish(call.get("name") or call.get("tool_name") or call.get("function_name") or call.get("type") or "")
         args = call.get("arguments") or call.get("args") or call.get("input")
         fn = call.get("function")
         if isinstance(fn, dict):
-            tool = tool or textish(fn.get("name") or "", 200)
+            tool = tool or textish(fn.get("name") or "")
             args = args if args is not None else fn.get("arguments")
         if isinstance(args, str):
             try:
@@ -248,14 +262,14 @@ def extract_tool_calls(step: dict[str, Any]) -> list[dict[str, str]]:
         if isinstance(args, dict):
             for key in COMMAND_ARGUMENT_KEYS:
                 if key in args:
-                    command = command_text(args[key], 5000)
+                    command = command_text(args[key])
                     break
         if not command:
             for key in COMMAND_ARGUMENT_KEYS:
                 if key in call:
-                    command = command_text(call[key], 5000)
+                    command = command_text(call[key])
                     break
-        calls.append({"tool": tool, "command": command, "raw": textish(call, 5000)})
+        calls.append({"tool": tool, "command": command, "raw": "1"})
     return calls
 
 
@@ -651,12 +665,12 @@ def main() -> None:
         file_run_id = filename.split("_", 1)[1] if "_" in filename else ""
         index_meta = index_by_rel.get(rel_key, {})
         agent = data.get("agent") if isinstance(data.get("agent"), dict) else {}
-        model_name = textish(agent.get("model_name") or model_dir, 300)
-        version = textish(agent.get("version") or "", 100)
+        model_name = textish(agent.get("model_name") or model_dir)
+        version = textish(agent.get("version") or "")
         extra = agent.get("extra") if isinstance(agent.get("extra"), dict) else {}
-        original_format = textish(extra.get("original_format") or "", 200)
+        original_format = textish(extra.get("original_format") or "")
         steps = data.get("steps") if isinstance(data.get("steps"), list) else []
-        task_id = textish(scalar_value(data, {"task_id", "task_name", "taskName", "instance_id"}, max_depth=5) or file_task_id, 300)
+        task_id = textish(scalar_value(data, {"task_id", "task_name", "taskName", "instance_id"}, max_depth=5) or file_task_id)
         task_name = leaderboard_task_names.get(file_task_id, "")
         leaderboard_matches = [
             m for m in leaderboard_by_checksum.get(file_task_id, [])
@@ -701,14 +715,14 @@ def main() -> None:
         for idx, raw_step in enumerate(steps, start=1):
             if not isinstance(raw_step, dict):
                 continue
-            source_counts[textish(raw_step.get("source") or "", 50)] += 1
-            msg = textish(raw_step.get("message"), 20000)
-            reasoning = textish(raw_step.get("reasoning_content"), 20000)
-            obs_text = extract_observation_text(raw_step)
+            source_counts[textish(raw_step.get("source") or "")] += 1
+            msg = textish(raw_step.get("message"))
+            reasoning = textish(raw_step.get("reasoning_content"))
+            obs_char_count, obs_has_final_marker = extract_observation_info(raw_step)
             message_chars += len(msg)
             reasoning_chars += len(reasoning)
-            obs_chars += len(obs_text)
-            if COMPLETE_RE.search(msg) or COMPLETE_RE.search(obs_text):
+            obs_chars += obs_char_count
+            if COMPLETE_RE.search(msg) or obs_has_final_marker:
                 has_final_marker = True
 
             metrics = raw_step.get("metrics") if isinstance(raw_step.get("metrics"), dict) else {}

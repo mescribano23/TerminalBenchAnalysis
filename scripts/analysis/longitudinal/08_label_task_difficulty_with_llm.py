@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Label Terminal-Bench 3.0/4.0 author-intended task difficulty with an LLM.
+"""Label TB3/TB4 difficulty with the fixed neutralized three-LLM consensus.
 
 The script creates a comparable easy/medium/hard label for TB3/TB4 task-version
-rows. It uses a dedicated difficulty_explanation field when present. The current
-TB3/TB4 metadata does not expose that field, so the prompt falls back to a
+rows. It uses the scraped Harbor difficulty_explanation when present, otherwise a
 structured difficulty basis built from the task metadata: expert time estimate,
 category/subcategory/tags, resource limits, package size, optional instruction
 text, and fixed TB2 author-labeled calibration examples.
@@ -16,19 +15,18 @@ leakage.
 Rows are written incrementally to a CSV cache, so interrupted or repeated runs
 reuse existing labels.
 
-Set OPENAI_API_KEY in the environment before running OpenAI labelers.
+New labels require OPENAI_API_KEY, ANTHROPIC_API_KEY, and Ollama with
+qwen2.5:7b-instruct. Cached runs make no LLM calls.
 
 Example:
-    python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm --model gpt-4o-mini
-    python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm --provider ollama --model qwen2.5:7b-instruct
-    python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm --force --labeler openai:gpt-4o-mini --labeler anthropic:claude-haiku-4-5-20251001 --labeler ollama:qwen2.5:7b-instruct
-    python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm --include-instruction-text
-    python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm --no-calibration-examples
+    python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm
+    python -m scripts.analysis.longitudinal.08_label_task_difficulty_with_llm --validate-native-tb2-difficulty
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -46,11 +44,15 @@ if str(REPO_ROOT_GUESS) not in sys.path:
 from scripts.benchmark_paths import find_repo_root
 from scripts.analysis.longitudinal.llm_consensus import (
     LabelerSpec,
-    add_provider_args,
     call_labeler,
     consensus_label,
-    parse_labeler_specs,
     preflight_provider,
+)
+from scripts.analysis.longitudinal.difficulty_protocol import (
+    DIFFICULTY_LABELERS,
+    DIFFICULTY_NEUTRALIZER,
+    DIFFICULTY_PANEL,
+    require_difficulty_protocol,
 )
 
 
@@ -284,21 +286,8 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--out", type=Path, default=OUT_DEFAULT)
-    add_provider_args(parser, default_model="gpt-4o-mini")
-    parser.add_argument(
-        "--neutralizer",
-        metavar="PROVIDER:MODEL",
-        default="",
-        help=(
-            "LLM used once per task to remove difficulty-leading words from task evidence "
-            "before the voting labelers see it. Defaults to the first configured labeler."
-        ),
-    )
-    parser.add_argument(
-        "--no-neutralize-difficulty-evidence",
-        action="store_true",
-        help="Disable the pre-vote evidence neutralization step.",
-    )
+    parser.set_defaults(labeler=[spec.id for spec in DIFFICULTY_LABELERS])
+    parser.add_argument("--ollama-url", default=os.environ.get("OLLAMA_URL", "http://localhost:11434"))
     parser.add_argument(
         "--versions",
         nargs="+",
@@ -318,14 +307,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=6000,
         help="Maximum instruction.md characters to include when --include-instruction-text is set.",
-    )
-    parser.add_argument(
-        "--no-calibration-examples",
-        action="store_true",
-        help=(
-            "Do not include fixed TB2 author-labeled easy/medium/hard examples "
-            "in the difficulty prompt."
-        ),
     )
     parser.add_argument(
         "--validate-native-tb2-difficulty",
@@ -373,48 +354,6 @@ def normalize_version(value: object) -> str:
     if text:
         return text
     return ""
-
-
-def parse_single_labeler_spec(raw: str) -> LabelerSpec:
-    if ":" not in raw:
-        raise ValueError(f"Labeler spec must use provider:model format: {raw!r}")
-    provider, model = raw.split(":", 1)
-    return LabelerSpec(provider=provider.strip(), model=model.strip())
-
-
-def neutralizer_spec(args: argparse.Namespace) -> LabelerSpec:
-    raw = normalize_text(getattr(args, "neutralizer", ""))
-    if raw:
-        return parse_single_labeler_spec(raw)
-    return parse_labeler_specs(args)[0]
-
-
-def preflight_neutralizer(args: argparse.Namespace) -> None:
-    if args.no_neutralize_difficulty_evidence:
-        return
-    spec = neutralizer_spec(args)
-    if spec.provider == "openai":
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise RuntimeError("OPENAI_API_KEY must be set for the openai neutralizer.")
-        try:
-            import openai  # noqa: F401
-        except ImportError as exc:
-            raise RuntimeError(
-                "The `openai` Python package is not installed. "
-                "Run `python -m pip install -r requirements.txt`."
-            ) from exc
-    elif spec.provider == "anthropic":
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise RuntimeError("ANTHROPIC_API_KEY must be set for the anthropic neutralizer.")
-        try:
-            import anthropic  # noqa: F401
-        except ImportError as exc:
-            raise RuntimeError(
-                "The `anthropic` Python package is not installed. "
-                "Run `python -m pip install -r requirements.txt`."
-            ) from exc
-    elif spec.provider not in {"ollama", "openai-compatible"}:
-        raise RuntimeError(f"Unsupported neutralizer provider: {spec.provider}")
 
 
 def load_metadata(paths: list[Path]) -> pd.DataFrame:
@@ -802,15 +741,7 @@ def neutralize_task_evidence(
         "description": normalize_text(row.get("description")),
         "instruction_excerpt": instruction_excerpt,
     }
-    if args.no_neutralize_difficulty_evidence:
-        return {
-            **originals,
-            "modified_fields": [],
-            "rationale": "",
-            "model": "",
-        }
-
-    spec = neutralizer_spec(args)
+    spec = DIFFICULTY_NEUTRALIZER
     neutralized = {
         field: neutralize_field(field, value, spec, args)
         for field, value in originals.items()
@@ -877,11 +808,8 @@ def calibration_examples_text() -> str:
 
 def build_validation_prompt(
     row: pd.Series,
-    include_calibration_examples: bool = True,
 ) -> str:
-    examples = ""
-    if include_calibration_examples:
-        examples = f"""
+    examples = f"""
 Calibration examples from TB2.0/TB2.1 native author-assigned difficulties.
 Use these only as scale anchors. The task to label below is not one of these
 calibration examples.
@@ -919,11 +847,8 @@ Task evidence:
 def build_prompt(
     row: pd.Series,
     instruction_excerpt: str = "",
-    include_calibration_examples: bool = True,
 ) -> str:
-    examples = ""
-    if include_calibration_examples:
-        examples = f"""
+    examples = f"""
 Calibration examples from TB2.0/TB2.1 native author-assigned difficulties.
 Use these only as scale anchors. They are not empirical run results.
 
@@ -1064,7 +989,7 @@ def validation_output_row(
         "correct": bool(predicted == gold) if predicted else False,
         "llm_confidence": label.get("llm_confidence", ""),
         "llm_rationale": label.get("llm_rationale", ""),
-        "llm_model": label.get("llm_model", args.model),
+        "llm_model": label.get("llm_model", DIFFICULTY_PANEL),
         "label_source": label.get("label_source", ""),
         "label_target": "held_out_native_tb2_difficulty_validation",
         "consensus_status": label.get("consensus_status", ""),
@@ -1137,21 +1062,36 @@ def write_validation_outputs(
     for label in DIFFICULTY_ORDER:
         summary_columns.extend([f"n_{label}", f"n_{label}_correct", f"accuracy_{label}"])
     if not scored.empty:
-        row: dict[str, Any] = {
-            "labeler": "consensus",
-            "n_tasks": int(len(scored)),
-            "n_correct": int(scored["correct"].sum()),
-            "accuracy": float(scored["correct"].mean()),
-            "n_unanimous": int(scored["consensus_status"].eq("unanimous").sum()),
-            "n_majority": int(scored["consensus_status"].eq("majority").sum()),
-            "n_tie": int(scored["consensus_status"].eq("tie").sum()),
-        }
-        for label in DIFFICULTY_ORDER:
-            subset = scored[scored["gold_difficulty_label"].eq(label)]
-            row[f"n_{label}"] = int(len(subset))
-            row[f"n_{label}_correct"] = int(subset["correct"].sum())
-            row[f"accuracy_{label}"] = float(subset["correct"].mean()) if len(subset) else ""
-        summary_rows.append(row)
+        predictions = {"consensus": scored}
+        for spec in DIFFICULTY_LABELERS:
+            individual = scored.copy()
+            individual["llm_difficulty_label"] = scored["consensus_votes_json"].map(
+                lambda raw: next(
+                    (vote.get("label", "") for vote in json.loads(raw if isinstance(raw, str) and raw.strip() else "[]")
+                     if f"{vote.get('provider')}:{vote.get('model')}" == spec.id),
+                    "",
+                )
+            )
+            predictions[spec.id] = individual
+        for labeler, predicted in predictions.items():
+            correct = predicted["gold_difficulty_label"].eq(predicted["llm_difficulty_label"])
+            row: dict[str, Any] = {
+                "labeler": labeler,
+                "n_tasks": int(len(predicted)),
+                "n_correct": int(correct.sum()),
+                "accuracy": float(correct.mean()),
+                **{
+                    f"n_{status}": int(scored["consensus_status"].eq(status).sum())
+                    if labeler == "consensus" else ""
+                    for status in ("unanimous", "majority", "tie")
+                },
+            }
+            for label in DIFFICULTY_ORDER:
+                subset = predicted["gold_difficulty_label"].eq(label)
+                row[f"n_{label}"] = int(subset.sum())
+                row[f"n_{label}_correct"] = int(correct[subset].sum())
+                row[f"accuracy_{label}"] = float(correct[subset].mean()) if subset.any() else ""
+            summary_rows.append(row)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(summary_rows, columns=summary_columns).to_csv(summary_path, index=False)
 
@@ -1191,15 +1131,11 @@ def run_tb2_native_difficulty_validation(args: argparse.Namespace) -> None:
     print("Held-out validation sample by native label:")
     print(sample_summary.to_string(index=False))
 
-    specs = parse_labeler_specs(args)
-    expected_model_string = ";".join(spec.id for spec in specs)
-    expected_neutralizer = "" if args.no_neutralize_difficulty_evidence else neutralizer_spec(args).id
     existing = load_existing_validation(args.out)
     retained = existing.iloc[0:0].copy() if args.force else existing
     sampled_tasks = set(sample["task_name"])
     retained = retained[retained["task_name"].isin(sampled_tasks)].copy()
-    retained = retained[retained["llm_model"].fillna("").astype(str).eq(expected_model_string)].copy()
-    retained = retained[retained["neutralization_model"].fillna("").astype(str).eq(expected_neutralizer)].copy()
+    require_difficulty_protocol(retained, args.out)
     completed_tasks = set(retained["task_name"])
     work = sample[~sample["task_name"].isin(completed_tasks)].copy()
     if args.limit is not None:
@@ -1207,7 +1143,6 @@ def run_tb2_native_difficulty_validation(args: argparse.Namespace) -> None:
 
     if len(work) > 0:
         preflight_provider(args)
-        preflight_neutralizer(args)
     else:
         print("All requested validation tasks are already cached; aggregating only.")
 
@@ -1222,10 +1157,7 @@ def run_tb2_native_difficulty_validation(args: argparse.Namespace) -> None:
             neutralization = neutralize_task_evidence(row_series, "", args)
             neutralized_row = row_with_neutralized_evidence(row_series, neutralization)
             label = label_task(
-                build_validation_prompt(
-                    neutralized_row,
-                    include_calibration_examples=not args.no_calibration_examples,
-                ),
+                build_validation_prompt(neutralized_row),
                 args,
             )
             source = label.get("label_source", "consensus")
@@ -1236,7 +1168,7 @@ def run_tb2_native_difficulty_validation(args: argparse.Namespace) -> None:
                 "llm_confidence": "",
                 "llm_rationale": f"ERROR: {exc}",
                 "label_source": "error",
-                "llm_model": args.model,
+                "llm_model": DIFFICULTY_PANEL,
             }
             source = "error"
         labels.append(validation_output_row(row_series, label, args, neutralization))
@@ -1275,14 +1207,7 @@ def main() -> None:
     }
     existing = load_existing(args.out)
     retained_existing = valid_completed_labels(existing) if not args.force else existing.iloc[0:0].copy()
-    expected_model_string = ";".join(spec.id for spec in parse_labeler_specs(args))
-    expected_neutralizer = "" if args.no_neutralize_difficulty_evidence else neutralizer_spec(args).id
-    retained_existing = retained_existing[
-        retained_existing["llm_model"].fillna("").astype(str).eq(expected_model_string)
-    ].copy()
-    retained_existing = retained_existing[
-        retained_existing["neutralization_model"].fillna("").astype(str).eq(expected_neutralizer)
-    ].copy()
+    require_difficulty_protocol(retained_existing, args.out)
     existing_keys = {task_key(row) for _, row in retained_existing.iterrows()}
     work = metadata[[task_key(row) not in existing_keys for _, row in metadata.iterrows()]].copy()
     if args.limit is not None:
@@ -1294,7 +1219,6 @@ def main() -> None:
 
     if planned_label_calls > 0:
         preflight_provider(args)
-        preflight_neutralizer(args)
 
     dropped_existing = len(existing) - len(retained_existing) if not args.force else len(existing)
     print(f"Existing valid labels retained: {len(labels)}")
@@ -1325,12 +1249,11 @@ def main() -> None:
                     build_prompt(
                         neutralized_row,
                         neutralization.get("instruction_excerpt", instruction_excerpt),
-                        include_calibration_examples=not args.no_calibration_examples,
                     ),
                     args,
                 )
             source = label.get("label_source", "consensus")
-            model = label.get("llm_model", args.model)
+            model = label.get("llm_model", DIFFICULTY_PANEL)
         except Exception as exc:
             label = {
                 "llm_difficulty_label": "",
@@ -1339,7 +1262,7 @@ def main() -> None:
                 "llm_rationale": f"ERROR: {exc}",
             }
             source = "error"
-            model = args.model
+            model = DIFFICULTY_PANEL
         labels.append(output_row(row_series, label, model, source, neutralization))
         if reuse_source is None and valid_output_record(labels[-1]):
             reusable_by_identity.setdefault(unchanged_task_key(row_series), labels[-1])

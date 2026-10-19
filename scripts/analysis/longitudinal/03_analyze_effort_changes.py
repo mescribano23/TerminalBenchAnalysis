@@ -10,6 +10,7 @@ while reported token usage increases more strongly.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -23,6 +24,12 @@ if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
 from scripts.analysis.plot_style import COLORBLIND_PALETTE, NEUTRAL_COLOR
+from scripts.analysis.submission_task_balancing import (
+    EFFECTIVE_SUBMISSION_COMPONENTS,
+    EFFECTIVE_SUBMISSION_ID,
+    ensure_effective_submission_id,
+)
+from scripts.analysis.statistical_helpers import paired_cohens_dz, two_sided_signed_rank
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -34,9 +41,9 @@ TB3_TB4_TRAJECTORY_CSV = LONGITUDINAL_DIR / "tb3_tb4" / "trajectory_longitudinal
 TASK_AUDIT_CSV = LONGITUDINAL_DIR / "task_version_audit.csv"
 TASK_CHANGES_CSV = LONGITUDINAL_DIR / "task_composition" / "adjacent_version_task_changes.csv"
 FIGURE_DIR = REPO_ROOT / "reports" / "longitudinal"
-BASELINE_FIGURE_PATH = FIGURE_DIR / "performance_effort_change_over_time_tb2_0_to_tb2_1.png"
-TB3_TB4_FIGURE_PATH = FIGURE_DIR / "performance_effort_change_over_time_tb3_0_to_tb4_0.png"
-POOLED_SUMMARY_CSV = LONGITUDINAL_DIR / "task_balanced_effort_pooled_summary.csv"
+BASELINE_FIGURE_PATH = FIGURE_DIR / "effort_change_pooled_refreshed_tb2_0_to_tb2_1.png"
+TB3_TB4_FIGURE_PATH = FIGURE_DIR / "effort_change_pooled_refreshed_tb3_0_to_tb4_0.png"
+POOLED_SUMMARY_CSV = LONGITUDINAL_DIR / "pooled_effort_summary_refreshed.csv"
 TASK_BALANCED_SUMMARY_CSV = LONGITUDINAL_DIR / "task_balanced_effort_summary.csv"
 
 BASELINE_LABEL = "Terminal-Bench 2.0"
@@ -65,6 +72,7 @@ TEXT_COLOR = COLORBLIND_PALETTE[2]
 INPUT_TOKEN_COLOR = COLORBLIND_PALETTE[0]
 OUTPUT_TOKEN_COLOR = COLORBLIND_PALETTE[4]
 TOTAL_TOKEN_COLOR = COLORBLIND_PALETTE[3]
+TOKEN_COLUMNS = {"prompt_tokens", "completion_tokens", "total_tokens"}
 
 
 def metric_spec(key: str, label: str, column: str, color: str) -> dict[str, str]:
@@ -102,9 +110,44 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tb3-tb4-trajectory-csv", type=Path, default=TB3_TB4_TRAJECTORY_CSV)
     parser.add_argument("--pooled-summary-csv", type=Path, default=POOLED_SUMMARY_CSV)
     parser.add_argument("--task-balanced-summary-csv", type=Path, default=TASK_BALANCED_SUMMARY_CSV)
+    parser.add_argument("--tb3-tb4-pooled-summary-csv", type=Path,
+                        default=LONGITUDINAL_DIR / "tb3_tb4" / "pooled_effort_summary_refreshed.csv")
+    parser.add_argument("--tb3-tb4-task-balanced-summary-csv", type=Path,
+                        default=LONGITUDINAL_DIR / "tb3_tb4" / "task_balanced_effort_summary.csv")
+    parser.add_argument(
+        "--task-weighting",
+        choices=["submission-balanced", "trial-weighted"],
+        default="submission-balanced",
+        help=(
+            "Task comparison aggregation: median within each submission/task/version, "
+            "then across submissions (default), or median across all trials per task/version. "
+            "Pooled summaries and figures always use trajectory-level medians."
+        ),
+    )
     parser.add_argument("--out", type=Path, default=BASELINE_FIGURE_PATH)
+    parser.add_argument(
+        "--submission-unit", choices=["effective", "leaderboard-url"], default="effective",
+        help="Effective submission IDs are primary; leaderboard URLs are an explicit sensitivity analysis.",
+    )
     parser.add_argument("--tb3-tb4-out", type=Path, default=TB3_TB4_FIGURE_PATH)
-    return parser.parse_args()
+    parser.add_argument("--combined-out", type=Path, default=None,
+                        help="Optionally also write the preserved combined TB2/TB3 comparison figure.")
+    parser.add_argument("--include-sensitivities", action="store_true",
+                        help="Also export URL-grouped and trial-weighted tables and paired URL/effective tests.")
+    parser.add_argument("--output-root", type=Path,
+                        help="Mirror default output paths under this directory for reproduction checks.")
+    args = parser.parse_args()
+    if args.include_sensitivities and (args.task_weighting != "submission-balanced" or args.submission_unit != "effective"):
+        parser.error("--include-sensitivities requires the primary submission-balanced/effective settings.")
+    if args.output_root is not None:
+        args.output_root = args.output_root.resolve()
+        if args.output_root.is_relative_to(REPO_ROOT / "data" / "trajectories"):
+            parser.error("Output root must be outside raw trajectories.")
+        for name in ("out", "tb3_tb4_out", "pooled_summary_csv", "task_balanced_summary_csv",
+                     "tb3_tb4_pooled_summary_csv", "tb3_tb4_task_balanced_summary_csv"):
+            if getattr(args, name) == parser.get_default(name):
+                setattr(args, name, args.output_root / getattr(args, name).relative_to(REPO_ROOT))
+    return args
 
 
 def thesis_style() -> None:
@@ -132,14 +175,22 @@ def require_columns(df: pd.DataFrame, required: set[str], label: str) -> None:
         raise ValueError(f"{label} is missing required columns: {', '.join(missing)}")
 
 
-def load_trajectories(path: Path) -> pd.DataFrame:
+def load_trajectories(
+    path: Path, *, task_weighting: str = "submission-balanced", submission_unit: str = "effective"
+) -> pd.DataFrame:
     df = pd.read_csv(path, low_memory=False)
-    df = df[[column for column in sorted(REQUIRED_COLUMNS) if column in df.columns]].copy()
-    require_columns(df, REQUIRED_COLUMNS, str(path))
+    retained_columns = REQUIRED_COLUMNS | set(EFFECTIVE_SUBMISSION_COMPONENTS) | {EFFECTIVE_SUBMISSION_ID}
+    df = df[[column for column in sorted(retained_columns) if column in df.columns]].copy()
+    required = REQUIRED_COLUMNS if task_weighting == "submission-balanced" else REQUIRED_COLUMNS - {"submission_id"}
+    require_columns(df, required, str(path))
     df = df.copy()
     df["benchmark_version"] = df["benchmark_version"].astype(str)
     for column in REQUIRED_COLUMNS.difference({"benchmark_version", "submission_id", "task_name"}):
         df[column] = pd.to_numeric(df[column], errors="coerce")
+    for column in TOKEN_COLUMNS:
+        df.loc[df[column] <= 0, column] = np.nan
+    if task_weighting == "submission-balanced" and submission_unit == "effective":
+        df = ensure_effective_submission_id(df)
     df["logged_chars"] = df["message_chars"] + df["reasoning_chars"] + df["observation_chars"]
     return df.dropna(subset=["benchmark_version"])
 
@@ -258,11 +309,14 @@ def build_task_balanced_outputs(
     unchanged_tasks: set[str],
     baseline_version: str,
     comparison_version: str,
+    *,
+    task_weighting: str = "submission-balanced",
+    submission_unit: str = "effective",
 ) -> pd.DataFrame:
     summary_rows: list[dict[str, object]] = []
     for metric in METRICS:
         column = str(metric["column"])
-        medians = task_metric_pairs(df, column)
+        medians = task_metric_pairs(df, column, task_weighting=task_weighting, submission_unit=submission_unit)
         if baseline_version not in medians.columns or comparison_version not in medians.columns:
             continue
         medians = medians.dropna(subset=[baseline_version, comparison_version]).copy()
@@ -284,6 +338,8 @@ def build_task_balanced_outputs(
                     "metric": metric["key"],
                     "metric_display": metric["label"],
                     "task_set": task_set,
+                    "task_weighting": task_weighting,
+                    "submission_unit": submission_unit if task_weighting == "submission-balanced" else "all-trials",
                     "n_tasks_with_both_versions": n_tasks,
                     "median_paired_change": median_change,
                     "median_paired_relative_change_pct": (
@@ -302,13 +358,38 @@ def build_task_balanced_outputs(
     return pd.DataFrame(summary_rows)
 
 
-def task_metric_pairs(df: pd.DataFrame, column: str) -> pd.DataFrame:
-    """Return submission-balanced task medians, with versions as columns."""
-    work = df[["submission_id", "task_name", "benchmark_version", column]].dropna().copy()
-    if work["submission_id"].astype(str).str.strip().eq("").any():
-        raise ValueError(f"Metric {column!r} has rows with empty submission_id values.")
+def task_metric_pairs(
+    df: pd.DataFrame, column: str, *, task_weighting: str = "submission-balanced", submission_unit: str = "effective"
+) -> pd.DataFrame:
+    """Return explicitly weighted task medians, with versions as columns.
+
+    Submission balancing gives each submission equal weight within a task.
+    Trial weighting preserves the original median across all trials, allowing
+    submissions with more repeated trials to contribute more observations.
+    """
+    if task_weighting == "trial-weighted":
+        return (
+            df[["task_name", "benchmark_version", column]]
+            .dropna()
+            .groupby(["task_name", "benchmark_version"])[column]
+            .median()
+            .unstack()
+        )
+    if task_weighting != "submission-balanced":
+        raise ValueError(f"Unknown task weighting: {task_weighting}")
+    if submission_unit == "effective":
+        if EFFECTIVE_SUBMISSION_ID not in df:
+            df = ensure_effective_submission_id(df)
+        identity = EFFECTIVE_SUBMISSION_ID
+    elif submission_unit == "leaderboard-url":
+        identity = "submission_id"
+    else:
+        raise ValueError(f"Unknown submission unit: {submission_unit}")
+    work = df[[identity, "task_name", "benchmark_version", column]].dropna().copy()
+    if work[identity].astype(str).str.strip().eq("").any():
+        raise ValueError(f"Metric {column!r} has rows with empty {identity} values.")
     submission_task = (
-        work.groupby(["submission_id", "task_name", "benchmark_version"], as_index=False)[column]
+        work.groupby([identity, "task_name", "benchmark_version"], as_index=False)[column]
         .median()
         .rename(columns={column: "submission_task_median"})
     )
@@ -324,7 +405,39 @@ def format_raw(key: str, value: float) -> str:
         return f"{value:.0f} s"
     if key in {"chars", "prompt_tokens", "completion_tokens", "total_tokens"}:
         return f"{value / 1000:.1f}k"
-    return f"{value:.0f}"
+    return f"{value:,.2f}".rstrip("0").rstrip(".")
+
+
+def summarize_task_balanced_periods(
+    df: pd.DataFrame, baseline_version: str, comparison_version: str,
+    *, submission_unit: str = "effective",
+) -> pd.DataFrame:
+    """Describe matched tasks after submission-task and across-submission medians.
+
+    The figure percentage is the ratio of cross-task medians. Paired absolute
+    and relative changes are separate columns; tests use the absolute changes.
+    """
+    rows = []
+    for metric in METRICS:
+        pairs = task_metric_pairs(df, metric["column"], submission_unit=submission_unit)
+        pairs = pairs.dropna(subset=[baseline_version, comparison_version])
+        early, late = pairs[baseline_version], pairs[comparison_version]
+        relative = ((late / early.where(early.ne(0))) - 1) * 100
+        early_value, late_value = float(early.median()), float(late.median())
+        rows.append({
+            "key": metric["key"], "metric": metric["label"], "column": metric["column"],
+            "aggregation": "median across matched task medians after submission balancing",
+            "task_weighting": "submission-balanced", "submission_unit": submission_unit,
+            "early_value": early_value, "late_value": late_value,
+            "early_valid_n": len(pairs), "late_valid_n": len(pairs),
+            "early_relative": 1.0, "late_relative": late_value / early_value if early_value else np.nan,
+            "relative_change_pct": (late_value / early_value - 1) * 100 if early_value else np.nan,
+            "median_paired_change": float((late - early).median()),
+            "median_paired_relative_change_pct": float(relative.median()),
+            "relative_valid_task_pairs": int(relative.notna().sum()),
+            "color": metric["color"],
+        })
+    return pd.DataFrame(rows)
 
 
 def add_formatted_columns(summary: pd.DataFrame) -> pd.DataFrame:
@@ -383,6 +496,7 @@ def plot(
     comparison_label: str,
     baseline_short: str,
     comparison_short: str,
+    *, aggregation_label: str = "Pooled trajectories (descriptive)",
 ) -> None:
     thesis_style()
     fig_height = max(2.65, 0.28 * len(summary) + 0.55)
@@ -391,12 +505,38 @@ def plot(
     plot_summary_panel(
         ax,
         summary,
-        f"Trajectory-effort changes from {baseline_label} to {comparison_label}",
+        f"{baseline_short} to {comparison_short}: {aggregation_label}",
         max_abs,
     )
-    ax.set_xlabel(f"Median change from {baseline_short} to {comparison_short}")
+    ax.set_xlabel("Change in median (%)")
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_combined(comparisons: list[dict[str, object]], out: Path) -> None:
+    thesis_style()
+    max_abs = max(
+        5.0,
+        max(float(comparison["summary"]["relative_change_pct"].abs().max()) for comparison in comparisons),
+    )
+    fig_height = max(5.6, 0.28 * len(METRICS) * len(comparisons) + 1.45)
+    fig, axes = plt.subplots(len(comparisons), 1, figsize=(7.2, fig_height), sharex=True)
+    if len(comparisons) == 1:
+        axes = [axes]
+
+    for ax, comparison in zip(axes, comparisons):
+        plot_summary_panel(
+            ax,
+            comparison["summary"],
+            str(comparison["title"]),
+            max_abs,
+        )
+    axes[-1].set_xlabel("Median change within comparison")
+    fig.suptitle("Trajectory-Effort Changes Across Benchmark Version Pairs", y=1.0)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout(h_pad=1.0)
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
@@ -428,6 +568,70 @@ def print_summary(
     print(f"Wrote figure to {out}")
 
 
+def write_balanced_exports(
+    trajectories: pd.DataFrame, unchanged_tasks: set[str], old: str, new: str,
+    table_dir: Path, figure_dir: Path, pooled_figure: Path, *, include_sensitivities: bool,
+    output_root: Path | None,
+) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
+    """Export shared-task figure data, paired vectors, sensitivities and captions.
+
+    Uses the same aggregation functions as the primary task table. The five
+    existing inferential metrics remain distinct from eight plotted summaries.
+    """
+    inference: list[dict[str, object]] = []
+    captions: list[dict[str, str]] = []
+    stem = f"tb{old.replace('.', '_')}_to_tb{new.replace('.', '_')}"
+    primary_metrics = {"steps", "shell_invocations", "tool_calls", "duration", "total_tokens"}
+
+    def caption_path(path: Path) -> str:
+        for base in (output_root, REPO_ROOT):
+            if base is not None and path.is_relative_to(base):
+                return path.relative_to(base).as_posix()
+        return path.as_posix()
+
+    units = ["effective", "leaderboard-url"] if include_sensitivities else ["effective"]
+    for unit in units:
+        if unit == "leaderboard-url":
+            build_task_balanced_outputs(
+                trajectories, unchanged_tasks, old, new, submission_unit=unit,
+            ).to_csv(table_dir / "task_balanced_effort_summary_url_sensitivity.csv", index=False)
+        figures = summarize_task_balanced_periods(trajectories, old, new, submission_unit=unit)
+        figures.to_csv(table_dir / f"effort_figure_data_submission_balanced_{unit}.csv", index=False)
+        detail = []
+        for metric in METRICS:
+            pairs = task_metric_pairs(trajectories, metric["column"], submission_unit=unit).dropna(subset=[old, new])
+            differences = pairs[new] - pairs[old]
+            relative = (pairs[new] / pairs[old].where(pairs[old].ne(0)) - 1) * 100
+            for task, row in pairs.iterrows():
+                detail.append({
+                    "transition": old + "->" + new, "metric": metric["key"], "task_name": task,
+                    "submission_unit": unit, "old_value": row[old], "new_value": row[new],
+                    "paired_difference": row[new] - row[old], "paired_relative_change_pct": relative.loc[task],
+                })
+            if include_sensitivities and metric["key"] in primary_metrics:
+                statistic, p_value, nonzero = two_sided_signed_rank(differences)
+                inference.append({
+                    "transition": old + "->" + new, "metric": metric["key"],
+                    "task_weighting": "submission-balanced", "submission_unit": unit,
+                    "eligible_tasks": len(pairs), "mean_paired_task_difference": differences.mean(),
+                    "median_paired_task_difference": differences.median(),
+                    "cohens_dz": paired_cohens_dz(differences), "wilcoxon_statistic": statistic,
+                    "p_value": p_value, "nonzero_task_pairs": nonzero,
+                })
+        pd.DataFrame(detail).to_csv(table_dir / f"paired_effort_tasks_{unit}.csv", index=False)
+        if unit == "effective":
+            path = figure_dir / f"effort_change_submission_balanced_{stem}.png"
+            plot(add_formatted_columns(figures), path, "TB" + old, "TB" + new, "TB" + old, "TB" + new,
+                 aggregation_label="Effective submissions, shared tasks")
+            captions.append({"path": caption_path(path), "caption": f"TB{old} to TB{new}: medians within effective submission-task pairs, then medians across submissions within tasks, then medians across matched tasks. Bars show the ratio of cross-task medians; paired absolute changes determine inference. Metric-specific missing pairs are excluded. Eight descriptive metrics are plotted; five pre-existing primary metrics are tested."})
+    if include_sensitivities:
+        build_task_balanced_outputs(
+            trajectories, unchanged_tasks, old, new, task_weighting="trial-weighted",
+        ).to_csv(table_dir / "task_balanced_effort_summary_trial_weighted_sensitivity.csv", index=False)
+    captions.append({"path": caption_path(pooled_figure), "caption": f"Refreshed descriptive trajectory medians for all retained TB{old}/TB{new} records, including unpaired task pools. Uses complete logged text and positive reported token values. Not submission-balanced; no task-level significance is implied. Historical pooled figures remain unchanged."})
+    return inference, captions
+
+
 def main() -> None:
     args = parse_args()
     baseline_version = str(args.baseline_version)
@@ -436,8 +640,9 @@ def main() -> None:
     comparison_label = args.comparison_label or full_version_label(comparison_version)
     baseline_short = version_display_label(baseline_version)
     comparison_short = version_display_label(comparison_version)
-    trajectories = load_trajectories(args.trajectory_csv)
+    trajectories = load_trajectories(args.trajectory_csv, task_weighting=args.task_weighting, submission_unit=args.submission_unit)
     summary, periods = summarize_periods(trajectories, baseline_version, comparison_version)
+    summary["aggregation_scope"] = "all retained trajectories; descriptive"
     summary = add_formatted_columns(summary)
     unchanged_tasks = load_instruction_unchanged_tasks(args)
     task_balanced_summary = build_task_balanced_outputs(
@@ -445,15 +650,34 @@ def main() -> None:
         unchanged_tasks,
         baseline_version,
         comparison_version,
+        task_weighting=args.task_weighting,
+        submission_unit=args.submission_unit,
     )
     args.pooled_summary_csv.parent.mkdir(parents=True, exist_ok=True)
+    args.task_balanced_summary_csv.parent.mkdir(parents=True, exist_ok=True)
     summary.to_csv(args.pooled_summary_csv, index=False)
     task_balanced_summary.to_csv(args.task_balanced_summary_csv, index=False)
     plot(summary, args.out, baseline_label, comparison_label, baseline_short, comparison_short)
+    exports = [(trajectories, unchanged_tasks, baseline_version, comparison_version,
+                args.task_balanced_summary_csv.parent, args.out.parent, args.out)]
     if args.include_tb3_tb4:
-        tb3_tb4_trajectories = load_trajectories(args.tb3_tb4_trajectory_csv)
+        tb3_tb4_trajectories = load_trajectories(args.tb3_tb4_trajectory_csv, task_weighting=args.task_weighting, submission_unit=args.submission_unit)
         tb3_tb4_summary, _ = summarize_periods(tb3_tb4_trajectories, "3.0", "4.0")
+        tb3_tb4_summary["aggregation_scope"] = "all retained trajectories; descriptive"
         tb3_tb4_summary = add_formatted_columns(tb3_tb4_summary)
+        tb3_tb4_tasks = build_task_balanced_outputs(
+            tb3_tb4_trajectories,
+            load_adjacent_instruction_unchanged_tasks(args.task_changes_csv, "3.0", "4.0"),
+            "3.0", "4.0", task_weighting=args.task_weighting, submission_unit=args.submission_unit,
+        )
+        for path, table in [(args.tb3_tb4_pooled_summary_csv, tb3_tb4_summary),
+                            (args.tb3_tb4_task_balanced_summary_csv, tb3_tb4_tasks)]:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            table.to_csv(path, index=False)
+        exports.append((tb3_tb4_trajectories,
+                        load_adjacent_instruction_unchanged_tasks(args.task_changes_csv, "3.0", "4.0"),
+                        "3.0", "4.0", args.tb3_tb4_task_balanced_summary_csv.parent,
+                        args.tb3_tb4_out.parent, args.tb3_tb4_out))
         plot(
             tb3_tb4_summary,
             args.tb3_tb4_out,
@@ -462,6 +686,29 @@ def main() -> None:
             "TB3.0",
             "TB4.0",
         )
+        if args.combined_out is not None:
+            plot_combined(
+                [
+                    {"summary": summary, "title": f"{baseline_label} to {comparison_label}"},
+                    {"summary": tb3_tb4_summary, "title": "Terminal-Bench 3.0 to Terminal-Bench 4.0"},
+                ],
+                args.combined_out,
+            )
+    if args.task_weighting == "submission-balanced" and args.submission_unit == "effective":
+        inference, captions = [], []
+        for export in exports:
+            rows, descriptions = write_balanced_exports(
+                *export, include_sensitivities=args.include_sensitivities, output_root=args.output_root,
+            )
+            inference.extend(rows)
+            captions.extend(descriptions)
+        if args.include_sensitivities:
+            pd.DataFrame(inference).to_csv(
+                args.task_balanced_summary_csv.parent / "rq3_3_submission_unit_sensitivity_inference.csv", index=False,
+            )
+        caption_file = args.out.parent / "effort_figure_captions.json"
+        caption_file.parent.mkdir(parents=True, exist_ok=True)
+        caption_file.write_text(json.dumps(captions, indent=2) + "\n", encoding="utf-8")
     print_summary(
         summary,
         periods,
@@ -473,6 +720,8 @@ def main() -> None:
     )
     print(f"Wrote {args.pooled_summary_csv}")
     print(f"Wrote {args.task_balanced_summary_csv}")
+    print(f"Task comparison weighting: {args.task_weighting}")
+    print(f"Submission unit: {args.submission_unit}")
     if args.include_tb3_tb4:
         print(f"Wrote TB3.0/TB4.0 figure to {args.tb3_tb4_out}")
 

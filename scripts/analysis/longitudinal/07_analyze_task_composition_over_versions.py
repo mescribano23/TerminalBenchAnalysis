@@ -28,6 +28,7 @@ if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
 from scripts.analysis.plot_style import COLORBLIND_PALETTE, OTHER_COLOR, colorblind_cycle
+from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -106,6 +107,9 @@ def parse_args() -> argparse.Namespace:
         help="Use a transparent rule-based TB2 category mapping when LLM labels are unavailable.",
     )
     parser.add_argument("--out-dir", type=Path, default=OUT_DIR_DEFAULT)
+    parser.add_argument("--submission-unit", choices=["effective", "leaderboard-url"], default="effective")
+    parser.add_argument("--include-sensitivities", action="store_true",
+                        help="Also write URL-grouped adjacent task changes, without additional figures.")
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR_DEFAULT)
     return parser.parse_args()
 
@@ -272,16 +276,23 @@ def attach_unified_categories(
     return tasks
 
 
-def build_observed_task_duration(df: pd.DataFrame) -> pd.DataFrame:
+def build_observed_task_duration(df: pd.DataFrame, *, submission_unit: str = "effective") -> pd.DataFrame:
+    if submission_unit == "effective":
+        df = ensure_effective_submission_id(df)
+        identity = EFFECTIVE_SUBMISSION_ID
+    elif submission_unit == "leaderboard-url":
+        identity = "submission_id"
+    else:
+        raise ValueError(f"Unknown submission unit: {submission_unit}")
     duration_df = df[
         df["duration_seconds"].notna()
         & df["duration_seconds"].ge(0)
-        & df["submission_id"].notna()
-        & df["submission_id"].astype(str).ne("")
+        & df[identity].notna()
+        & df[identity].astype(str).ne("")
     ].copy()
     duration_df["duration_min"] = duration_df["duration_seconds"] / 60.0
     submission_task = (
-        duration_df.groupby(["benchmark_version", "task_name", "submission_id"], as_index=False)
+        duration_df.groupby(["benchmark_version", "task_name", identity], as_index=False)
         .agg(
             n_trajectories=("duration_min", "size"),
             submission_task_median_duration_min=("duration_min", "median"),
@@ -292,7 +303,7 @@ def build_observed_task_duration(df: pd.DataFrame) -> pd.DataFrame:
     task_duration = (
         submission_task.groupby(["benchmark_version", "task_name"], as_index=False)
         .agg(
-            n_submissions=("submission_id", "nunique"),
+            n_submissions=(identity, "nunique"),
             n_trajectories=("n_trajectories", "sum"),
             observed_median_duration_min=("submission_task_median_duration_min", "median"),
             observed_mean_duration_min=("submission_task_median_duration_min", "mean"),
@@ -603,7 +614,7 @@ def main() -> None:
         args.tb2_category_labels,
         args.allow_rule_based_tb2_category_fallback,
     )
-    observed_duration = build_observed_task_duration(trajectories)
+    observed_duration = build_observed_task_duration(trajectories, submission_unit=args.submission_unit)
     task_version = task_metadata.merge(
         observed_duration,
         on=["benchmark_version", "task_name"],
@@ -614,6 +625,9 @@ def main() -> None:
     version_summary = build_version_summary(task_version)
     category_summary = build_category_summary(task_version)
     adjacent_changes = build_adjacent_changes(task_version)
+    for table in (version_summary, category_summary, adjacent_changes):
+        table["submission_unit"] = args.submission_unit
+        table["task_weighting"] = "submission-balanced"
 
     version_summary_path = args.out_dir / "version_task_composition_summary.csv"
     category_summary_path = args.out_dir / "category_composition_by_version.csv"
@@ -624,6 +638,16 @@ def main() -> None:
     version_summary.to_csv(version_summary_path, index=False)
     category_summary.to_csv(category_summary_path, index=False)
     adjacent_changes.to_csv(adjacent_changes_path, index=False)
+    if args.include_sensitivities:
+        url_observed = build_observed_task_duration(trajectories, submission_unit="leaderboard-url")
+        url_tasks = attach_change_audit(
+            task_metadata.merge(url_observed, on=["benchmark_version", "task_name"],
+                                how="left", validate="one_to_one"),
+            args.tb3_tb4_audit,
+        )
+        url_adjacent = build_adjacent_changes(url_tasks)
+        url_adjacent["submission_unit"] = "leaderboard-url"
+        url_adjacent.to_csv(args.out_dir / "adjacent_version_task_changes_url_sensitivity.csv", index=False)
     plot_composition(task_version, category_summary, composition_figure_path)
     plot_time_estimates(task_version, time_figure_path)
 
