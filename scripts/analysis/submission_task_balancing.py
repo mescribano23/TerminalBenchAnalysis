@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 import pandas as pd
 
 from scripts.analysis.source_submission_identity import SOURCE_SUBMISSION_ID, ensure_source_submission_id
@@ -62,39 +60,3 @@ def ensure_effective_submission_id(df: pd.DataFrame) -> pd.DataFrame:
     out = ensure_config_id(out)
     out[EFFECTIVE_SUBMISSION_ID] = out[EFFECTIVE_SUBMISSION_COMPONENTS].agg("|".join, axis=1)
     return out
-
-
-def aggregate_submission_task_success(
-    df: pd.DataFrame,
-    *,
-    group_columns: Iterable[str] = (),
-    outcome_column: str = "passed",
-) -> pd.DataFrame:
-    """Aggregate binary success as trials -> submission-task -> task/group."""
-    group_columns = list(group_columns)
-    work = ensure_source_submission_id(df)
-    keys = [SOURCE_SUBMISSION_ID, "task_name", *group_columns]
-    return (
-        work.groupby(keys, as_index=False)
-        .agg(
-            submission_task_trajectory_count=(outcome_column, "size"),
-            submission_task_success=(outcome_column, "mean"),
-        )
-    )
-
-
-def aggregate_submission_task_effort(
-    df: pd.DataFrame,
-    metric: str,
-    *,
-    group_columns: Iterable[str] = (),
-) -> pd.DataFrame:
-    """Aggregate effort as trials -> submission-task median."""
-    group_columns = list(group_columns)
-    work = ensure_source_submission_id(df).dropna(subset=[metric]).copy()
-    keys = [SOURCE_SUBMISSION_ID, "task_name", *group_columns]
-    return (
-        work.groupby(keys, as_index=False)[metric]
-        .median()
-        .rename(columns={metric: "submission_task_median"})
-    )

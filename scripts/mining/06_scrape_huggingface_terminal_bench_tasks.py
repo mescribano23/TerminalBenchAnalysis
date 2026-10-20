@@ -356,11 +356,6 @@ def write_task_csv(path: Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow(csv_row(row))
 
 
-def join_values(values: list[Any]) -> str:
-    unique = sorted({str(value) for value in values if str(value)})
-    return "|".join(unique)
-
-
 def build_tb3_tb4_audit(rows_by_benchmark: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     tb3 = {row["task_name"]: row for row in rows_by_benchmark.get("terminal_bench_3_0", [])}
     tb4 = {row["task_name"]: row for row in rows_by_benchmark.get("terminal_bench_4_0", [])}

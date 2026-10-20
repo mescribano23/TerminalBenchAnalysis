@@ -345,157 +345,6 @@ def submission_accuracy_summary(entry: dict[str, Any], rank: int | None = None) 
     return computed
 
 
-def write_parser_validation_sample(rows: list[dict[str, Any]], root: Path, out: Path) -> None:
-    sample_rows: list[dict[str, Any]] = []
-    sorted_rows = sorted(
-        rows,
-        key=lambda row: (
-            str(row.get("scaffold", "")),
-            str(row.get("reward_outcome", "")),
-            str(row.get("leaderboard_date", "")),
-            str(row.get("rel_path", "")),
-        ),
-    )
-    by_scaffold: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in sorted_rows:
-        if row.get("reward_outcome") in {"pass", "fail"}:
-            by_scaffold[str(row.get("scaffold", ""))].append(row)
-
-    selected_providers: set[str] = set()
-    for scaffold, scaffold_rows in sorted(by_scaffold.items()):
-        for outcome in ("pass", "fail"):
-            candidates = [row for row in scaffold_rows if row.get("reward_outcome") == outcome]
-            if candidates:
-                selected = next(
-                    (
-                        row
-                        for row in candidates
-                        if str(row.get("leaderboard_provider", "")).strip()
-                        and str(row.get("leaderboard_provider", "")).strip() not in selected_providers
-                    ),
-                    candidates[0],
-                )
-                sample_rows.append(selected)
-                provider = str(selected.get("leaderboard_provider", "")).strip()
-                if provider:
-                    selected_providers.add(provider)
-
-    output_rows: list[dict[str, Any]] = []
-    for row in sample_rows:
-        rel_path = str(row.get("rel_path", ""))
-        raw_path = root / rel_path
-        raw_steps: list[Any] = []
-        final_metrics: dict[str, Any] = {}
-        read_error = ""
-        try:
-            data = load_json(raw_path)
-            if isinstance(data.get("steps"), list):
-                raw_steps = data["steps"]
-            if isinstance(data.get("final_metrics"), dict):
-                final_metrics = data["final_metrics"]
-        except Exception as exc:
-            read_error = str(exc)
-
-        raw_tool_call_count = 0
-        raw_tool_call_steps = 0
-        command_examples: list[str] = []
-        observation_steps = 0
-        metrics_steps = 0
-        reasoning_steps = 0
-        for step in raw_steps:
-            if not isinstance(step, dict):
-                continue
-            calls = extract_tool_calls(step)
-            raw_calls = step.get("tool_calls") or []
-            if raw_calls and not isinstance(raw_calls, list):
-                raw_calls = [raw_calls]
-            if raw_calls:
-                raw_tool_call_steps += 1
-                raw_tool_call_count += len(raw_calls)
-            for call in calls:
-                command = call.get("command", "")
-                if command and len(command_examples) < 2:
-                    command_examples.append(command.replace("\n", "\\n")[:180])
-            if step.get("observation") is not None:
-                observation_steps += 1
-            if isinstance(step.get("metrics"), dict) and step.get("metrics"):
-                metrics_steps += 1
-            if step.get("reasoning_content"):
-                reasoning_steps += 1
-
-        output_rows.append(
-            {
-                "benchmark": row.get("benchmark", ""),
-                "scaffold": row.get("scaffold", ""),
-                "model_dir": row.get("model_dir", ""),
-                "provider": row.get("leaderboard_provider", ""),
-                "leaderboard_date": row.get("leaderboard_date", ""),
-                "task_name": row.get("task_name", ""),
-                "reward": row.get("reward", ""),
-                "outcome": row.get("reward_outcome", ""),
-                "rel_path": rel_path.replace("\\", "/"),
-                "repository_path": display_path(raw_path).replace("\\", "/"),
-                "raw_step_count": len(raw_steps),
-                "parsed_step_count": row.get("step_count", ""),
-                "raw_tool_call_count": raw_tool_call_count,
-                "parsed_tool_call_count": row.get("tool_call_count", ""),
-                "raw_tool_call_steps": raw_tool_call_steps,
-                "parsed_shell_invocation_count": row.get("shell_invocation_count", ""),
-                "shell_invocation_examples": " || ".join(command_examples),
-                "observation_steps": observation_steps,
-                "parsed_observation_chars": row.get("observation_chars", ""),
-                "metrics_steps_raw": metrics_steps,
-                "parsed_metric_step_count": row.get("metric_step_count", ""),
-                "parsed_prompt_tokens": row.get("prompt_tokens", ""),
-                "parsed_completion_tokens": row.get("completion_tokens", ""),
-                "parsed_total_tokens": row.get("total_tokens", ""),
-                "final_metrics_keys": "|".join(sorted(final_metrics.keys())[:20]),
-                "reasoning_steps": reasoning_steps,
-                "parsed_reasoning_chars": row.get("reasoning_chars", ""),
-                "duration_seconds": row.get("duration_seconds", ""),
-                "manual_validation_status": "prepared_for_researcher_review",
-                "read_error": read_error,
-            }
-        )
-
-    fields = [
-        "benchmark",
-        "scaffold",
-        "model_dir",
-        "provider",
-        "leaderboard_date",
-        "task_name",
-        "reward",
-        "outcome",
-        "rel_path",
-        "repository_path",
-        "raw_step_count",
-        "parsed_step_count",
-        "raw_tool_call_count",
-        "parsed_tool_call_count",
-        "raw_tool_call_steps",
-        "parsed_shell_invocation_count",
-        "shell_invocation_examples",
-        "observation_steps",
-        "parsed_observation_chars",
-        "metrics_steps_raw",
-        "parsed_metric_step_count",
-        "parsed_prompt_tokens",
-        "parsed_completion_tokens",
-        "parsed_total_tokens",
-        "final_metrics_keys",
-        "reasoning_steps",
-        "parsed_reasoning_chars",
-        "duration_seconds",
-        "manual_validation_status",
-        "read_error",
-    ]
-    with (out / "parser_validation_sample.csv").open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(output_rows)
-
-
 def official_leaderboard_summary(entry: dict[str, Any]) -> dict[str, Any]:
     return {field: entry.get(field, "") for field in OFFICIAL_LEADERBOARD_FIELDS}
 
@@ -882,10 +731,6 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(outcome_feature_rows)
 
-    parser_validation_sample_path = out / "parser_validation_sample.csv"
-    if benchmark_name == "terminal_bench_2_0":
-        write_parser_validation_sample(rows, root, out)
-
     step_counts = [int(r["step_count"]) for r in rows if r.get("step_count") != ""]
     shell_invocation_counts = [int(r["shell_invocation_count"]) for r in rows if r.get("shell_invocation_count") != ""]
     tool_counts = [int(r["tool_call_count"]) for r in rows if r.get("tool_call_count") != ""]
@@ -941,9 +786,6 @@ def main() -> None:
             "leaderboard_submission_summary_csv": display_path(out / "leaderboard_submission_summary.csv"),
             "shell_invocation_patterns_csv": display_path(out / "shell_invocation_patterns.csv"),
             "trajectory_features_by_outcome_csv": display_path(out / "trajectory_features_by_outcome.csv"),
-            "parser_validation_sample_csv": (
-                display_path(parser_validation_sample_path) if benchmark_name == "terminal_bench_2_0" else ""
-            ),
         },
     }
     with (out / "corpus_stats.json").open("w", encoding="utf-8") as f:

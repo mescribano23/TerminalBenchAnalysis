@@ -11,7 +11,7 @@ effort = importlib.import_module('scripts.analysis.longitudinal.03_analyze_effor
 composition = importlib.import_module('scripts.analysis.longitudinal.07_analyze_task_composition_over_versions')
 difficulty = importlib.import_module('scripts.analysis.longitudinal.09_analyze_difficulty_over_versions')
 pass_changes = importlib.import_module('scripts.analysis.longitudinal.02_analyze_pass_rate_changes')
-audit = importlib.import_module('scripts.analysis.10_build_statistical_audit')
+results = importlib.import_module('scripts.analysis.10_build_statistical_results')
 from scripts.analysis.submission_task_balancing import ensure_effective_submission_id
 
 
@@ -89,7 +89,7 @@ class AggregationTests(unittest.TestCase):
     def test_shared_configuration_summary_uses_effective_units(self):
         data=fixture().query("benchmark_version == '2.0'").copy()
         data['total_tokens']=data.step_count
-        self.assertEqual(audit.task_balanced_config_median(data),9)
+        self.assertEqual(results.task_balanced_config_median(data),9)
 
     def test_include_tb3_tb4_writes_both_task_tables(self):
         first=fixture()

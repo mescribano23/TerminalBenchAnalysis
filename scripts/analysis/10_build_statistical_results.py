@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the compact inferential tables and thesis-facing statistical audit.
+"""Build the compact inferential tables and thesis-facing statistical results.
 
 This script consumes the RQ-specific outputs produced by the existing analysis
 scripts and adds the longitudinal paired/independent-task comparisons requested
@@ -9,7 +9,9 @@ for the thesis. It never reads or modifies raw trajectory JSON.
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib
+import io
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,7 @@ from scripts.analysis.statistical_helpers import (
 )
 from scripts.benchmark_paths import find_repo_root
 from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
+from scripts.analysis.longitudinal.official_release_changes import add_release_status, EXPECTED
 
 
 REPO_ROOT = find_repo_root(Path(__file__).resolve().parent)
@@ -32,10 +35,9 @@ DIM_DIR = PROCESSED / "diminishing_returns"
 TASK_DIR = PROCESSED / "task_mining"
 LONG_DIR = PROCESSED / "longitudinal"
 OUT_DEFAULT = PROCESSED / "statistical_analysis"
-REPORT_DEFAULT = REPO_ROOT / "reports" / "statistical_analysis_audit.md"
+REPORT_DEFAULT = REPO_ROOT / "reports" / "statistical_results.md"
 
 ADJACENT_CHANGES = LONG_DIR / "task_composition" / "adjacent_version_task_changes.csv"
-TB2_AUDIT = LONG_DIR / "task_version_audit.csv"
 TB2_TRAJECTORIES = LONG_DIR / "trajectory_longitudinal.csv"
 TB34_TRAJECTORIES = LONG_DIR / "tb3_tb4" / "trajectory_longitudinal.csv"
 
@@ -83,8 +85,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report", type=Path, default=REPORT_DEFAULT)
     parser.add_argument("--output-root", type=Path,
                         help="Mirror repository output paths under this directory; keep source inputs unchanged.")
-    parser.add_argument("--include-sensitivities", action="store_true",
-                        help="Also export version-performance inference from the URL-grouped task table.")
+    parser.add_argument("--rq3-1-only", action="store_true",
+                        help="Update release-group results using existing unrelated RQ outputs.")
     return parser.parse_args()
 
 
@@ -92,6 +94,26 @@ def read_required(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Missing prerequisite output: {path}")
     return pd.read_csv(path, low_memory=False)
+
+
+def write_scoped_master(path: Path, master: pd.DataFrame) -> None:
+    """Replace only the two grouping rows, preserving unrelated CSV bytes."""
+    source = path if path.exists() else OUT_DEFAULT / path.name
+    lines = source.read_bytes().decode("utf-8").splitlines(keepends=True)
+    replacements = master[master.analysis.eq("official release-fix comparison")].set_index("comparison", drop=False)
+    replaced = set()
+    for index, line in enumerate(lines[1:], start=1):
+        row = next(csv.reader([line]))
+        if row[0] == "RQ3.1" and row[1] in {"instruction-change robustness", "official release-fix comparison"}:
+            pair = row[2]
+            newline = "\r\n" if line.endswith("\r\n") else "\n"
+            buffer = io.StringIO()
+            replacements.loc[[pair]].to_csv(buffer, index=False, header=False, lineterminator=newline)
+            lines[index] = buffer.getvalue()
+            replaced.add(pair)
+    if replaced != set(EXPECTED):
+        raise ValueError("Scoped master update did not find both RQ3.1 grouping rows")
+    path.write_bytes("".join(lines).encode("utf-8"))
 
 
 def paired_summary(differences: pd.Series) -> dict[str, float | int]:
@@ -162,44 +184,18 @@ def build_version_performance(adjacent: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def add_instruction_status(adjacent: pd.DataFrame, pair: str) -> pd.DataFrame:
-    group = adjacent[adjacent["version_pair"].astype(str).eq(pair)].copy()
-    if pair == "2.0->2.1":
-        audit = read_required(TB2_AUDIT)[["task_name", "classification"]].copy()
-        audit["instruction_status"] = audit["classification"].map(
-            {"Changed": "changed", "Identical": "unchanged"}
-        )
-        group = group.merge(
-            audit[["task_name", "instruction_status"]],
-            on="task_name",
-            how="left",
-            validate="one_to_one",
-        )
-    else:
-        group["instruction_status"] = group["tb3_tb4_change_classification_new"].map(
-            {
-                "Instruction changed": "changed",
-                "Only release boilerplate changed": "unchanged",
-                "Package identical": "unchanged",
-            }
-        )
-    if group["instruction_status"].isna().any():
-        raise ValueError(f"{pair} has tasks without a supported instruction-change classification.")
-    group["improvement_pp"] = (
-        group["task_weighted_pass_rate_new"] - group["task_weighted_pass_rate_old"]
-    ) * 100.0
-    return group
-
-
-def build_instruction_comparisons(adjacent: pd.DataFrame) -> pd.DataFrame:
+def build_release_comparisons(adjacent: pd.DataFrame, *, pr26_sensitivity: bool = False) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
-    for pair, expected_changed, expected_unchanged in [
-        ("2.0->2.1", 22, 67),
-        ("3.0->4.0", 11, 55),
-    ]:
-        group = add_instruction_status(adjacent, pair)
-        changed = group.loc[group["instruction_status"].eq("changed"), "improvement_pp"]
-        unchanged = group.loc[group["instruction_status"].eq("unchanged"), "improvement_pp"]
+    for pair, (expected_changed, expected_unchanged) in EXPECTED.items():
+        group = add_release_status(adjacent, pair)
+        fixed = group["release_status"].eq("fixed")
+        if pr26_sensitivity:
+            if pair != "2.0->2.1":
+                continue
+            fixed = pd.to_numeric(group["listed_in_tb21_pr53"]).eq(1)
+            expected_changed, expected_unchanged = 26, 63
+        changed = group.loc[fixed, "improvement_pp"]
+        unchanged = group.loc[~fixed, "improvement_pp"]
         if len(changed) != expected_changed or len(unchanged) != expected_unchanged:
             raise ValueError(
                 f"{pair} classification counts were {len(changed)} changed/{len(unchanged)} unchanged."
@@ -208,6 +204,7 @@ def build_instruction_comparisons(adjacent: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             {
                 "transition": pair,
+                "classification_basis": "official PR53 26-task sensitivity" if pr26_sensitivity else "official release named fixes",
                 "n_changed": int(len(changed)),
                 "n_unchanged": int(len(unchanged)),
                 "mean_improvement_changed_pp": float(changed.mean()),
@@ -444,14 +441,14 @@ def build_master(
         ))
     for row in instruction.itertuples(index=False):
         rows.append(master_row(
-            rq="RQ3.1", analysis="instruction-change robustness", comparison=row.transition,
+            rq="RQ3.1", analysis="official release-fix comparison", comparison=row.transition,
             metric="Task pass-rate improvement", n=int(row.n_changed + row.n_unchanged),
             raw_effect=row.raw_difference_in_mean_improvement_pp, raw_effect_unit="percentage points",
             effect_size_type="cliffs_delta", effect_size=row.cliffs_delta,
             test="two-sided Mann-Whitney U", test_statistic=row.mann_whitney_u,
-            p_value=row.p_value, direction="positive = changed tasks tended to improve more",
-            source_file="adjacent_version_task_changes.csv + task instruction audits",
-            task_observation_function="build_adjacent_changes; independent changed/unchanged task split",
+            p_value=row.p_value, direction="positive = release-fixed tasks tended to improve more",
+            source_file="adjacent_version_task_changes.csv + official_release_task_crosswalk.csv",
+            task_observation_function="build_adjacent_changes; independent release-fixed/not-listed-as-fixed task split",
         ))
     for row in effort.itertuples(index=False):
         rows.append(master_row(
@@ -478,25 +475,7 @@ def num(value: float, digits: int = 3) -> str:
     return f"{value:.{digits}f}"
 
 
-def build_audit_table() -> pd.DataFrame:
-    rows = [
-        ("RQ1.1", "success-failure effort", "terminal_bench_2_0/trajectory_summary.csv", "task_medians", "paired tasks after submission-task outcome medians", ">=3 distinct submissions per outcome"),
-        ("RQ1.2", "curvature", "terminal_bench_2_0/trajectory_summary.csv", "model_frame; fit_quadratic_conditional_logit", "trajectory observations conditioned on task strata", "two-sided Wald test of beta_2=0"),
-        ("RQ2.1", "difficulty", "longitudinal/trajectory_longitudinal.csv", "submission_task_pass_rates", "one submission-balanced pass rate per task", "Spearman rho"),
-        ("RQ2.2", "media", "adjacent_version_task_changes.csv + perceptual_media_tasks.csv", "build_observed_task_duration", "one submission-balanced pass rate per task", "post-hoc exploratory; no test"),
-        ("RQ2.2", "human time", "trajectory_longitudinal.csv + task TOML metadata", "build_task_average_duration_comparison", "paired task medians after submission-task medians", "all trajectories primary; success-only descriptive"),
-        ("RQ2.3", "functional behavior", "TB2.0 trajectory files + task metadata", "build_task_functional_contrasts", "paired task contrasts", ">=3 trajectories in use and non-use cells; no submission aggregation"),
-        ("RQ3.1", "version performance", "adjacent_version_task_changes.csv", "build_observed_task_duration; build_adjacent_changes", "paired shared tasks after submission-task pass rates", "89 and 66 exact task pairs"),
-        ("RQ3.1", "instruction robustness", "adjacent changes + instruction audits", "add_instruction_status", "independent changed/unchanged task improvements", "Cliff's delta + Mann-Whitney U"),
-        ("RQ3.3", "effort change", "longitudinal trajectory CSVs", "task_metric_pairs", "paired shared tasks after submission-task medians", "metric-wise missing-pair removal"),
-    ]
-    result = pd.DataFrame(rows, columns=["rq", "analysis", "source_dataframe", "observation_builder", "unit_of_analysis", "support_or_test_note"])
-    result["submission_unit"] = ["source", "trajectory-level", "source", "source",
-                                  "source", "trajectory-level", "source", "source", "source"]
-    return result
-
-
-def build_validation_checks(
+def validate_results(
     master: pd.DataFrame,
     rq1: pd.DataFrame,
     human: pd.DataFrame,
@@ -504,14 +483,12 @@ def build_validation_checks(
     performance: pd.DataFrame,
     instruction: pd.DataFrame,
     effort: pd.DataFrame,
-) -> pd.DataFrame:
-    """Fail fast on unit, pairing, and effect-size invariants; return an audit log."""
-    checks: list[dict[str, str]] = []
+) -> None:
+    """Fail fast on unit, pairing, and effect-size invariants."""
 
     def check(name: str, condition: bool, detail: str) -> None:
         if not condition:
             raise AssertionError(f"Validation failed: {name}: {detail}")
-        checks.append({"check": name, "status": "pass", "detail": detail})
 
     rq1_detail = read_required(DIM_DIR / "rq1_within_task_effort_by_task.csv")
     for row in rq1.itertuples(index=False):
@@ -550,9 +527,9 @@ def build_validation_checks(
         "exactly 89 and 66 shared tasks",
     )
     check(
-        "RQ3.1 independent instruction groups",
-        instruction[["n_changed", "n_unchanged"]].astype(int).values.tolist() == [[22, 67], [11, 55]],
-        "changed and unchanged tasks are disjoint and exhaustive",
+        "RQ3.1 independent official release groups",
+        instruction[["n_changed", "n_unchanged"]].astype(int).values.tolist() == [[28, 61], [19, 47]],
+        "release-fixed and not-listed-as-fixed tasks are disjoint and exhaustive; removed tasks excluded",
     )
     check(
         "RQ3.3 metric-wise paired tasks",
@@ -577,7 +554,6 @@ def build_validation_checks(
         and not any("ci" in column.lower() for column in rq1.columns),
         "master and compact RQ1.1 tables contain no CI columns",
     )
-    return pd.DataFrame(checks)
 
 
 def build_report(
@@ -594,11 +570,9 @@ def build_report(
     configs: pd.DataFrame,
 ) -> str:
     lines = [
-        "# Statistical analysis audit",
+        "# Statistical results",
         "",
-        "## Audit summary",
-        "",
-        "The reconciliation refresh updates affected existing tests and effect sizes from the restored caches. Only the shell-invocation curvature model was refitted; five unaffected curvature models were retained. The validated difficulty labels were not regenerated. Historical outputs are preserved separately.",
+        "## Analysis methods",
         "",
         "Primary RQ3.1, RQ3.2 and RQ3.3 aggregation uses resolved source_submission_id values, consistently with RQ1. RQ3.3 takes medians within source submission-task pairs, medians across submissions within tasks, then compares paired shared tasks. Leaderboard-URL grouping is retained as an explicit sensitivity analysis. RQ2.1 and RQ2.2 now use the same actual source submission unit; RQ2.3 retains trajectory use/non-use cells with at least three trajectories per cell. Configuration fingerprints are separate from source submission identity. Historical scraped dates are preserved; their submission/publication semantics remain unverified. Only source-submission-balanced RQ3.3 effort figures are retained; pooled trajectory medians remain descriptive diagnostics in CSV tables.",
         "",
@@ -639,7 +613,7 @@ def build_report(
     for row in performance.itertuples(index=False):
         lines.append(f"- {row.transition}: {100*row.old_task_balanced_pass_rate:.1f}% -> {100*row.new_task_balanced_pass_rate:.1f}% (delta = {row.overall_change_pp:.2f} pp; mean/median task delta = {row.mean_task_change_pp:.2f}/{row.median_task_change_pp:.2f} pp), dz = {num(row.cohens_dz)}, W = {num(row.wilcoxon_statistic, 1)}, p = {p_text(row.p_value)} (n = {row.shared_tasks}).")
     for row in instruction.itertuples(index=False):
-        lines.append(f"- Instruction-change comparison, {row.transition}: changed tasks improved by {row.mean_improvement_changed_pp:.2f} pp on average (median {row.median_improvement_changed_pp:.2f}) versus {row.mean_improvement_unchanged_pp:.2f} pp (median {row.median_improvement_unchanged_pp:.2f}) for unchanged tasks; between-group mean difference = {row.raw_difference_in_mean_improvement_pp:.2f} pp, Cliff's delta = {num(row.cliffs_delta)}, U = {num(row.mann_whitney_u, 1)}, p = {p_text(row.p_value)} (n = {row.n_changed}/{row.n_unchanged}).")
+        lines.append(f"- Official release-fix comparison, {row.transition}: release-fixed tasks improved by {row.mean_improvement_changed_pp:.2f} pp on average (median {row.median_improvement_changed_pp:.2f}) versus {row.mean_improvement_unchanged_pp:.2f} pp (median {row.median_improvement_unchanged_pp:.2f}) for tasks not listed as fixed; between-group mean difference = {row.raw_difference_in_mean_improvement_pp:.2f} pp, Cliff's delta = {num(row.cliffs_delta)}, U = {num(row.mann_whitney_u, 1)}, p = {p_text(row.p_value)} (n = {row.n_changed}/{row.n_unchanged}).")
     lines.extend(["", "### RQ3.3", ""])
     for row in effort.itertuples(index=False):
         lines.append(f"- {row.transition}, {METRIC_LABELS.get(row.metric, row.metric)}: source-submission-balanced shared-task medians {row.old_task_balanced_median:.3g} -> {row.new_task_balanced_median:.3g} ({row.task_balanced_median_change_pct:+.1f}% ratio of cross-task medians); mean/median paired task delta = {row.mean_paired_task_difference:.3g}/{row.median_paired_task_difference:.3g}, dz = {num(row.cohens_dz)}, W = {num(row.wilcoxon_statistic, 1)}, p = {p_text(row.p_value)} (n = {row.eligible_tasks}). Refreshed pooled trajectory medians are descriptive only: {row.old_headline_median:.3g} -> {row.new_headline_median:.3g} ({row.reported_percentage_change:+.1f}%).")
@@ -658,7 +632,7 @@ def build_report(
         "",
         "- RQ1.1: reserve 'statistically significant' for metrics with p<0.05 in the table above, and always pair it with the signed median difference and dz. Do not infer the task-level direction from pooled success/failure medians where the repository flags a reversal.",
         "- RQ2.3: use 'was associated with' rather than causal language. State that support means three use and three non-use trajectories per task, not three distinct submissions, and do not claim subgroup significance from category/difficulty figures.",
-        "- RQ3.1: state improvement using the paired shared-task results. The instruction conclusion must be based on the changed-versus-unchanged Mann-Whitney/Cliff comparison, not separate within-group p-values.",
+        "- RQ3.1: state improvement using the paired shared-task results. Use official release-fixed versus not-listed-as-fixed task groups and the between-group Mann-Whitney/Cliff comparison. TB2.1 uses the 28 enumerated release IDs; the README/PR count of 26 differs by crack-7z-hash and gpt2-codegolf. TB4.0 calibrates resources for all retained tasks, so the 47 tasks not listed as fixed are not wholly unchanged. Separate within-group p-values do not test the between-group contrast.",
         "- RQ3.3: use source-submission-balanced shared-task medians for the main figures and text. Distinguish ratios of cross-task medians from the paired absolute differences used for inference. Describe increases/decreases as statistically supported only where the paired Wilcoxon p-value is below 0.05, and include dz.",
         "- Cost: do not add a longitudinal cost test. Cost is not a current headline RQ3.3 metric; positive-cost coverage is 25,840/38,604 (66.9%) for TB2.0/TB2.1 and 7,362/10,239 (71.9%) for TB3.0/TB4.0, and coverage is configuration-dependent, so comparability is inadequate for the requested primary analysis.",
         "", "## Master inferential table", "",
@@ -704,26 +678,24 @@ def main() -> None:
 
     media = build_media_description(adjacent)
     performance = build_version_performance(adjacent)
-    instruction = build_instruction_comparisons(adjacent)
-    effort = build_effort_inference()
-    configurations = build_shared_configuration_tokens()
+    instruction = build_release_comparisons(adjacent)
+    effort = read_required(LONG_DIR / "rq3_3_effort_inference.csv") if args.rq3_1_only else build_effort_inference()
+    configurations = read_required(LONG_DIR / "rq3_3_shared_configuration_tokens_tb3_tb4.csv") if args.rq3_1_only else build_shared_configuration_tokens()
     master = build_master(rq1, rq12, difficulty, human, behavior, performance, instruction, effort)
-    audit = build_audit_table()
-    validation = build_validation_checks(master, rq1, human, behavior, performance, instruction, effort)
+    validate_results(master, rq1, human, behavior, performance, instruction, effort)
 
-    media.to_csv(task_output / "rq2_2_media_exploratory.csv", index=False)
-    performance.to_csv(long_output / "rq3_1_version_performance_inference.csv", index=False)
-    instruction.to_csv(long_output / "rq3_1_instruction_change_inference.csv", index=False)
-    effort.to_csv(long_output / "rq3_3_effort_inference.csv", index=False)
-    configurations.to_csv(long_output / "rq3_3_shared_configuration_tokens_tb3_tb4.csv", index=False)
-    if args.include_sensitivities:
-        url_adjacent = read_required(LONG_DIR / "task_composition" / "adjacent_version_task_changes_url_sensitivity.csv")
-        build_version_performance(url_adjacent).to_csv(
-            long_output / "rq3_1_version_performance_url_sensitivity.csv", index=False,
-        )
-    master.to_csv(args.out / "master_inferential_results.csv", index=False)
-    audit.to_csv(args.out / "analysis_provenance_and_units.csv", index=False)
-    validation.to_csv(args.out / "validation_checks.csv", index=False)
+    instruction.to_csv(long_output / "rq3_1_official_release_change_inference.csv", index=False)
+    build_release_comparisons(adjacent, pr26_sensitivity=True).to_csv(
+        long_output / "rq3_1_official_release_pr26_sensitivity.csv", index=False)
+    if not args.rq3_1_only:
+        media.to_csv(task_output / "rq2_2_media_exploratory.csv", index=False)
+        performance.to_csv(long_output / "rq3_1_version_performance_inference.csv", index=False)
+        effort.to_csv(long_output / "rq3_3_effort_inference.csv", index=False)
+        configurations.to_csv(long_output / "rq3_3_shared_configuration_tokens_tb3_tb4.csv", index=False)
+    if args.rq3_1_only:
+        write_scoped_master(args.out / "master_inferential_results.csv", master)
+    else:
+        master.to_csv(args.out / "master_inferential_results.csv", index=False)
     args.report.write_text(
         build_report(
             master, rq1, rq12, difficulty, media, human, behavior,
@@ -738,8 +710,6 @@ def main() -> None:
     ]
     print(master[display_columns].to_string(index=False))
     print(f"\nWrote {args.out / 'master_inferential_results.csv'}")
-    print(f"Wrote {args.out / 'analysis_provenance_and_units.csv'}")
-    print(f"Wrote {args.out / 'validation_checks.csv'}")
     print(f"Wrote {args.report}")
 
 

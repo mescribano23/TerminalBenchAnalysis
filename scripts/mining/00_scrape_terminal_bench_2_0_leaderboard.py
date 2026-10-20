@@ -707,106 +707,8 @@ def leaderboard_accuracy_record(submission: Submission) -> dict[str, object]:
     }
 
 
-def submission_url_from_record(submission: dict[str, Any], bench_version: str = "2.0") -> str:
-    tasks = submission.get("tasks") or []
-    for task in tasks:
-        trial_url = task.get("trialUrl")
-        task_checksum = task.get("taskChecksum")
-        if isinstance(trial_url, str) and isinstance(task_checksum, str):
-            suffix = f"/{quote(task_checksum, safe='')}"
-            if trial_url.endswith(suffix):
-                return trial_url[: -len(suffix)]
-            return trial_url.rsplit("/", 1)[0]
-
-    return canonical_submission_url(
-        bench_version=bench_version,
-        scaffold=str(submission["scaffold"]),
-        scaffold_version=str(submission.get("scaffold_version", "unknown")),
-        model=str(submission["model"]),
-        provider=str(submission.get("provider", "")),
-    )
-
-
-def first_task_with_url(submission: dict[str, Any]) -> dict[str, Any] | None:
-    for task in submission.get("tasks") or []:
-        if task.get("trialUrl") and task.get("taskChecksum"):
-            return task
-    return None
-
-
 def page_has_no_trajectory_marker(html_text: str) -> bool:
     return "No trajectory data available" in html_text
-
-
-def check_single_submission_trajectory_availability(
-    session: requests.Session,
-    submission: dict[str, Any],
-) -> tuple[bool, str]:
-    task = first_task_with_url(submission)
-    if not task:
-        return False, "no task URL available"
-
-    task_url = str(task["trialUrl"])
-    task_html = fetch_html(session, task_url)
-    trials = extract_trials(task_html)
-    if not trials:
-        return False, "no trial records found on first task page"
-
-    trial_id = str(trials[0].get("trialId") or "")
-    if not trial_id:
-        return False, "first trial record has no trialId"
-
-    trial_url = f"{task_url.rstrip('/')}/{quote(trial_id, safe='')}"
-    trial_html = fetch_html(session, trial_url)
-    if page_has_no_trajectory_marker(trial_html):
-        return False, "trial page says no trajectory data available"
-
-    try:
-        extract_trajectory(trial_html)
-    except ValueError:
-        return False, "trajectory object not found"
-
-    return True, "trajectory object found"
-
-
-def check_trajectory_availability(leaderboard_path: Path) -> int:
-    leaderboard = read_json_file(leaderboard_path)
-    session = requests.Session()
-    rows_to_check = leaderboard
-
-    available = 0
-    unavailable = 0
-    print(f"Checking trajectory availability for {len(rows_to_check)} submissions")
-
-    for index, submission in enumerate(rows_to_check, start=1):
-        label = f"{submission.get('scaffold')} / {submission.get('model')}"
-        try:
-            has_trajectories, reason = check_single_submission_trajectory_availability(
-                session, submission
-            )
-        except requests.RequestException as exc:
-            has_trajectories = False
-            reason = f"request failed: {exc}"
-
-        submission["has_trajectories"] = has_trajectories
-        if has_trajectories:
-            available += 1
-        else:
-            unavailable += 1
-        print(
-            f"[{index}/{len(rows_to_check)}] {label}: "
-            f"has_trajectories={has_trajectories} ({reason})"
-        )
-
-    write_json_file(leaderboard_path, leaderboard)
-    unchecked = len(leaderboard) - len(rows_to_check)
-    print("\nAvailability summary")
-    print(f"  checked: {len(rows_to_check)}")
-    print(f"  available: {available}")
-    print(f"  unavailable: {unavailable}")
-    print(f"  unchecked: {unchecked}")
-    print(f"  updated: {leaderboard_path}")
-    return 0
 
 
 def trial_record(
@@ -1102,44 +1004,6 @@ def collect_leaderboard(
         for url, error in failures:
             print(f"  {url}: {error}", file=sys.stderr)
         return 1
-    return 0
-
-
-def refresh_leaderboard_row_metrics(
-    leaderboard_url: str,
-    leaderboard_path: Path,
-) -> int:
-    try:
-        rows = read_json_file(leaderboard_path)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Could not read {leaderboard_path}: {exc}", file=sys.stderr)
-        return 1
-    if not isinstance(rows, list):
-        print(f"{leaderboard_path} does not contain a JSON list", file=sys.stderr)
-        return 1
-
-    session = requests.Session()
-    print(f"Fetching leaderboard row metrics: {leaderboard_url}")
-    leaderboard_html = fetch_html(session, leaderboard_url)
-    submissions = extract_submission_links(leaderboard_html, leaderboard_url)
-    metrics_by_key = {
-        submission_key_from_submission(submission): leaderboard_accuracy_record(submission)
-        for submission in submissions
-        if submission.leaderboard_accuracy is not None
-    }
-
-    updated = 0
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        metrics = metrics_by_key.get(submission_key_from_record(row))
-        if not metrics:
-            continue
-        row.update(metrics)
-        updated += 1
-
-    write_json_file(leaderboard_path, rows)
-    print(f"Updated official leaderboard metrics for {updated}/{len(rows)} rows in {leaderboard_path}")
     return 0
 
 

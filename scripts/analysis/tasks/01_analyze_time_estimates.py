@@ -5,7 +5,7 @@ Outputs:
 - data/processed_live/task_mining/time_estimates/trajectory_time_estimate_comparison.csv
 - data/processed_live/task_mining/time_estimates/task_average_duration_comparison.csv
 - data/processed_live/task_mining/time_estimates/task_time_estimate_distribution_summary.csv
-- data/processed_live/task_mining/rq2_2_time_significance.csv
+- data/processed_live/task_mining/time_estimates/rq2_2_human_time_inference.csv
 - data/processed_live/task_mining/time_estimates/rq2_2_human_time_inference.csv
 - reports/tasks/time_estimates/distribution_task_time_estimates.png
 """
@@ -589,7 +589,6 @@ def main() -> None:
     task_duration_comparison_path = args.out / "task_average_duration_comparison.csv"
     task_duration_headline_path = args.out / "task_duration_estimate_headline_summary.csv"
     estimate_distribution_summary_path = args.out / "task_time_estimate_distribution_summary.csv"
-    time_significance_path = args.out.parent / "rq2_2_time_significance.csv"
     human_time_inference_path = args.out / "rq2_2_human_time_inference.csv"
 
     comparison.loc[:, COMPARISON_OUTPUT_COLUMNS].to_csv(comparison_path, index=False)
@@ -597,7 +596,6 @@ def main() -> None:
     task_duration_comparison.to_csv(task_duration_comparison_path, index=False)
     build_duration_headline_summary(task_duration_comparison).to_csv(task_duration_headline_path, index=False)
     time_significance = build_rq2_2_time_significance(task_duration_comparison)
-    time_significance.to_csv(time_significance_path, index=False)
     time_significance.to_csv(human_time_inference_path, index=False)
     summarize_task_time_distributions(estimates, task_duration_comparison).to_csv(
         estimate_distribution_summary_path,
@@ -618,7 +616,6 @@ def main() -> None:
     print(f"Wrote {comparison_path}")
     print(f"Wrote {task_duration_comparison_path}")
     print(f"Wrote {task_duration_headline_path}")
-    print(f"Wrote {time_significance_path}")
     print(f"Wrote {human_time_inference_path}")
     print(f"Wrote {estimate_distribution_summary_path}")
     for figure_path in [distribution_path]:

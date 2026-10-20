@@ -1,8 +1,6 @@
-# Statistical analysis audit
+# Statistical results
 
-## Audit summary
-
-The reconciliation refresh updates affected existing tests and effect sizes from the restored caches. Only the shell-invocation curvature model was refitted; five unaffected curvature models were retained. The validated difficulty labels were not regenerated. Historical outputs are preserved separately.
+## Analysis methods
 
 Primary RQ3.1, RQ3.2 and RQ3.3 aggregation uses resolved source_submission_id values, consistently with RQ1. RQ3.3 takes medians within source submission-task pairs, medians across submissions within tasks, then compares paired shared tasks. Leaderboard-URL grouping is retained as an explicit sensitivity analysis. RQ2.1 and RQ2.2 now use the same actual source submission unit; RQ2.3 retains trajectory use/non-use cells with at least three trajectories per cell. Configuration fingerprints are separate from source submission identity. Historical scraped dates are preserved; their submission/publication semantics remain unverified. Only source-submission-balanced RQ3.3 effort figures are retained; pooled trajectory medians remain descriptive diagnostics in CSV tables.
 
@@ -62,8 +60,8 @@ For paired task differences D, Cohen's dz is mean(D) / sd(D) with sample SD (ddo
 
 - 2.0->2.1: 36.6% -> 75.1% (delta = 38.45 pp; mean/median task delta = 38.45/36.79 pp), dz = 1.803, W = 1.0, p = 2.64e-16 (n = 89).
 - 3.0->4.0: 21.8% -> 36.2% (delta = 14.34 pp; mean/median task delta = 14.34/14.38 pp), dz = 0.908, W = 173.5, p = 1.8e-08 (n = 66).
-- Instruction-change comparison, 2.0->2.1: changed tasks improved by 41.70 pp on average (median 40.13) versus 37.38 pp (median 36.04) for unchanged tasks; between-group mean difference = 4.31 pp, Cliff's delta = 0.104, U = 814.0, p = 0.467 (n = 22/67).
-- Instruction-change comparison, 3.0->4.0: changed tasks improved by 19.63 pp on average (median 17.78) versus 13.28 pp (median 12.78) for unchanged tasks; between-group mean difference = 6.35 pp, Cliff's delta = 0.183, U = 358.0, p = 0.344 (n = 11/55).
+- Official release-fix comparison, 2.0->2.1: release-fixed tasks improved by 40.82 pp on average (median 37.52) versus 37.36 pp (median 36.44) for tasks not listed as fixed; between-group mean difference = 3.46 pp, Cliff's delta = 0.055, U = 901.0, p = 0.681 (n = 28/61).
+- Official release-fix comparison, 3.0->4.0: release-fixed tasks improved by 22.30 pp on average (median 18.19) versus 11.13 pp (median 9.29) for tasks not listed as fixed; between-group mean difference = 11.17 pp, Cliff's delta = 0.357, U = 606.0, p = 0.0243 (n = 19/47).
 
 ### RQ3.3
 
@@ -99,7 +97,7 @@ No thesis manuscript or Results-section source file is present in the repository
 
 - RQ1.1: reserve 'statistically significant' for metrics with p<0.05 in the table above, and always pair it with the signed median difference and dz. Do not infer the task-level direction from pooled success/failure medians where the repository flags a reversal.
 - RQ2.3: use 'was associated with' rather than causal language. State that support means three use and three non-use trajectories per task, not three distinct submissions, and do not claim subgroup significance from category/difficulty figures.
-- RQ3.1: state improvement using the paired shared-task results. The instruction conclusion must be based on the changed-versus-unchanged Mann-Whitney/Cliff comparison, not separate within-group p-values.
+- RQ3.1: state improvement using the paired shared-task results. Use official release-fixed versus not-listed-as-fixed task groups and the between-group Mann-Whitney/Cliff comparison. TB2.1 uses the 28 enumerated release IDs; the README/PR count of 26 differs by crack-7z-hash and gpt2-codegolf. TB4.0 calibrates resources for all retained tasks, so the 47 tasks not listed as fixed are not wholly unchanged. Separate within-group p-values do not test the between-group contrast.
 - RQ3.3: use source-submission-balanced shared-task medians for the main figures and text. Distinguish ratios of cross-task medians from the paired absolute differences used for inference. Describe increases/decreases as statistically supported only where the paired Wilcoxon p-value is below 0.05, and include dz.
 - Cost: do not add a longitudinal cost test. Cost is not a current headline RQ3.3 metric; positive-cost coverage is 25,840/38,604 (66.9%) for TB2.0/TB2.1 and 7,362/10,239 (71.9%) for TB3.0/TB4.0, and coverage is configuration-dependent, so comparability is inadequate for the requested primary analysis.
 
@@ -137,8 +135,8 @@ The machine-readable table contains 40 inferential rows. Descriptive-only analys
 | RQ2.3 | functional behavior use vs success | used - not used | Media/specialized | 12 | 2.003 percentage points (mean task contrast) | cohens_dz=0.09832 | 32 | 0.6221 | positive = behavior use associated with higher success |
 | RQ3.1 | benchmark-version performance | 2.0->2.1 | Task-balanced pass rate | 89 | 38.45 percentage points | cohens_dz=1.803 | 1 | 2.639e-16 | positive = higher performance in the newer version |
 | RQ3.1 | benchmark-version performance | 3.0->4.0 | Task-balanced pass rate | 66 | 14.34 percentage points | cohens_dz=0.9079 | 173.5 | 1.801e-08 | positive = higher performance in the newer version |
-| RQ3.1 | instruction-change robustness | 2.0->2.1 | Task pass-rate improvement | 89 | 4.314 percentage points | cliffs_delta=0.1045 | 814 | 0.4669 | positive = changed tasks tended to improve more |
-| RQ3.1 | instruction-change robustness | 3.0->4.0 | Task pass-rate improvement | 66 | 6.349 percentage points | cliffs_delta=0.1835 | 358 | 0.3439 | positive = changed tasks tended to improve more |
+| RQ3.1 | official release-fix comparison | 2.0->2.1 | Task pass-rate improvement | 89 | 3.456 percentage points | cliffs_delta=0.05504 | 901 | 0.6812 | positive = release-fixed tasks tended to improve more |
+| RQ3.1 | official release-fix comparison | 3.0->4.0 | Task pass-rate improvement | 66 | 11.17 percentage points | cliffs_delta=0.3572 | 606 | 0.02431 | positive = release-fixed tasks tended to improve more |
 | RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Steps | 89 | -3.5 steps | cohens_dz=-0.3129 | 1129 | 0.0008895 | positive = metric increased in the newer version |
 | RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Shell invocations | 89 | -4.5 invocations | cohens_dz=-0.5237 | 766.5 | 1.179e-06 | positive = metric increased in the newer version |
 | RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Structured tool calls | 89 | -5 calls | cohens_dz=-0.4169 | 929 | 3.051e-05 | positive = metric increased in the newer version |

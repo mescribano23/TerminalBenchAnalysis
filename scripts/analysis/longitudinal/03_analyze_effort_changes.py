@@ -520,8 +520,6 @@ def write_balanced_exports(
             ).to_csv(table_dir / "task_balanced_effort_summary_url_sensitivity.csv", index=False)
         figures = summarize_task_balanced_periods(trajectories, old, new, submission_unit=unit)
         figures.to_csv(table_dir / f"effort_figure_data_submission_balanced_{unit}.csv", index=False)
-        if unit == "source":
-            figures.to_csv(table_dir / "effort_figure_data_submission_balanced_effective.csv", index=False)  # legacy filename alias; unit column is source
         detail = []
         for metric in METRICS:
             pairs = task_metric_pairs(trajectories, metric["column"], submission_unit=unit).dropna(subset=[old, new])
@@ -544,8 +542,6 @@ def write_balanced_exports(
                     "p_value": p_value, "nonzero_task_pairs": nonzero,
                 })
         pd.DataFrame(detail).to_csv(table_dir / f"paired_effort_tasks_{unit}.csv", index=False)
-        if unit == "source":
-            pd.DataFrame(detail).to_csv(table_dir / "paired_effort_tasks_effective.csv", index=False)  # legacy filename alias
         if unit == "source":
             path = balanced_figure
             plot(add_formatted_columns(figures), path, "TB" + old, "TB" + new,

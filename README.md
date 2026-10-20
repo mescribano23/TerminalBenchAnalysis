@@ -263,8 +263,6 @@ python -m scripts.analysis.00_characterize_trajectories `
   --benchmark terminal_bench_4_0
 ```
 
-`data/processed_live/terminal_bench_2_0/parser_validation_sample.csv` is a prepared 24-trajectory manual-validation sample covering all 12 TB2.0 scaffolds, pass/fail outcomes, providers, and submission dates; it has not itself been manually validated.
-
 The trajectory parser reports `shell_invocation_count`, not a decomposed shell-command count. A shell invocation is one extracted shell call or environment interaction; compound expressions issued together, such as `cd repo && pip install -r requirements.txt && pytest`, count as one invocation.
 
 Regenerate leaderboard-level summaries and figures:
@@ -359,7 +357,7 @@ Regenerate the descriptive effort-bin success-rate figures and appendix-style gr
 
 ```powershell
 python -m scripts.analysis.diminishing_returns.01_plot_diminishing_returns
-python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effects --include-legacy-pareto
+python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effects
 ```
 
 These figures are descriptive visualizations; the statistical table above is
@@ -387,19 +385,6 @@ data/processed_live/diminishing_returns/rq1_3_configuration_efficiency.csv
 
 reports/diminishing_returns/effort_bins/rq1_pooled_vs_task_balanced_effort_success.png
 
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_token_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_duration_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_steps_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_shell_invocations_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_tool_calls_pareto.png
-reports/diminishing_returns/by_scaffold_pareto/rq1_3_by_scaffold_configuration_observed_cost_pareto.png
-
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_token_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_duration_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_steps_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_shell_invocations_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_tool_calls_pareto.png
-reports/diminishing_returns/by_model_pareto/rq1_3_by_model_configuration_observed_cost_pareto.png
 
 reports/diminishing_returns/configuration_pareto/rq1_3_configuration_token_pareto.png
 reports/diminishing_returns/configuration_pareto/rq1_3_configuration_duration_pareto.png
@@ -410,9 +395,7 @@ reports/diminishing_returns/configuration_pareto/rq1_3_configuration_observed_co
 reports/diminishing_returns/**/*.png
 ```
 
-The consolidated configuration Pareto views are the default outputs. The
-earlier by-model and by-scaffold figures are preserved; pass
-`--include-legacy-pareto` to include those views in a future run.
+The configuration Pareto figures are the retained RQ1.3 views.
 
 ### 6. Analyze Terminal-Bench 2.0 to 2.1 Longitudinal Changes
 
@@ -426,8 +409,6 @@ python -m scripts.analysis.00_characterize_trajectories `
   --benchmark terminal_bench_2_1
 
 python -m scripts.analysis.longitudinal.00_build_dataset
-
-python -m scripts.analysis.longitudinal.01_analyze_instruction_change_robustness
 
 python -m scripts.analysis.longitudinal.02_analyze_pass_rate_changes
 
@@ -628,7 +609,7 @@ RQ3.1 performance-over-version results remain descriptive. Because TB3.0 and TB4
 
 For the TB2.0 -> TB2.1 performance headline, use the RQ3.1 submission-balanced, task-weighted result consistently: 36.6304% -> 75.0782%, an increase of **38.45 percentage points**. Compute each submission-task pass rate, average equally across submissions within each task, and then average equally across the 89 tasks. The earlier **39.27 pp** result pools trajectories within each task before averaging across tasks (35.8213% -> 75.0943%); the fully pooled trajectory result is **39.05 pp** (36.0705% -> 75.1233%). These are different aggregations of the same 31,103 TB2.0 and 7,501 TB2.1 trajectories. Reserve 38.45 pp for the main task-weighted claim, and name the weighting whenever reporting an alternative. This describes changes in the observed submission populations, not the isolated effect of benchmark fixes on a fixed agent/model population.
 
-The retained TB2.0–TB2.1 pooled diagnostic tables use the following full-dataset medians:
+The retained TB2.0Ã¢â‚¬â€œTB2.1 pooled diagnostic tables use the following full-dataset medians:
 
 - logged characters: 36,828 -> 46,348 (+25.8%)
 - reported total tokens: 213,974.5 -> 282,852 (+32.2%)
@@ -671,32 +652,39 @@ The longitudinal analyses use different denominators depending on which fields a
 
 The prompt-growth analysis excludes 4,141 trajectories: 3,742 lack the required per-call coverage and 399 have a zero first recorded count. These exclusions apply only to this analysis; other analyses retain their own metric-specific populations.
 
-For RQ3.3, **34,139 of 34,463 eligible trajectories (99.06%)** have a strictly larger last recorded prompt-token count than their first. The positive-first-count rule applies consistently to both growth frequencies and first-to-last ratios. Intermediate calls need not increase monotonically. Agreement between the per-call sum and trajectory prompt total is a diagnostic, not an inclusion gate; it holds for 33,155/34,463 (96.20%). The stashed saved results record this single population in `token_accounting/input_context_growth_summary.csv` and its coverage in `token_accounting/input_context_audit.json`.
+For RQ3.3, **34,139 of 34,463 eligible trajectories (99.06%)** have a strictly larger last recorded prompt-token count than their first. The positive-first-count rule applies consistently to both growth frequencies and first-to-last ratios. Intermediate calls need not increase monotonically. Agreement between the per-call sum and trajectory prompt total is a diagnostic, not an inclusion gate; it holds for 33,155/34,463 (96.20%). The results record this single population in `token_accounting/input_context_growth_summary.csv` and its coverage in `token_accounting/input_context_audit.json`.
 
-Instruction-change robustness uses the audited stored-instruction split: 67 instruction-unchanged tasks (29,011 trajectories) and 22 instruction-changed tasks (9,593 trajectories).
+RQ3.1 groups tasks by the official release documentation: 28 release-fixed / 61 not listed as fixed for TB2.0?TB2.1, and 19 release-fixed / 47 not listed as fixed among the 66 shared TB3.0?TB4.0 tasks. The eight officially removed tasks exactly match the local TB3.0-only tasks and are excluded from paired inference. TB4.0 calibrates resources for all retained tasks, so ?not listed as fixed? does not establish unchanged environments, verifiers, or resources.
 
-This split concerns stored instruction text only. It does not identify every benchmark modification or establish unchanged tests, environments, resources, or oracle solutions. The [official TB2.1 release](https://www.tbench.ai/news/terminal-bench-2-1) reports fixes to 28 tasks; 11 overlap our 22 stored instruction changes, while 17 have no instruction change in the stored classification. The completed release-document cross-check also flagged a provenance issue: replaying the comparison against the currently available catalog and representative TB2.1 prompts gave 24 changed / 65 unchanged, with `mailman` and `path-tracing-reverse` differing from the stored classification. Keep 22/67 explicitly attributed to the stored audit and treat its exact reproduction as unresolved; do not silently substitute 24/65 into the existing robustness analysis.
+The [TB2.1 release article](https://www.tbench.ai/news/terminal-bench-2-1) explicitly enumerates 28 IDs. The repository README says 26 and PR #53 enumerates 26: the article adds `crack-7z-hash` and `gpt2-codegolf`. The ID sets reconcile exactly, but the README count conflict remains; the reason for its count is unverified. The primary analysis uses the explicit final-release list and saves a PR26 sensitivity. The required input `data/processed_live/longitudinal/official_release_task_crosswalk.csv` records exact task IDs, official source URLs, release classifications and the separate historical instruction classifications.
 
-### 7. Build the Statistical Audit and Master Table
+The original 22/67 TB2 and 11/55 shared TB3/TB4 instruction classifications remain input metadata for the existing RQ3.3 subgroup summaries. They do not define the RQ3.1 release groups.
 
-After regenerating the RQ-specific analyses above, build the integrated audit:
+To reproduce only the affected RQ3.1 outputs offline, without regenerating other RQ analyses:
 
 ```powershell
-python -m scripts.analysis.10_build_statistical_audit
+python -m scripts.analysis.longitudinal.01_analyze_official_release_changes
+python -m scripts.analysis.10_build_statistical_results --rq3-1-only
 ```
 
-This writes the compact master inferential table, provenance/unit audit, RQ3
-paired tables, exploratory media summary, shared TB3.0/TB4.0 configuration
-summary, and the thesis-ready report:
+These RQ3.1 commands consume the existing `task_composition/adjacent_version_task_changes.csv`; regenerate it with `07_analyze_task_composition_over_versions` first if needed. The results scripts read the verified task mapping directly from `data/processed_live/longitudinal/official_release_task_crosswalk.csv` and check task IDs when joining it to the analysis data. The RQ3.1 script is `01_analyze_official_release_changes.py`, and its figure is `reports/longitudinal/pass_rate_official_release_changes_all_versions.png`. Summary, task vectors, inference and PR26 sensitivity tables use the `rq3_1_official_release_` prefix. Aggregation remains source-submission-balanced within tasks with equal task weights; independent group inference retains two-sided Mann?Whitney U and Cliff's delta.
+
+### 7. Generate Statistical Results
+
+After regenerating the RQ-specific analyses above, generate the integrated results:
+
+```powershell
+python -m scripts.analysis.10_build_statistical_results
+```
+
+This writes the master inferential table, RQ3 paired tables, exploratory media summary, shared TB3.0/TB4.0 configuration summary, and the results report:
 
 ```text
 data/processed_live/statistical_analysis/master_inferential_results.csv
-data/processed_live/statistical_analysis/analysis_provenance_and_units.csv
-data/processed_live/statistical_analysis/validation_checks.csv
 data/processed_live/longitudinal/rq3_1_version_performance_inference.csv
-data/processed_live/longitudinal/rq3_1_instruction_change_inference.csv
+data/processed_live/longitudinal/rq3_1_official_release_change_inference.csv
 data/processed_live/longitudinal/rq3_3_effort_inference.csv
-reports/statistical_analysis_audit.md
+reports/statistical_results.md
 ```
 
 
@@ -706,27 +694,27 @@ To reproduce the current longitudinal tables, submission-balanced effort figures
 python -m scripts.analysis.longitudinal.07_analyze_task_composition_over_versions --include-sensitivities
 python -m scripts.analysis.longitudinal.03_analyze_effort_changes --include-tb3-tb4 --include-sensitivities
 python -m scripts.analysis.longitudinal.09_analyze_difficulty_over_versions --include-sensitivities
-python -m scripts.analysis.10_build_statistical_audit --include-sensitivities
+python -m scripts.analysis.10_build_statistical_results
 ```
 
-The sensitivity flag adds separately named URL-grouped tables; RQ3.3 also exports trial-weighted tables. It does not change the primary source-submission aggregation. The effort script writes matched-task vectors and figure data alongside the summary tables. Difficulty analysis reads the validated caches without invoking labelers. The statistical script retains all 40 inferential rows and its validation checks.
+The composition, effort and difficulty scripts support separately named URL-grouped sensitivity tables; RQ3.3 also exports trial-weighted tables. It does not change the primary source-submission aggregation. The effort script writes matched-task vectors and figure data alongside the summary tables. Difficulty analysis reads the validated caches without invoking labelers. The statistical script generates all 40 inferential rows and checks their task counts and statistical invariants before writing them.
 
 For comparison runs, use `--output-root PATH` with the effort and statistical scripts to mirror their output layout under another directory. For task composition and difficulty analysis, use `--out-dir PATH` and `--figures-dir PATH`. Inputs continue to come from the repository.
 
 The two RQ3.3 effort figures are `effort_change_submission_balanced_tb2_0_to_tb2_1.png` and `effort_change_submission_balanced_tb3_0_to_tb4_0.png`. Figure percentages compare cross-task medians after source-submission balancing; paired tests use absolute task differences. Metric-specific missing pairs are excluded. Eight descriptive metrics are plotted, and five primary metrics are tested.
 
-The RQ3.1 shared-task change is +38.45 pp for TB2.0–TB2.1 and +14.34 pp for TB3.0–TB4.0. Both the headline and paired tests use the same actual source submission units. The [statistical report](reports/statistical_analysis_audit.md) provides p-values and effect sizes.
+The RQ3.1 shared-task change is +38.45 pp for TB2.0Ã¢â‚¬â€œTB2.1 and +14.34 pp for TB3.0Ã¢â‚¬â€œTB4.0. Both the headline and paired tests use the same actual source submission units. The [statistical report](reports/statistical_results.md) provides p-values and effect sizes.
 
-Aggregation regression checks can be run with `python -m unittest discover -s tests -v`. The fixed-label provenance is retained in `reports/longitudinal/difficulty_over_versions/provenance.json`. Historical manuscript comparisons and recovery records are archived separately from the replication package and remain in Git history (results commit `0852679b`, manuscript comparison commit `990866ea`).
+Aggregation regression checks can be run with `python -m unittest discover -s tests -v`.
 
 ## Useful Maintenance Commands
 
-To regenerate all retained figure views from the current datasets, including the optional Pareto views, run the commands below. They use retained task labels and raw trajectories; no scraping or LLM labeling is required. The effort generator writes only the two submission-balanced effort figures.
+To regenerate the retained figures from the current datasets, run the commands below. They use retained task labels and raw trajectories; no scraping or LLM labeling is required. The effort generator writes only the two submission-balanced effort figures.
 
 ```powershell
 python -m scripts.prepare_processed_tables
 python -m scripts.analysis.diminishing_returns.01_plot_diminishing_returns
-python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effects --include-legacy-pareto
+python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effects
 python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_2_0
 python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_2_1
 python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_3_0
@@ -738,7 +726,7 @@ python -m scripts.analysis.tasks.02_analyze_tool_availability_use
 python -m scripts.analysis.longitudinal.07_analyze_task_composition_over_versions --include-sensitivities
 python -m scripts.analysis.longitudinal.05_analyze_performance_over_versions
 python -m scripts.analysis.longitudinal.09_analyze_difficulty_over_versions --include-sensitivities
-python -m scripts.analysis.longitudinal.01_analyze_instruction_change_robustness
+python -m scripts.analysis.longitudinal.01_analyze_official_release_changes
 python -m scripts.analysis.longitudinal.02_analyze_pass_rate_changes
 python -m scripts.analysis.longitudinal.03_analyze_effort_changes --include-tb3-tb4 --include-sensitivities
 python -m scripts.analysis.longitudinal.04_analyze_token_accounting
@@ -778,8 +766,8 @@ the five Codex/Astra rows remain distinct.
 fingerprint. `configuration_version_id` is distinct from source identity.
 Original values are preserved in `legacy_*` columns. Primary CLI analyses use
 `--submission-unit source`; corrected URL grouping is a sensitivity with the
-same source partition. Existing `*_effective.csv` filenames are compatibility
-aliases with `submission_unit=source`; prefer the new `*_source.csv` names.
+same source partition. Source-balanced figure data and paired task vectors use
+`*_source.csv` names.
 
 Historical scraped dates are preserved, with repaired TB2.0 attribution.
 `historical_leaderboard_timestamp` indexes descriptive historical-date cohorts;
@@ -789,12 +777,4 @@ instruction audit remains an archival classification cache; its historical
 full-leaderboard counts are not retained source-submission counts. Use the
 new source-identity metadata sidecar for current corpus counts and date ranges.
 
-Standalone diagnostic audits, temporary correction backups/comparisons and their
-one-off generators have been removed. The retained report files are
-`reports/manuscript_repository_consistency_20261019.md` and
-`reports/statistical_analysis_audit.md`. Paper figures and their analysis scripts
-remain. `10_build_statistical_audit.py` is retained because it computes the
-paper inference tables and regenerates the retained statistical report.
-Task-version instruction and label-validation caches remain analysis inputs.
-The retained manuscript consistency report is historical and may reference
-removed diagnostic artifacts.
+The retained pipeline contains data acquisition, result generation, shared analysis helpers, and regression tests. The statistical results report is `reports/statistical_results.md`. Task-version classification and difficulty-label caches are required analysis inputs.

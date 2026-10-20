@@ -25,7 +25,6 @@ import argparse
 import json
 import re
 import sys
-import textwrap
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -45,9 +44,7 @@ from scripts.analysis.support_thresholds import MINIMUM_SUPPORT_PER_COMPARISON_C
 from scripts.analysis.statistical_helpers import paired_cohens_dz, two_sided_signed_rank
 from scripts.analysis.plot_style import (
     DIVERGING_CMAP,
-    FAIL_COLOR,
     HEATMAP_DPI,
-    PASS_COLOR,
     colorblind_cmap,
     heatmap_text_color,
 )
@@ -940,57 +937,12 @@ def pp_label(value: float | None) -> str:
     return f"{value:+.0f} pp"
 
 
-def wrap_label(value: Any, width: int) -> str:
-    return "\n".join(textwrap.wrap(str(value), width=width, break_long_words=False))
-
-
 def supported_difference(df: pd.DataFrame, min_cell_support: int) -> pd.Series:
     return (
         df["n_used"].ge(min_cell_support)
         & df["n_not_used"].ge(min_cell_support)
         & df["pass_rate_difference_pp"].notna()
     )
-
-
-def plot_overall_pass_rates(overall: pd.DataFrame, out_path: Path) -> None:
-    df = overall.copy()
-    x = np.arange(len(df))
-    width = 0.36
-
-    fig, ax = plt.subplots(figsize=(8.4, 4.8))
-    used_bars = ax.bar(x - width / 2, df["pass_rate_used"], width, label="Used", color=PASS_COLOR)
-    not_used_bars = ax.bar(x + width / 2, df["pass_rate_not_used"], width, label="Not used", color=FAIL_COLOR)
-
-    ax.set_title("Tool-use association with success overall")
-    ax.set_ylabel("Pass rate")
-    ax.set_ylim(0, max(0.62, float(np.nanmax(df[["pass_rate_used", "pass_rate_not_used"]].to_numpy())) + 0.12))
-    ax.set_xticks(x)
-    ax.set_xticklabels(df["tool_family_display"], rotation=20, ha="right")
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f"{value * 100:.0f}%"))
-    ax.legend(frameon=False, ncols=2, loc="upper left")
-    ax.spines[["top", "right"]].set_visible(False)
-
-    for bars in (used_bars, not_used_bars):
-        for bar in bars:
-            height = bar.get_height()
-            if np.isfinite(height):
-                ax.text(bar.get_x() + bar.get_width() / 2, height + 0.012, pct_label(height), ha="center", va="bottom", fontsize=8)
-
-    for i, row in enumerate(df.itertuples(index=False)):
-        notes = []
-        if row.use_rate >= 0.95:
-            notes.append("near-universal")
-        if row.use_rate <= 0.01:
-            notes.append("sparse use")
-        if row.n_used < 50 or row.n_not_used < 50:
-            notes.append("limited contrast")
-        if notes:
-            ax.text(i, -0.09, "\n".join(notes), transform=ax.get_xaxis_transform(), ha="center", va="top", fontsize=7, color="#555555")
-
-    fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=200)
-    plt.close(fig)
 
 
 def plot_difference_heatmap(

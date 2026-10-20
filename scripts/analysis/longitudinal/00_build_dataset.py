@@ -11,7 +11,7 @@ Inputs are the per-benchmark outputs from:
     python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_0
     python -m scripts.analysis.00_characterize_trajectories --benchmark terminal_bench_2_1
 
-The final trajectory table and compact audit are written under
+The final trajectory table is written under
 data/processed_live/longitudinal by default.
 """
 
@@ -247,20 +247,6 @@ def read_submission_table(raw_dir: Path, benchmark: str) -> pd.DataFrame:
     return submissions
 
 
-def candidate_map(submissions: pd.DataFrame, key_column: str) -> dict[Any, pd.DataFrame]:
-    if submissions.empty:
-        return {}
-    return {
-        key: group.reset_index(drop=True)
-        for key, group in submissions.groupby(key_column, dropna=False)
-    }
-
-
-def same_timestamp(candidates: pd.DataFrame) -> bool:
-    timestamps = candidates["submission_timestamp"].dropna().unique()
-    return len(timestamps) == 1
-
-
 def attach_submission_metadata(trajectories: pd.DataFrame, submissions: pd.DataFrame) -> pd.DataFrame:
     """Join only independently resolved source IDs; no URL/configuration fallback."""
     trajectories = ensure_source_submission_id(trajectories)
@@ -341,122 +327,6 @@ def numeric_clean(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return df
 
 
-def duplicate_summary(df: pd.DataFrame) -> dict[str, Any]:
-    within = df.duplicated(["benchmark", "rel_path"], keep=False)
-    cross_key_columns = ["scaffold", "model_dir", "task_name", "file_run_id"]
-    cross = (
-        df.dropna(subset=["file_run_id"])
-        .groupby(cross_key_columns, dropna=False)["benchmark"]
-        .nunique()
-        .reset_index(name="benchmark_count")
-    )
-    cross = cross[cross["benchmark_count"] > 1]
-    return {
-        "within_benchmark_duplicate_rows": int(within.sum()),
-        "cross_version_duplicate_candidate_count": int(cross.shape[0]),
-        "cross_version_duplicate_candidate_examples": cross.head(20).to_dict(orient="records"),
-    }
-
-
-def effort_coverage(df: pd.DataFrame) -> dict[str, Any]:
-    out: dict[str, Any] = {}
-    for column in EFFORT_COLUMNS:
-        values = pd.to_numeric(df[column], errors="coerce") if column in df.columns else pd.Series(dtype=float)
-        out[column] = {
-            "non_missing": int(values.notna().sum()),
-            "missing": int(values.isna().sum()),
-            "positive": int((values > 0).sum()),
-        }
-    return out
-
-
-def build_audit(
-    df: pd.DataFrame,
-    tasks: pd.DataFrame,
-    missing_meta: pd.DataFrame,
-    benchmarks: tuple[str, ...],
-) -> dict[str, Any]:
-    by_version: dict[str, Any] = {}
-    for benchmark, group in df.groupby("benchmark"):
-        binary = group["passed"].notna()
-        by_version[benchmark] = {
-            "trajectory_count": int(group.shape[0]),
-            "submission_count": int(group["source_submission_id"].replace("", np.nan).nunique()),
-            "task_count": int(group["task_name"].nunique()),
-            "scaffold_count": int(group["scaffold"].nunique()),
-            "model_dir_count": int(group["model_dir"].nunique()),
-            "binary_outcome_count": int(binary.sum()),
-            "pass_rate": float(group.loc[binary, "passed"].mean()) if binary.any() else None,
-            "missing_submission_timestamp_rows": int(group["submission_timestamp"].isna().sum()),
-        }
-    task_sets = {
-        benchmark: set(group["task_name"].dropna().astype(str))
-        for benchmark, group in df.groupby("benchmark")
-    }
-    overlap = sorted(set.intersection(*task_sets.values())) if task_sets else []
-    match_counts = df["submission_match_status"].value_counts(dropna=False).to_dict()
-    ambiguous = df[df["submission_match_status"].astype(str).str.startswith("ambiguous")].copy()
-    unmatched = df[df["submission_match_status"].eq("unmatched")].copy()
-    index_missing = df[df["index_trial_id"].isna() | df["index_trial_id"].eq("")].copy()
-    return {
-        "inputs": {
-            "benchmarks": list(benchmarks),
-            "task_metadata_rows": int(tasks.shape[0]),
-        },
-        "by_version": by_version,
-        "task_overlap": {
-            "common_task_count": len(overlap),
-            "only_by_benchmark": {
-                benchmark: sorted(task_sets.get(benchmark, set()) - set(overlap))
-                for benchmark in benchmarks
-            },
-        },
-        "metadata_join": {
-            "missing_metadata_rows": int(missing_meta.shape[0]),
-            "missing_metadata_task_count": int(missing_meta["task_name"].nunique())
-            if not missing_meta.empty
-            else 0,
-            "missing_metadata_examples": sorted(
-                missing_meta["task_name"].dropna().astype(str).unique()
-            )[:20],
-        },
-        "trajectory_index_join": {
-            "missing_index_rows": int(index_missing.shape[0]),
-            "missing_index_examples": index_missing[
-                ["benchmark", "rel_path", "scaffold", "model_dir", "task_name", "file_run_id"]
-            ]
-            .head(20)
-            .to_dict(orient="records"),
-        },
-        "submission_linkage": {
-            "match_status_counts": {str(k): int(v) for k, v in match_counts.items()},
-            "missing_submission_timestamp_rows": int(df["submission_timestamp"].isna().sum()),
-            "ambiguous_match_examples": ambiguous[
-                [
-                    "benchmark",
-                    "scaffold",
-                    "agent_version",
-                    "model_dir",
-                    "submission_candidate_count",
-                    "submission_candidate_ids",
-                    "submission_timestamp",
-                ]
-            ]
-            .drop_duplicates()
-            .head(20)
-            .assign(submission_timestamp=lambda x: x["submission_timestamp"].astype(str))
-            .to_dict(orient="records"),
-            "unmatched_examples": unmatched[
-                ["benchmark", "rel_path", "scaffold", "agent_version", "model_dir", "task_name"]
-            ]
-            .head(20)
-            .to_dict(orient="records"),
-        },
-        "duplicates": duplicate_summary(df),
-        "effort_variable_coverage": effort_coverage(df),
-    }
-
-
 def main() -> None:
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -519,14 +389,10 @@ def main() -> None:
     trajectories["cost_usd_positive"] = trajectories["cost_usd"].where(trajectories["cost_usd"] > 0)
 
     df = trajectories.merge(tasks, on="task_name", how="left", validate="many_to_one")
-    missing_meta = df[df["category"].isna() | df["difficulty"].isna()].copy()
 
     df.to_csv(args.out / "trajectory_longitudinal.csv", index=False)
-    with (args.out / "longitudinal_data_audit.json").open("w", encoding="utf-8") as f:
-        json.dump(build_audit(df, tasks, missing_meta, benchmarks), f, indent=2, default=str)
 
     print(f"Wrote longitudinal trajectories to {args.out / 'trajectory_longitudinal.csv'}")
-    print(f"Wrote audit to {args.out / 'longitudinal_data_audit.json'}")
 
 
 if __name__ == "__main__":
