@@ -4,7 +4,7 @@
 
 The reconciliation refresh updates affected existing tests and effect sizes from the restored caches. Only the shell-invocation curvature model was refitted; five unaffected curvature models were retained. The validated difficulty labels were not regenerated. Historical outputs are preserved separately.
 
-Primary RQ3.1, RQ3.2 and RQ3.3 aggregation uses the repository's existing effective submission IDs, consistently with RQ1. RQ3.3 takes medians within effective submission-task pairs, medians across submissions within tasks, then compares paired shared tasks. Leaderboard-URL grouping is retained as an explicit sensitivity analysis. RQ2.1 and RQ2.2 retain their existing URL-grouped definitions; RQ2.3 retains trajectory use/non-use cells with at least three trajectories per cell. No new identifier was introduced. Refreshed and historical pooled trajectory figures remain descriptive and are not submission-balanced estimates.
+Primary RQ3.1, RQ3.2 and RQ3.3 aggregation uses resolved source_submission_id values, consistently with RQ1. RQ3.3 takes medians within source submission-task pairs, medians across submissions within tasks, then compares paired shared tasks. Leaderboard-URL grouping is retained as an explicit sensitivity analysis. RQ2.1 and RQ2.2 now use the same actual source submission unit; RQ2.3 retains trajectory use/non-use cells with at least three trajectories per cell. Configuration fingerprints are separate from source submission identity. Historical scraped dates are preserved; their submission/publication semantics remain unverified. Refreshed and historical pooled trajectory figures remain descriptive and are not submission-balanced estimates.
 
 RQ1.3 remains a descriptive Pareto analysis. The media comparison is post-hoc exploratory. RQ3.2 composition analyses and exact shared-configuration token comparisons remain descriptive. Cost is not a current longitudinal headline metric and its incomplete, configuration-dependent coverage does not support adding a primary RQ3.3 test. No confidence intervals, multiplicity correction, or extra subgroup tests were added.
 
@@ -38,13 +38,13 @@ For paired task differences D, Cohen's dz is mean(D) / sd(D) with sample SD (ddo
 
 ### RQ2.1
 
-- Difficulty and task pass rate: Spearman rho = -0.488, p = 1.24e-06, n = 89 tasks.
+- Difficulty and task pass rate: Spearman rho = -0.483, p = 1.61e-06, n = 89 tasks.
 
 ### RQ2.2
 
 - Post-hoc exploratory media finding: 7 media tasks averaged 16.0% versus 38.4% for 82 other tasks (delta = -22.4 pp); no confirmatory test or Cliff's delta is reported.
-- Agent vs expert: median agent duration = 7.02 min, median estimate = 60.00 min, median paired delta = -46.91 min, dz = -0.509, W = 46.0, p = 1.78e-15 (n = 88). Success-only median = 7.21 min; median paired delta = -46.59 min and median agent/estimate ratio = 0.121 (descriptive only).
-- Agent vs junior: median agent duration = 7.02 min, median estimate = 240.00 min, median paired delta = -235.34 min, dz = -0.403, W = 1.0, p = 3.86e-16 (n = 88). Success-only median = 7.21 min; median paired delta = -235.60 min and median agent/estimate ratio = 0.022 (descriptive only).
+- Agent vs expert: median agent duration = 7.11 min, median estimate = 60.00 min, median paired delta = -47.08 min, dz = -0.509, W = 47.0, p = 1.84e-15 (n = 88). Success-only median = 7.25 min; median paired delta = -46.06 min and median agent/estimate ratio = 0.124 (descriptive only).
+- Agent vs junior: median agent duration = 7.11 min, median estimate = 240.00 min, median paired delta = -235.27 min, dz = -0.403, W = 1.0, p = 3.86e-16 (n = 88). Success-only median = 7.25 min; median paired delta = -235.46 min and median agent/estimate ratio = 0.022 (descriptive only).
 
 ### RQ2.3
 
@@ -61,22 +61,22 @@ For paired task differences D, Cohen's dz is mean(D) / sd(D) with sample SD (ddo
 ### RQ3.1
 
 - 2.0->2.1: 36.6% -> 75.1% (delta = 38.45 pp; mean/median task delta = 38.45/36.79 pp), dz = 1.803, W = 1.0, p = 2.64e-16 (n = 89).
-- 3.0->4.0: 21.6% -> 36.2% (delta = 14.58 pp; mean/median task delta = 14.58/13.80 pp), dz = 0.924, W = 164.0, p = 1.22e-08 (n = 66).
+- 3.0->4.0: 21.8% -> 36.2% (delta = 14.34 pp; mean/median task delta = 14.34/14.38 pp), dz = 0.908, W = 173.5, p = 1.8e-08 (n = 66).
 - Instruction-change comparison, 2.0->2.1: changed tasks improved by 41.70 pp on average (median 40.13) versus 37.38 pp (median 36.04) for unchanged tasks; between-group mean difference = 4.31 pp, Cliff's delta = 0.104, U = 814.0, p = 0.467 (n = 22/67).
-- Instruction-change comparison, 3.0->4.0: changed tasks improved by 20.12 pp on average (median 18.03) versus 13.47 pp (median 12.78) for unchanged tasks; between-group mean difference = 6.65 pp, Cliff's delta = 0.208, U = 365.5, p = 0.282 (n = 11/55).
+- Instruction-change comparison, 3.0->4.0: changed tasks improved by 19.63 pp on average (median 17.78) versus 13.28 pp (median 12.78) for unchanged tasks; between-group mean difference = 6.35 pp, Cliff's delta = 0.183, U = 358.0, p = 0.344 (n = 11/55).
 
 ### RQ3.3
 
-- 2.0->2.1, Steps: effective-submission-balanced shared-task medians 21 -> 18 (-14.3% ratio of cross-task medians); mean/median paired task delta = -3.31/-3.5, dz = -0.313, W = 1129.0, p = 0.000889 (n = 89). Refreshed pooled trajectory medians are descriptive only: 21 -> 18 (-14.3%).
-- 2.0->2.1, Shell invocations: effective-submission-balanced shared-task medians 20.5 -> 16 (-22.0% ratio of cross-task medians); mean/median paired task delta = -5.78/-4.5, dz = -0.524, W = 766.5, p = 1.18e-06 (n = 89). Refreshed pooled trajectory medians are descriptive only: 20 -> 15 (-25.0%).
-- 2.0->2.1, Structured tool calls: effective-submission-balanced shared-task medians 23.8 -> 19 (-20.0% ratio of cross-task medians); mean/median paired task delta = -5.19/-5, dz = -0.417, W = 929.0, p = 3.05e-05 (n = 89). Refreshed pooled trajectory medians are descriptive only: 23 -> 19 (-17.4%).
-- 2.0->2.1, Duration: effective-submission-balanced shared-task medians 434 -> 378 (-13.0% ratio of cross-task medians); mean/median paired task delta = -39/-57.8, dz = -0.139, W = 1312.0, p = 0.00473 (n = 89). Refreshed pooled trajectory medians are descriptive only: 409 -> 377 (-7.8%).
-- 2.0->2.1, Total tokens: effective-submission-balanced shared-task medians 2.42e+05 -> 3e+05 (+23.8% ratio of cross-task medians); mean/median paired task delta = 2.03e+05/6.03e+04, dz = 0.297, W = 1080.0, p = 0.00016 (n = 89). Refreshed pooled trajectory medians are descriptive only: 2.14e+05 -> 2.83e+05 (+32.2%).
-- 3.0->4.0, Steps: effective-submission-balanced shared-task medians 76.5 -> 59.8 (-21.9% ratio of cross-task medians); mean/median paired task delta = -9.91/-10.2, dz = -0.360, W = 416.5, p = 1.07e-05 (n = 66). Refreshed pooled trajectory medians are descriptive only: 71 -> 60 (-15.5%).
-- 3.0->4.0, Shell invocations: effective-submission-balanced shared-task medians 57.2 -> 49.2 (-14.0% ratio of cross-task medians); mean/median paired task delta = -2.9/-4.75, dz = -0.134, W = 658.0, p = 0.00675 (n = 66). Refreshed pooled trajectory medians are descriptive only: 55 -> 47 (-14.5%).
-- 3.0->4.0, Structured tool calls: effective-submission-balanced shared-task medians 78.5 -> 63 (-19.7% ratio of cross-task medians); mean/median paired task delta = -9.93/-10.2, dz = -0.399, W = 418.5, p = 1.92e-05 (n = 66). Refreshed pooled trajectory medians are descriptive only: 75 -> 63 (-16.0%).
-- 3.0->4.0, Duration: effective-submission-balanced shared-task medians 2e+03 -> 1.48e+03 (-26.0% ratio of cross-task medians); mean/median paired task delta = -511/-414, dz = -0.500, W = 247.0, p = 4.15e-08 (n = 66). Refreshed pooled trajectory medians are descriptive only: 1.97e+03 -> 1.64e+03 (-16.8%).
-- 3.0->4.0, Total tokens: effective-submission-balanced shared-task medians 8.54e+06 -> 5.27e+06 (-38.3% ratio of cross-task medians); mean/median paired task delta = -2.22e+06/-1.93e+06, dz = -0.511, W = 374.0, p = 2.97e-06 (n = 66). Refreshed pooled trajectory medians are descriptive only: 8.06e+06 -> 5.3e+06 (-34.3%).
+- 2.0->2.1, Steps: source-submission-balanced shared-task medians 21 -> 18 (-14.3% ratio of cross-task medians); mean/median paired task delta = -3.31/-3.5, dz = -0.313, W = 1129.0, p = 0.000889 (n = 89). Refreshed pooled trajectory medians are descriptive only: 21 -> 18 (-14.3%).
+- 2.0->2.1, Shell invocations: source-submission-balanced shared-task medians 20.5 -> 16 (-22.0% ratio of cross-task medians); mean/median paired task delta = -5.78/-4.5, dz = -0.524, W = 766.5, p = 1.18e-06 (n = 89). Refreshed pooled trajectory medians are descriptive only: 20 -> 15 (-25.0%).
+- 2.0->2.1, Structured tool calls: source-submission-balanced shared-task medians 23.8 -> 19 (-20.0% ratio of cross-task medians); mean/median paired task delta = -5.19/-5, dz = -0.417, W = 929.0, p = 3.05e-05 (n = 89). Refreshed pooled trajectory medians are descriptive only: 23 -> 19 (-17.4%).
+- 2.0->2.1, Duration: source-submission-balanced shared-task medians 434 -> 378 (-13.0% ratio of cross-task medians); mean/median paired task delta = -39/-57.8, dz = -0.139, W = 1312.0, p = 0.00473 (n = 89). Refreshed pooled trajectory medians are descriptive only: 409 -> 377 (-7.8%).
+- 2.0->2.1, Total tokens: source-submission-balanced shared-task medians 2.42e+05 -> 3e+05 (+23.8% ratio of cross-task medians); mean/median paired task delta = 2.03e+05/6.03e+04, dz = 0.297, W = 1080.0, p = 0.00016 (n = 89). Refreshed pooled trajectory medians are descriptive only: 2.14e+05 -> 2.83e+05 (+32.2%).
+- 3.0->4.0, Steps: source-submission-balanced shared-task medians 76.5 -> 59.8 (-21.9% ratio of cross-task medians); mean/median paired task delta = -9.48/-11.2, dz = -0.365, W = 430.5, p = 1.61e-05 (n = 66). Refreshed pooled trajectory medians are descriptive only: 71 -> 60 (-15.5%).
+- 3.0->4.0, Shell invocations: source-submission-balanced shared-task medians 59.9 -> 49.2 (-17.7% ratio of cross-task medians); mean/median paired task delta = -3.48/-6, dz = -0.166, W = 632.5, p = 0.00251 (n = 66). Refreshed pooled trajectory medians are descriptive only: 55 -> 47 (-14.5%).
+- 3.0->4.0, Structured tool calls: source-submission-balanced shared-task medians 82.2 -> 63 (-23.4% ratio of cross-task medians); mean/median paired task delta = -10.3/-9.75, dz = -0.441, W = 407.0, p = 8.11e-06 (n = 66). Refreshed pooled trajectory medians are descriptive only: 75 -> 63 (-16.0%).
+- 3.0->4.0, Duration: source-submission-balanced shared-task medians 2.14e+03 -> 1.48e+03 (-31.0% ratio of cross-task medians); mean/median paired task delta = -589/-546, dz = -0.586, W = 180.0, p = 3.38e-09 (n = 66). Refreshed pooled trajectory medians are descriptive only: 1.97e+03 -> 1.64e+03 (-16.8%).
+- 3.0->4.0, Total tokens: source-submission-balanced shared-task medians 8.39e+06 -> 5.27e+06 (-37.2% ratio of cross-task medians); mean/median paired task delta = -2.54e+06/-2.17e+06, dz = -0.536, W = 381.0, p = 3.69e-06 (n = 66). Refreshed pooled trajectory medians are descriptive only: 8.06e+06 -> 5.3e+06 (-34.3%).
 
 ### Shared TB3.0/TB4.0 configurations (descriptive)
 
@@ -123,8 +123,8 @@ The machine-readable table contains 40 inferential rows. Descriptive-only analys
 | RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Total tokens | 87 | -0.3411 standardized quadratic log-effort coefficient | beta_2=-0.3411 | -2.57 | 0.01018 | negative = concave-down conditional relationship |
 | RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Duration | 87 | -0.486 standardized quadratic log-effort coefficient | beta_2=-0.486 | -3.1 | 0.001937 | negative = concave-down conditional relationship |
 | RQ1.2 | quadratic conditional logistic regression | H0: beta_2 = 0 | Cost | 86 | -0.2887 standardized quadratic log-effort coefficient | beta_2=-0.2887 | -2.235 | 0.0254 | negative = concave-down conditional relationship |
-| RQ2.1 | difficulty vs task pass rate | ordinal difficulty | Task-balanced pass rate | 89 | -0.4878 rho | spearman_rho=-0.4878 | -0.4878 | 1.244e-06 | negative = lower pass rate at greater difficulty |
-| RQ2.2 | agent duration vs human estimate | agent - expert | Duration | 88 | -46.91 minutes | cohens_dz=-0.5094 | 46 | 1.783e-15 | negative = agent duration is shorter |
+| RQ2.1 | difficulty vs task pass rate | ordinal difficulty | Task-balanced pass rate | 89 | -0.4833 rho | spearman_rho=-0.4833 | -0.4833 | 1.609e-06 | negative = lower pass rate at greater difficulty |
+| RQ2.2 | agent duration vs human estimate | agent - expert | Duration | 88 | -47.08 minutes | cohens_dz=-0.5091 | 47 | 1.844e-15 | negative = agent duration is shorter |
 | RQ2.2 | agent duration vs human estimate | agent - junior | Duration | 88 | -235.3 minutes | cohens_dz=-0.403 | 1 | 3.863e-16 | negative = agent duration is shorter |
 | RQ2.3 | functional behavior use vs success | used - not used | Inspect/search | 89 | 9.459 percentage points (mean task contrast) | cohens_dz=0.7788 | 434 | 3.754e-10 | positive = behavior use associated with higher success |
 | RQ2.3 | functional behavior use vs success | used - not used | Modify/write | 89 | 5.699 percentage points (mean task contrast) | cohens_dz=0.5098 | 856 | 7.539e-06 | positive = behavior use associated with higher success |
@@ -136,16 +136,16 @@ The machine-readable table contains 40 inferential rows. Descriptive-only analys
 | RQ2.3 | functional behavior use vs success | used - not used | Network/external | 48 | -2.405 percentage points (mean task contrast) | cohens_dz=-0.1003 | 450 | 0.2277 | positive = behavior use associated with higher success |
 | RQ2.3 | functional behavior use vs success | used - not used | Media/specialized | 12 | 2.003 percentage points (mean task contrast) | cohens_dz=0.09832 | 32 | 0.6221 | positive = behavior use associated with higher success |
 | RQ3.1 | benchmark-version performance | 2.0->2.1 | Task-balanced pass rate | 89 | 38.45 percentage points | cohens_dz=1.803 | 1 | 2.639e-16 | positive = higher performance in the newer version |
-| RQ3.1 | benchmark-version performance | 3.0->4.0 | Task-balanced pass rate | 66 | 14.58 percentage points | cohens_dz=0.9241 | 164 | 1.222e-08 | positive = higher performance in the newer version |
+| RQ3.1 | benchmark-version performance | 3.0->4.0 | Task-balanced pass rate | 66 | 14.34 percentage points | cohens_dz=0.9079 | 173.5 | 1.801e-08 | positive = higher performance in the newer version |
 | RQ3.1 | instruction-change robustness | 2.0->2.1 | Task pass-rate improvement | 89 | 4.314 percentage points | cliffs_delta=0.1045 | 814 | 0.4669 | positive = changed tasks tended to improve more |
-| RQ3.1 | instruction-change robustness | 3.0->4.0 | Task pass-rate improvement | 66 | 6.651 percentage points | cliffs_delta=0.2083 | 365.5 | 0.2821 | positive = changed tasks tended to improve more |
+| RQ3.1 | instruction-change robustness | 3.0->4.0 | Task pass-rate improvement | 66 | 6.349 percentage points | cliffs_delta=0.1835 | 358 | 0.3439 | positive = changed tasks tended to improve more |
 | RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Steps | 89 | -3.5 steps | cohens_dz=-0.3129 | 1129 | 0.0008895 | positive = metric increased in the newer version |
 | RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Shell invocations | 89 | -4.5 invocations | cohens_dz=-0.5237 | 766.5 | 1.179e-06 | positive = metric increased in the newer version |
 | RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Structured tool calls | 89 | -5 calls | cohens_dz=-0.4169 | 929 | 3.051e-05 | positive = metric increased in the newer version |
 | RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Duration | 89 | -57.8 seconds | cohens_dz=-0.1385 | 1312 | 0.004727 | positive = metric increased in the newer version |
 | RQ3.3 | benchmark-version interaction/resource change | 2.0->2.1 | Total tokens | 89 | 6.034e+04 tokens | cohens_dz=0.2966 | 1080 | 0.0001605 | positive = metric increased in the newer version |
-| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Steps | 66 | -10.25 steps | cohens_dz=-0.3604 | 416.5 | 1.074e-05 | positive = metric increased in the newer version |
-| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Shell invocations | 66 | -4.75 invocations | cohens_dz=-0.1338 | 658 | 0.006747 | positive = metric increased in the newer version |
-| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Structured tool calls | 66 | -10.25 calls | cohens_dz=-0.3987 | 418.5 | 1.918e-05 | positive = metric increased in the newer version |
-| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Duration | 66 | -414 seconds | cohens_dz=-0.4999 | 247 | 4.154e-08 | positive = metric increased in the newer version |
-| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Total tokens | 66 | -1.925e+06 tokens | cohens_dz=-0.5109 | 374 | 2.97e-06 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Steps | 66 | -11.25 steps | cohens_dz=-0.3649 | 430.5 | 1.614e-05 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Shell invocations | 66 | -6 invocations | cohens_dz=-0.1655 | 632.5 | 0.002511 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Structured tool calls | 66 | -9.75 calls | cohens_dz=-0.4407 | 407 | 8.105e-06 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Duration | 66 | -546.5 seconds | cohens_dz=-0.5864 | 180 | 3.376e-09 | positive = metric increased in the newer version |
+| RQ3.3 | benchmark-version interaction/resource change | 3.0->4.0 | Total tokens | 66 | -2.167e+06 tokens | cohens_dz=-0.5357 | 381 | 3.689e-06 | positive = metric increased in the newer version |

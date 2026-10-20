@@ -36,7 +36,7 @@ if str(REPO_ROOT_GUESS) not in sys.path:
 from scripts.analysis.plot_style import COLORBLIND_PALETTE
 from scripts.benchmark_paths import find_repo_root
 from scripts.analysis.longitudinal.difficulty_protocol import require_difficulty_protocol
-from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
+from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -69,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tb3-tb4-trajectories", type=Path, default=TB3_TB4_TRAJECTORY_DEFAULT)
     parser.add_argument("--tb3-tb4-labels", type=Path, default=TB3_TB4_LABELS_DEFAULT)
     parser.add_argument("--out-dir", type=Path, default=OUT_DIR_DEFAULT)
-    parser.add_argument("--submission-unit", choices=["effective", "leaderboard-url"], default="effective")
+    parser.add_argument("--submission-unit", choices=["source", "leaderboard-url"], default="source")
     parser.add_argument("--include-sensitivities", action="store_true",
                         help="Also write URL-grouped pass-rate tables using the same fixed labels.")
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR_DEFAULT)
@@ -195,13 +195,13 @@ def build_distribution(labels: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_task_pass_rates(
-    trajectories: pd.DataFrame, labels: pd.DataFrame, *, submission_unit: str = "effective"
+    trajectories: pd.DataFrame, labels: pd.DataFrame, *, submission_unit: str = "source"
 ) -> pd.DataFrame:
-    if submission_unit == "effective":
-        trajectories = ensure_effective_submission_id(trajectories)
-        identity = EFFECTIVE_SUBMISSION_ID
+    if submission_unit == "source":
+        trajectories = ensure_source_submission_id(trajectories)
+        identity = SOURCE_SUBMISSION_ID
     elif submission_unit == "leaderboard-url":
-        identity = "submission_id"
+        identity = "source_submission_url"
     else:
         raise ValueError(f"Unknown submission unit: {submission_unit}")
     df = trajectories.merge(labels, on=["benchmark_version", "task_name"], how="inner", validate="many_to_one")

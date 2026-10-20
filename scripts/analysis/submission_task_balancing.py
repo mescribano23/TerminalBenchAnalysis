@@ -6,6 +6,8 @@ from collections.abc import Iterable
 
 import pandas as pd
 
+from scripts.analysis.source_submission_identity import SOURCE_SUBMISSION_ID, ensure_source_submission_id
+
 
 EFFECTIVE_SUBMISSION_ID = "effective_submission_id"
 CONFIG_ID = "config_id"
@@ -41,25 +43,13 @@ def ensure_config_id(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_effective_submission_id(row: pd.Series | dict[str, object]) -> str:
-    """Build the canonical effective submission identifier used for balancing.
-
-    Terminal-Bench 2.0 trajectory metadata does not expose a stable numeric
-    submission id, so analyses use this metadata-derived submission instance.
-    Including model_dir prevents multi-model leaderboard rows from collapsing
-    distinct model/scaffold configurations into one balancing unit.
-    """
+    """Build a configuration/version metadata fingerprint, never the balancing unit."""
     return "|".join(_clean_component(row.get(column, "unknown")) for column in EFFECTIVE_SUBMISSION_COMPONENTS)
 
 
 def ensure_effective_submission_id(df: pd.DataFrame) -> pd.DataFrame:
     """Return a frame with the canonical effective submission id populated."""
     out = df.copy()
-    if EFFECTIVE_SUBMISSION_ID in out.columns:
-        values = out[EFFECTIVE_SUBMISSION_ID].map(_clean_component)
-        if values.ne("unknown").all():
-            out[EFFECTIVE_SUBMISSION_ID] = values
-            return ensure_config_id(out)
-
     if "source_submission_url" not in out.columns:
         out["source_submission_url"] = "unknown"
     missing = [column for column in EFFECTIVE_SUBMISSION_COMPONENTS if column not in out.columns]
@@ -82,8 +72,8 @@ def aggregate_submission_task_success(
 ) -> pd.DataFrame:
     """Aggregate binary success as trials -> submission-task -> task/group."""
     group_columns = list(group_columns)
-    work = ensure_effective_submission_id(df)
-    keys = [EFFECTIVE_SUBMISSION_ID, "task_name", *group_columns]
+    work = ensure_source_submission_id(df)
+    keys = [SOURCE_SUBMISSION_ID, "task_name", *group_columns]
     return (
         work.groupby(keys, as_index=False)
         .agg(
@@ -101,8 +91,8 @@ def aggregate_submission_task_effort(
 ) -> pd.DataFrame:
     """Aggregate effort as trials -> submission-task median."""
     group_columns = list(group_columns)
-    work = ensure_effective_submission_id(df).dropna(subset=[metric]).copy()
-    keys = [EFFECTIVE_SUBMISSION_ID, "task_name", *group_columns]
+    work = ensure_source_submission_id(df).dropna(subset=[metric]).copy()
+    keys = [SOURCE_SUBMISSION_ID, "task_name", *group_columns]
     return (
         work.groupby(keys, as_index=False)[metric]
         .median()

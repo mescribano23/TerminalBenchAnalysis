@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.benchmark_paths import find_repo_root
+from scripts.analysis.source_submission_identity import source_id, ensure_source_submission_id, SourceResolver
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -185,14 +186,7 @@ def read_index_table(indexes_dir: Path, trajectories_dir: Path, benchmark: str) 
 
 
 def submission_id(benchmark: str, row: dict[str, Any]) -> str:
-    url = str(row.get("submission_url") or "").strip()
-    if url:
-        return f"{benchmark}:{url}"
-    key = "|".join(
-        str(row.get(column) or "")
-        for column in ("scaffold", "scaffold_version", "model", "provider", "leaderboard_date")
-    )
-    return f"{benchmark}:no_url:{key}"
+    return source_id(benchmark, row["submission_url"])
 
 
 def read_submission_table(raw_dir: Path, benchmark: str) -> pd.DataFrame:
@@ -267,105 +261,30 @@ def same_timestamp(candidates: pd.DataFrame) -> bool:
     return len(timestamps) == 1
 
 
-def pick_submission_match(
-    row: pd.Series,
-    by_url: dict[str, pd.DataFrame],
-    by_full: dict[Any, pd.DataFrame],
-    by_no_version: dict[Any, pd.DataFrame],
-) -> dict[str, Any]:
-    source_url = str(row.get("source_submission_url") or "").strip()
-    candidates = by_url.get(source_url) if source_url else None
-    match_method = "source_submission_url"
-    if candidates is not None and not candidates.empty:
-        status = "matched" if len(candidates) == 1 else "ambiguous_same_submission_url"
-        chosen = candidates.iloc[0]
-        return {
-            "submission_id": chosen.get("submission_id", ""),
-            "submission_url": chosen.get("submission_url", ""),
-            "submission_scaffold_version": chosen.get("submission_scaffold_version", ""),
-            "submission_provider": chosen.get("submission_provider", ""),
-            "submission_timestamp": chosen.get("submission_timestamp", pd.NaT),
-            "submission_date": chosen.get("submission_date", ""),
-            "leaderboard_accuracy_submission": chosen.get("leaderboard_accuracy_submission", np.nan),
-            "leaderboard_stderr_submission": chosen.get("leaderboard_stderr_submission", np.nan),
-            "leaderboard_agent_display_name": chosen.get("leaderboard_agent_display_name", ""),
-            "leaderboard_model_display": chosen.get("leaderboard_model_display", ""),
-            "leaderboard_agent_organization": chosen.get("leaderboard_agent_organization", ""),
-            "leaderboard_model_organization_submission": chosen.get(
-                "leaderboard_model_organization_submission", ""
-            ),
-            "submission_official_task_count": chosen.get("submission_official_task_count", np.nan),
-            "submission_official_trial_count": chosen.get("submission_official_trial_count", np.nan),
-            "submission_official_success_count": chosen.get("submission_official_success_count", np.nan),
-            "submission_official_pass_rate": chosen.get("submission_official_pass_rate", np.nan),
-            "submission_match_status": status,
-            "submission_match_method": match_method,
-            "submission_candidate_count": int(len(candidates)),
-            "submission_candidate_ids": "|".join(candidates["submission_id"].astype(str).tolist()),
-        }
-
-    full_key = submission_key(row.get("scaffold"), row.get("agent_version"), row.get("model_dir"))
-    no_version_key = submission_key_without_version(row.get("scaffold"), row.get("model_dir"))
-    candidates = by_full.get(full_key)
-    match_method = "scaffold_agent_version_model"
-    if candidates is None or candidates.empty:
-        candidates = by_no_version.get(no_version_key)
-        match_method = "scaffold_model"
-    if candidates is None or candidates.empty:
-        return {
-            "submission_id": "",
-            "submission_match_status": "unmatched",
-            "submission_match_method": match_method,
-            "submission_candidate_count": 0,
-        }
-
-    if len(candidates) == 1:
-        status = "matched"
-    elif same_timestamp(candidates):
-        status = "ambiguous_same_timestamp"
-    else:
-        status = "ambiguous_conflicting_timestamp"
-
-    chosen = candidates.iloc[0]
-    return {
-        "submission_id": chosen.get("submission_id", ""),
-        "submission_url": chosen.get("submission_url", ""),
-        "submission_scaffold_version": chosen.get("submission_scaffold_version", ""),
-        "submission_provider": chosen.get("submission_provider", ""),
-        "submission_timestamp": chosen.get("submission_timestamp", pd.NaT),
-        "submission_date": chosen.get("submission_date", ""),
-        "leaderboard_accuracy_submission": chosen.get("leaderboard_accuracy_submission", np.nan),
-        "leaderboard_stderr_submission": chosen.get("leaderboard_stderr_submission", np.nan),
-        "leaderboard_agent_display_name": chosen.get("leaderboard_agent_display_name", ""),
-        "leaderboard_model_display": chosen.get("leaderboard_model_display", ""),
-        "leaderboard_agent_organization": chosen.get("leaderboard_agent_organization", ""),
-        "leaderboard_model_organization_submission": chosen.get(
-            "leaderboard_model_organization_submission", ""
-        ),
-        "submission_official_task_count": chosen.get("submission_official_task_count", np.nan),
-        "submission_official_trial_count": chosen.get("submission_official_trial_count", np.nan),
-        "submission_official_success_count": chosen.get("submission_official_success_count", np.nan),
-        "submission_official_pass_rate": chosen.get("submission_official_pass_rate", np.nan),
-        "submission_match_status": status,
-        "submission_match_method": match_method,
-        "submission_candidate_count": int(len(candidates)),
-        "submission_candidate_ids": "|".join(candidates["submission_id"].astype(str).tolist()),
-    }
-
-
 def attach_submission_metadata(trajectories: pd.DataFrame, submissions: pd.DataFrame) -> pd.DataFrame:
-    by_url = candidate_map(submissions, "submission_url")
-    by_full = candidate_map(submissions, "submission_key_full")
-    by_no_version = candidate_map(submissions, "submission_key_no_version")
-    matches = [pick_submission_match(row, by_url, by_full, by_no_version) for _, row in trajectories.iterrows()]
-    matched = pd.concat([trajectories.reset_index(drop=True), pd.DataFrame(matches)], axis=1)
-    matched["submission_timestamp"] = pd.to_datetime(
-        matched["submission_timestamp"], errors="coerce", utc=True
-    )
+    """Join only independently resolved source IDs; no URL/configuration fallback."""
+    trajectories = ensure_source_submission_id(trajectories)
+    lookup = submissions.set_index("submission_id")
+    if not lookup.index.is_unique:
+        raise ValueError("Duplicate authoritative source IDs")
+    ids = trajectories["source_submission_id"]
+    if not ids.isin(lookup.index).all():
+        raise ValueError("Resolved source submission missing from the retained snapshot")
+    matched = lookup.loc[ids].reset_index()
+    if not matched.submission_url.reset_index(drop=True).eq(trajectories.source_submission_url.reset_index(drop=True)).all():
+        raise ValueError("Source ID / URL conflict; reconcile acquisition membership first")
+    matched["submission_match_status"] = trajectories.source_identity_status.to_numpy()
+    matched["submission_match_method"] = trajectories.source_identity_method.to_numpy()
+    matched["submission_candidate_count"] = 1
+    matched["submission_candidate_ids"] = ids.to_numpy()
+    matched["submission_timestamp"] = pd.to_datetime(matched["submission_timestamp"], errors="raise", utc=True)
+    matched["historical_leaderboard_timestamp"] = matched.submission_timestamp
     timestamp_naive = matched["submission_timestamp"].dt.tz_convert(None)
     matched["submission_period"] = timestamp_naive.dt.to_period("M").astype("string")
     matched["submission_period_start"] = timestamp_naive.dt.to_period("M").dt.start_time
-    return matched
+    # submission_timestamp is a compatibility alias, not a verified publication time.
+    overlap = set(matched.columns) & set(trajectories.columns)
+    return pd.concat([trajectories.drop(columns=list(overlap)).reset_index(drop=True), matched], axis=1)
 
 
 def read_task_metadata(path: Path) -> pd.DataFrame:
@@ -462,7 +381,7 @@ def build_audit(
         binary = group["passed"].notna()
         by_version[benchmark] = {
             "trajectory_count": int(group.shape[0]),
-            "submission_count": int(group["submission_id"].replace("", np.nan).nunique()),
+            "submission_count": int(group["source_submission_id"].replace("", np.nan).nunique()),
             "task_count": int(group["task_name"].nunique()),
             "scaffold_count": int(group["scaffold"].nunique()),
             "model_dir_count": int(group["model_dir"].nunique()),
@@ -558,6 +477,13 @@ def main() -> None:
             )
         else:
             trajectories["index_trial_id"] = ""
+        resolver = SourceResolver(benchmark, args.raw_dir / benchmark / "leaderboard_submissions.json", args.raw_dir / benchmark / "leaderboard_trials.json")
+        evidence = {x["trialId"]: x for x in load_json(args.indexes_dir / benchmark / "trajectory_trials.json")}
+        resolved = pd.DataFrame([resolver.resolve(row, evidence.get(row["file_run_id"], {}))[0]
+                                 for row in trajectories.to_dict(orient="records")])
+        if "source_submission_id" in trajectories and not trajectories.source_submission_id.reset_index(drop=True).eq(resolved.source_submission_id).all():
+            raise ValueError("Cached source IDs conflict with independently resolved acquisition membership")
+        trajectories = pd.concat([trajectories.drop(columns=list(set(trajectories.columns) & set(resolved.columns))).reset_index(drop=True), resolved], axis=1)
         submissions = read_submission_table(args.raw_dir, benchmark)
         trajectories = attach_submission_metadata(trajectories, submissions)
         frames.append(trajectories)

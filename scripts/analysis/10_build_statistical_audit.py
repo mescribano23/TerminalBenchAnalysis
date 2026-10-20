@@ -23,7 +23,7 @@ from scripts.analysis.statistical_helpers import (
     two_sided_signed_rank,
 )
 from scripts.benchmark_paths import find_repo_root
-from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
+from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
 
 
 REPO_ROOT = find_repo_root(Path(__file__).resolve().parent)
@@ -251,13 +251,13 @@ def build_effort_inference() -> pd.DataFrame:
     primary_metrics = {"steps", "shell_invocations", "tool_calls", "duration", "total_tokens"}
     rows: list[dict[str, Any]] = []
     for transition, source, old_version, new_version, pooled_path, expected_tasks in specs:
-        trajectories = effort_module.load_trajectories(source, submission_unit="effective")
+        trajectories = effort_module.load_trajectories(source, submission_unit="source")
         pooled = pooled_effort_lookup(pooled_path)
         for metric in effort_module.METRICS:
             key = str(metric["key"])
             if key not in primary_metrics:
                 continue
-            pairs = effort_module.task_metric_pairs(trajectories, str(metric["column"]), submission_unit="effective")
+            pairs = effort_module.task_metric_pairs(trajectories, str(metric["column"]), submission_unit="source")
             if old_version not in pairs.columns or new_version not in pairs.columns:
                 raise ValueError(f"{transition} {key} is missing a benchmark version.")
             pairs = pairs.dropna(subset=[old_version, new_version])
@@ -271,7 +271,7 @@ def build_effort_inference() -> pd.DataFrame:
                     "transition": transition,
                     "metric": key,
                     "task_weighting": "submission-balanced",
-                    "submission_unit": "effective",
+                    "submission_unit": "source",
                     "eligible_tasks": stats["n"],
                     "old_headline_median": float(headline["early_value"]),
                     "new_headline_median": float(headline["late_value"]),
@@ -292,10 +292,10 @@ def build_effort_inference() -> pd.DataFrame:
 
 
 def task_balanced_config_median(group: pd.DataFrame) -> float:
-    group = ensure_effective_submission_id(group)
+    group = ensure_source_submission_id(group)
     submission_task = (
-        group.dropna(subset=[EFFECTIVE_SUBMISSION_ID, "task_name", "total_tokens"])
-        .groupby([EFFECTIVE_SUBMISSION_ID, "task_name"], as_index=False)["total_tokens"]
+        group.dropna(subset=[SOURCE_SUBMISSION_ID, "task_name", "total_tokens"])
+        .groupby([SOURCE_SUBMISSION_ID, "task_name"], as_index=False)["total_tokens"]
         .median()
     )
     task_medians = submission_task.groupby("task_name")["total_tokens"].median()
@@ -306,7 +306,7 @@ def build_shared_configuration_tokens() -> pd.DataFrame:
     usecols = [
         "benchmark_version",
         "submission_id",
-        EFFECTIVE_SUBMISSION_ID,
+        SOURCE_SUBMISSION_ID,
         "task_name",
         "scaffold",
         "model_dir",
@@ -345,7 +345,7 @@ def build_shared_configuration_tokens() -> pd.DataFrame:
             {
                 "configuration": f"{scaffold} / {model}",
                 "task_weighting": "submission-balanced",
-                "submission_unit": "effective",
+                "submission_unit": "source",
                 "shared_tasks": len(shared_tasks),
                 "old_median_tokens": old,
                 "new_median_tokens": new,
@@ -491,8 +491,8 @@ def build_audit_table() -> pd.DataFrame:
         ("RQ3.3", "effort change", "longitudinal trajectory CSVs", "task_metric_pairs", "paired shared tasks after submission-task medians", "metric-wise missing-pair removal"),
     ]
     result = pd.DataFrame(rows, columns=["rq", "analysis", "source_dataframe", "observation_builder", "unit_of_analysis", "support_or_test_note"])
-    result["submission_unit"] = ["effective", "trajectory-level", "leaderboard-url", "effective",
-                                  "leaderboard-url", "trajectory-level", "effective", "effective", "effective"]
+    result["submission_unit"] = ["source", "trajectory-level", "source", "source",
+                                  "source", "trajectory-level", "source", "source", "source"]
     return result
 
 
@@ -600,7 +600,7 @@ def build_report(
         "",
         "The reconciliation refresh updates affected existing tests and effect sizes from the restored caches. Only the shell-invocation curvature model was refitted; five unaffected curvature models were retained. The validated difficulty labels were not regenerated. Historical outputs are preserved separately.",
         "",
-        "Primary RQ3.1, RQ3.2 and RQ3.3 aggregation uses the repository's existing effective submission IDs, consistently with RQ1. RQ3.3 takes medians within effective submission-task pairs, medians across submissions within tasks, then compares paired shared tasks. Leaderboard-URL grouping is retained as an explicit sensitivity analysis. RQ2.1 and RQ2.2 retain their existing URL-grouped definitions; RQ2.3 retains trajectory use/non-use cells with at least three trajectories per cell. No new identifier was introduced. Refreshed and historical pooled trajectory figures remain descriptive and are not submission-balanced estimates.",
+        "Primary RQ3.1, RQ3.2 and RQ3.3 aggregation uses resolved source_submission_id values, consistently with RQ1. RQ3.3 takes medians within source submission-task pairs, medians across submissions within tasks, then compares paired shared tasks. Leaderboard-URL grouping is retained as an explicit sensitivity analysis. RQ2.1 and RQ2.2 now use the same actual source submission unit; RQ2.3 retains trajectory use/non-use cells with at least three trajectories per cell. Configuration fingerprints are separate from source submission identity. Historical scraped dates are preserved; their submission/publication semantics remain unverified. Refreshed and historical pooled trajectory figures remain descriptive and are not submission-balanced estimates.",
         "",
         "RQ1.3 remains a descriptive Pareto analysis. The media comparison is post-hoc exploratory. RQ3.2 composition analyses and exact shared-configuration token comparisons remain descriptive. Cost is not a current longitudinal headline metric and its incomplete, configuration-dependent coverage does not support adding a primary RQ3.3 test. No confidence intervals, multiplicity correction, or extra subgroup tests were added.",
         "",
@@ -642,7 +642,7 @@ def build_report(
         lines.append(f"- Instruction-change comparison, {row.transition}: changed tasks improved by {row.mean_improvement_changed_pp:.2f} pp on average (median {row.median_improvement_changed_pp:.2f}) versus {row.mean_improvement_unchanged_pp:.2f} pp (median {row.median_improvement_unchanged_pp:.2f}) for unchanged tasks; between-group mean difference = {row.raw_difference_in_mean_improvement_pp:.2f} pp, Cliff's delta = {num(row.cliffs_delta)}, U = {num(row.mann_whitney_u, 1)}, p = {p_text(row.p_value)} (n = {row.n_changed}/{row.n_unchanged}).")
     lines.extend(["", "### RQ3.3", ""])
     for row in effort.itertuples(index=False):
-        lines.append(f"- {row.transition}, {METRIC_LABELS.get(row.metric, row.metric)}: effective-submission-balanced shared-task medians {row.old_task_balanced_median:.3g} -> {row.new_task_balanced_median:.3g} ({row.task_balanced_median_change_pct:+.1f}% ratio of cross-task medians); mean/median paired task delta = {row.mean_paired_task_difference:.3g}/{row.median_paired_task_difference:.3g}, dz = {num(row.cohens_dz)}, W = {num(row.wilcoxon_statistic, 1)}, p = {p_text(row.p_value)} (n = {row.eligible_tasks}). Refreshed pooled trajectory medians are descriptive only: {row.old_headline_median:.3g} -> {row.new_headline_median:.3g} ({row.reported_percentage_change:+.1f}%).")
+        lines.append(f"- {row.transition}, {METRIC_LABELS.get(row.metric, row.metric)}: source-submission-balanced shared-task medians {row.old_task_balanced_median:.3g} -> {row.new_task_balanced_median:.3g} ({row.task_balanced_median_change_pct:+.1f}% ratio of cross-task medians); mean/median paired task delta = {row.mean_paired_task_difference:.3g}/{row.median_paired_task_difference:.3g}, dz = {num(row.cohens_dz)}, W = {num(row.wilcoxon_statistic, 1)}, p = {p_text(row.p_value)} (n = {row.eligible_tasks}). Refreshed pooled trajectory medians are descriptive only: {row.old_headline_median:.3g} -> {row.new_headline_median:.3g} ({row.reported_percentage_change:+.1f}%).")
     increases = int(configs["percentage_change"].gt(0).sum())
     lines.extend([
         "", "### Shared TB3.0/TB4.0 configurations (descriptive)", "",

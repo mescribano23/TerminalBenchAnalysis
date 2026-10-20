@@ -2,7 +2,7 @@
 """RQ1.3 task-balanced configuration efficiency figures.
 
 An agent configuration is a normalized scaffold/model_dir combination. The
-analysis uses canonical effective-submission/task aggregation before computing
+analysis uses canonical source-submission/task aggregation before computing
 configuration-level pass rates and effort, so tasks rather than raw trajectory
 counts define the main configuration summaries.
 
@@ -31,7 +31,7 @@ import pandas as pd
 
 from scripts.benchmark_paths import find_repo_root
 from scripts.analysis.plot_style import OTHER_COLOR, PRINT_DPI, colorblind_cycle
-from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
+from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
 
 
 REPO_ROOT = find_repo_root(Path(__file__).resolve().parent)
@@ -380,11 +380,11 @@ def load_data(path: Path) -> pd.DataFrame:
     if "benchmark" not in df.columns:
         df["benchmark"] = "terminal_bench_2_0"
     df["leaderboard_model_organization"] = df["leaderboard_model_organization"].replace({"Minimax": "MiniMax"})
-    return ensure_effective_submission_id(df)
+    return ensure_source_submission_id(df)
 
 
 def submission_task_summary(df: pd.DataFrame) -> pd.DataFrame:
-    keys = [*CONFIG_COLUMNS, "leaderboard_model_organization", "config_id", EFFECTIVE_SUBMISSION_ID, "task_name"]
+    keys = [*CONFIG_COLUMNS, "leaderboard_model_organization", "config_id", SOURCE_SUBMISSION_ID, "task_name"]
     base = (
         df.groupby(keys)
         .agg(trajectory_count=("passed", "size"), pass_rate=("passed", "mean"))
@@ -407,7 +407,7 @@ def config_task_summary(submission_task: pd.DataFrame) -> pd.DataFrame:
     base = (
         submission_task.groupby(keys)
         .agg(
-            submission_count=(EFFECTIVE_SUBMISSION_ID, "nunique"),
+            submission_count=(SOURCE_SUBMISSION_ID, "nunique"),
             trajectory_count=("trajectory_count", "sum"),
             pass_rate=("pass_rate", "mean"),
         )
@@ -438,7 +438,7 @@ def config_summary(config_task: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     submission_counts = (
-        df.groupby([*CONFIG_COLUMNS, "config_id"])[EFFECTIVE_SUBMISSION_ID]
+        df.groupby([*CONFIG_COLUMNS, "config_id"])[SOURCE_SUBMISSION_ID]
         .nunique()
         .rename("submission_count")
         .reset_index()

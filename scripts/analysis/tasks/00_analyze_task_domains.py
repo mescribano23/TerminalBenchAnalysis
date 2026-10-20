@@ -66,7 +66,7 @@ BENCHMARK_VERSION_DEFAULT = "2.0"
 ENTITY_COLUMNS = {"scaffold", "model_dir"}
 MODEL_META_COLUMNS = {"leaderboard_model", "leaderboard_model_organization", "model_name"}
 OUTCOME_COLUMNS = {"task_name", "reward_outcome", "outcome", "reward"}
-BALANCING_COLUMNS = {"submission_id", "benchmark_version"}
+BALANCING_COLUMNS = {"source_submission_id", "benchmark_version"}
 EFFORT_DISPLAY_NAMES = {
     "step_count": "Step count",
     "shell_invocation_count": "Shell invocation count",
@@ -187,8 +187,8 @@ def load_trajectories(path: Path) -> pd.DataFrame:
     df["model_source"] = df.apply(model_source_type, axis=1)
 
     columns = ["task_name", "outcome", "passed", "scaffold", "model_dir", "model_provider", "model_source"]
-    if "submission_id" in df.columns:
-        columns.append("submission_id")
+    if "source_submission_id" in df.columns:
+        columns.append("source_submission_id")
     if "benchmark_version" in df.columns:
         columns.append("benchmark_version")
     columns.extend(column for column in EFFORT_DISPLAY_NAMES if column in df.columns)
@@ -207,15 +207,15 @@ def filter_benchmark_version(df: pd.DataFrame, benchmark_version: str | None) ->
 
 
 def require_submission_id(df: pd.DataFrame) -> None:
-    if "submission_id" not in df.columns:
+    if "source_submission_id" not in df.columns:
         raise ValueError("Balanced RQ2 analysis requires submission_id in the trajectory table.")
-    if df["submission_id"].isna().any():
+    if df["source_submission_id"].isna().any():
         raise ValueError("Balanced RQ2 analysis found missing submission_id values.")
 
 
 def submission_task_pass_rates(df: pd.DataFrame, group_columns: list[str]) -> pd.DataFrame:
     require_submission_id(df)
-    st_columns = ["submission_id", "task_name", *group_columns]
+    st_columns = ["source_submission_id", "task_name", *group_columns]
     submission_task = (
         df.groupby(st_columns, as_index=False)
         .agg(
@@ -227,7 +227,7 @@ def submission_task_pass_rates(df: pd.DataFrame, group_columns: list[str]) -> pd
     return (
         submission_task.groupby(["task_name", *group_columns], as_index=False)
         .agg(
-            task_submission_count=("submission_id", "nunique"),
+            task_submission_count=("source_submission_id", "nunique"),
             task_trajectory_count=("submission_task_trajectory_count", "sum"),
             task_pass_count=("submission_task_pass_count", "sum"),
             task_pass_rate=("submission_task_pass_rate", "mean"),
@@ -363,16 +363,16 @@ def build_effort_summary(
     for variable, display_name in EFFORT_DISPLAY_NAMES.items():
         if variable not in df.columns:
             continue
-        metric_work = df[["submission_id", "task_name", dimension_column, variable]].dropna().copy()
+        metric_work = df[["source_submission_id", "task_name", dimension_column, variable]].dropna().copy()
         submission_task = (
-            metric_work.groupby(["submission_id", "task_name", dimension_column], as_index=False)[variable]
+            metric_work.groupby(["source_submission_id", "task_name", dimension_column], as_index=False)[variable]
             .median()
             .rename(columns={variable: "submission_task_median"})
         )
         task_effort = (
             submission_task.groupby(["task_name", dimension_column], as_index=False)
             .agg(
-                task_submission_count=("submission_id", "nunique"),
+                task_submission_count=("source_submission_id", "nunique"),
                 task_effort=("submission_task_median", "median"),
             )
         )

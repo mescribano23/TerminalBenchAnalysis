@@ -40,7 +40,7 @@ TRAJECTORY_COLUMNS = {
     "scaffold",
     "model_dir",
     "duration_seconds",
-    "submission_id",
+    "source_submission_id",
     "benchmark_version",
 }
 ESTIMATE_COLUMNS = {
@@ -116,7 +116,7 @@ def load_trajectories(path: Path) -> pd.DataFrame:
         raise ValueError(f"{path} must contain task_name.")
     if "duration_seconds" not in df.columns:
         raise ValueError(f"{path} must contain duration_seconds.")
-    if "submission_id" not in df.columns:
+    if "source_submission_id" not in df.columns:
         raise ValueError(f"{path} must contain submission_id for task-balanced RQ2.2 duration aggregation.")
     if "benchmark_version" in df.columns:
         df["benchmark_version"] = df["benchmark_version"].astype(str)
@@ -257,11 +257,11 @@ def build_task_average_duration_comparison(comparison: pd.DataFrame) -> pd.DataF
     ].copy()
     if duration_df.empty:
         return pd.DataFrame(columns=TASK_DURATION_OUTPUT_COLUMNS)
-    if duration_df["submission_id"].isna().any():
+    if duration_df["source_submission_id"].isna().any():
         raise ValueError("Task-balanced RQ2.2 duration aggregation found missing submission_id values.")
 
     submission_task = (
-        duration_df.groupby(["submission_id", "task_name"], as_index=False)
+        duration_df.groupby(["source_submission_id", "task_name"], as_index=False)
         .agg(
             n_trajectories=("duration_min", "size"),
             n_passed=("passed", "sum"),
@@ -284,7 +284,7 @@ def build_task_average_duration_comparison(comparison: pd.DataFrame) -> pd.DataF
     )
     successful_submission_task = (
         duration_df[duration_df["passed"].eq(1)]
-        .groupby(["submission_id", "task_name"], as_index=False)
+        .groupby(["source_submission_id", "task_name"], as_index=False)
         .agg(submission_task_successful_duration_min=("duration_min", "median"))
     )
     successful_task = (

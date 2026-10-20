@@ -496,6 +496,7 @@ def trial_index_entry(
         "taskName": task_name,
         "taskChecksum": task_name,
         "trialId": str(trial["id"]),
+        "harbor_leaderboard_row_id": str(trial.get("harbor_leaderboard_row_id") or ""),
         "reward": float(trial.get("reward") or 0.0),
         "cost": cost_usd * 100,
         "duration": duration_seconds(trial),

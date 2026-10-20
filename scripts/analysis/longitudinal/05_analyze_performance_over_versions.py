@@ -55,7 +55,7 @@ REQUIRED_COLUMNS = {
 }
 
 OPTIONAL_COLUMNS = [
-    "effective_submission_id",
+    "source_submission_id",
     "source_submission_url",
     "leaderboard_date",
     "leaderboard_accuracy",
@@ -139,19 +139,9 @@ def read_trajectory_table(processed_dir: Path, benchmark: str) -> pd.DataFrame:
 
 
 def submission_key(df: pd.DataFrame) -> pd.Series:
-    candidates = [
-        df.get("effective_submission_id", pd.Series("", index=df.index)).fillna("").astype(str),
-        df.get("source_submission_url", pd.Series("", index=df.index)).fillna("").astype(str),
-    ]
-    key = candidates[0].where(candidates[0].str.len().gt(0), candidates[1])
-    fallback = (
-        df["benchmark"].astype(str)
-        + "::"
-        + df["scaffold"].fillna("unknown").astype(str)
-        + "::"
-        + df["model_dir"].fillna("unknown").astype(str)
-    )
-    return key.where(key.str.len().gt(0), fallback)
+    from scripts.analysis.source_submission_identity import ensure_source_submission_id
+    return ensure_source_submission_id(df)["source_submission_id"]
+
 
 
 def load_trajectories(processed_dir: Path, benchmarks: list[str]) -> pd.DataFrame:

@@ -75,7 +75,27 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### 4. Optional: configure LLM labelers
+### 4. Restore large processed tables
+
+Three large generated CSVs are stored as lossless `.csv.gz` files in normal Git. Restore their original paths before running analyses or tests:
+
+```powershell
+python -m scripts.prepare_processed_tables
+```
+
+This uses only the Python standard library. It restores missing files and refuses to overwrite differing local CSVs. These three compressed tables do not require Git LFS; the raw trajectory files still use LFS.
+
+After intentionally regenerating these CSVs, refresh the compressed copies before committing:
+
+```powershell
+python -m scripts.prepare_processed_tables --pack
+python -m scripts.prepare_processed_tables --check
+git add data/processed_live/terminal_bench_2_0/trajectory_summary.csv.gz data/processed_live/longitudinal/trajectory_longitudinal.csv.gz data/processed_live/longitudinal/tb3_tb4/trajectory_longitudinal.csv.gz
+```
+
+The uncompressed copies stay local and are ignored by Git. Compression preserves every byte; analysis scripts and their CSV paths are unchanged.
+
+### 5. Optional: configure LLM labelers
 
 Most analysis scripts do **not** require external LLMs. The LLM-labeling scripts in `scripts/analysis/longitudinal/` can use OpenAI, Anthropic, Ollama, or multiple labelers together.
 
@@ -153,7 +173,7 @@ ollama serve
 
 Leave that terminal open while running the labeling script.
 
-### 5. Verify the environment
+### 6. Verify the environment
 
 ```powershell
 python --version
@@ -315,11 +335,11 @@ python -m scripts.analysis.diminishing_returns.00_analyze_diminishing_returns
 
 RQ1 uses two explicit aggregation levels. Pooled trajectory-level summaries
 remain trajectory-weighted descriptive views. Task-balanced RQ1 summaries use
-`effective_submission_id` to aggregate repeated trials to submission-task
+`source_submission_id` to aggregate repeated trials to submission-task
 units before averaging over tasks, so duplicated retries do not reweight a
 task. Task-balanced contrasts use the shared minimum-support rule defined in
 `scripts/analysis/support_thresholds.py`. RQ1.1 task pass/fail contrasts require
-at least three distinct effective submissions in each outcome for a task-metric
+at least three distinct source submissions in each outcome for a task-metric
 pair. All eight success/failure effort measures receive paired Cohen's `dz`
 and a two-sided Wilcoxon test. The six pre-existing curvature measures retain
 their task-conditioned quadratic logistic specifications.
@@ -345,7 +365,7 @@ python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effe
 These figures are descriptive visualizations; the statistical table above is
 the inferential source of truth. The task-balanced effort-success bin comparison assigns
 bins at the trajectory level, aggregates trajectories within each
-effective-submission/task/bin cell, averages those cells within task, and then
+source-submission/task/bin cell, averages those cells within task, and then
 averages tasks within each effort bin. RQ1.3 configuration efficiency uses the
 same submission-task hierarchy before rolling up to scaffold/model
 configurations. The consolidated efficiency figures use one point per complete
@@ -618,10 +638,10 @@ The preserved longitudinal token-accounting outputs report the following histori
 Historical RQ3.3 figures keep pooled trajectory medians as descriptive
 statistics. Primary longitudinal evidence comes from submission-balanced task
 tables, paired tests, and separately named figures. The task table first takes the median within
-each effective-submission/task pair, then the median across submissions for each shared
+each source-submission/task pair, then the median across submissions for each shared
 task, and finally summarizes paired task changes.
 
-The primary unit is the existing `effective_submission_id`, consistently with RQ1 and RQ3.1. Use `--submission-unit leaderboard-url` only for the explicitly named URL sensitivity.
+The primary unit is the validated or explicitly reconstructed `source_submission_id`, consistently with RQ1 and RQ3.1. Use `--submission-unit leaderboard-url` only for the explicitly named URL sensitivity.
 
 Select this hierarchy explicitly with `--task-weighting submission-balanced`
 (the default). Use `--task-weighting trial-weighted` to reproduce the earlier
@@ -631,7 +651,7 @@ the selected method in a `task_weighting` column. This option affects paired
 task summaries; the pooled medians shown in the effort figures retain their
 trajectory-level definition.
 
-Existing pooled figures and medians remain descriptive historical views; separately named balanced figures provide the primary longitudinal evidence. Historical outputs remain recoverable from Git history. Active TB2 and TB3/TB4 task tables both use effective-submission balancing.
+Existing pooled figures and medians remain descriptive historical views; separately named balanced figures provide the primary longitudinal evidence. Historical outputs remain recoverable from Git history. Active TB2 and TB3/TB4 task tables both use source-submission balancing.
 Any comparison of methods should write to separate output paths using
 `--task-balanced-summary-csv`, `--pooled-summary-csv`, and `--out`.
 The optional `--combined-out` retains the earlier combined effort figure when
@@ -694,13 +714,13 @@ python -m scripts.analysis.longitudinal.09_analyze_difficulty_over_versions --in
 python -m scripts.analysis.10_build_statistical_audit --include-sensitivities
 ```
 
-The sensitivity flag adds separately named URL-grouped tables; RQ3.3 also exports trial-weighted tables. It does not change the primary effective-submission aggregation. The effort script writes matched-task vectors and figure data alongside the summary tables. Difficulty analysis reads the validated caches without invoking labelers. The statistical script retains all 40 inferential rows and its validation checks.
+The sensitivity flag adds separately named URL-grouped tables; RQ3.3 also exports trial-weighted tables. It does not change the primary source-submission aggregation. The effort script writes matched-task vectors and figure data alongside the summary tables. Difficulty analysis reads the validated caches without invoking labelers. The statistical script retains all 40 inferential rows and its validation checks.
 
 For comparison runs, use `--output-root PATH` with the effort and statistical scripts to mirror their output layout under another directory. For task composition and difficulty analysis, use `--out-dir PATH` and `--figures-dir PATH`. Inputs continue to come from the repository. Existing historical pooled figures retain their original filenames.
 
-RQ3.3 filenames distinguish `effort_change_submission_balanced_*` (primary effective-submission/shared-task estimates) from `effort_change_pooled_refreshed_*` (descriptive full-text/positive-token trajectory medians). Original `performance_effort_change_over_time*` figures remain historical. Figure percentages compare cross-task medians; paired tests use absolute task differences. Captions and exact method definitions are saved in `reports/longitudinal/effort_figure_captions.json`.
+RQ3.3 filenames distinguish `effort_change_submission_balanced_*` (primary source-submission/shared-task estimates) from `effort_change_pooled_refreshed_*` (descriptive full-text/positive-token trajectory medians). Original `performance_effort_change_over_time*` figures remain historical. Figure percentages compare cross-task medians; paired tests use absolute task differences. Captions and exact method definitions are saved in `reports/longitudinal/effort_figure_captions.json`.
 
-The RQ3.1 shared-task change is +38.45 pp for TB2.0–TB2.1 and +14.58 pp for TB3.0–TB4.0. Both the headline and paired tests use the same effective submission units. The [statistical report](reports/statistical_analysis_audit.md) provides p-values and effect sizes.
+The RQ3.1 shared-task change is +38.45 pp for TB2.0–TB2.1 and +14.34 pp for TB3.0–TB4.0. Both the headline and paired tests use the same actual source submission units. The [statistical report](reports/statistical_analysis_audit.md) provides p-values and effect sizes.
 
 Aggregation regression checks can be run with `python -m unittest discover -s tests -v`. The fixed-label provenance is retained in `reports/longitudinal/difficulty_over_versions/provenance.json`. Historical manuscript comparisons and recovery records are archived separately from the replication package and remain in Git history (results commit `0852679b`, manuscript comparison commit `990866ea`).
 
@@ -725,3 +745,38 @@ python -m scripts.mining.01_scrape_harbor_terminal_bench_leaderboard `
 ```
 
 With `--benchmark`, generated analysis tables are written under `data/processed_live/{benchmark}/`; generated figures are written under `reports/general_characteristics/{benchmark}/`.
+
+
+### Source submission identity correction (20 October 2026)
+
+Actual leaderboard submissions are the balancing unit: TB2.0 74, TB2.1 17,
+TB3.0 12, TB4.0 18, with 48,843 retained trajectories. TB2.0 membership is
+reconstructed from exact acquisition metadata and task evidence because its
+original UUID-to-source cache is absent. Harbor membership uses retained trial
+UUID-to-row UUID links. Both Devin versions belong to one TB3.0 submission;
+the five Codex/Astra rows remain distinct.
+
+`effective_submission_id` is now only an explicitly rebuilt configuration/metadata
+fingerprint. `configuration_version_id` is distinct from source identity.
+Original values are preserved in `legacy_*` columns. Primary CLI analyses use
+`--submission-unit source`; corrected URL grouping is a sensitivity with the
+same source partition. Existing `*_effective.csv` filenames are compatibility
+aliases with `submission_unit=source`; prefer the new `*_source.csv` names.
+
+Historical scraped dates are preserved, with repaired TB2.0 attribution.
+`historical_leaderboard_timestamp` indexes descriptive historical-date cohorts;
+its meaning as submission/publication time is unverified. Live leaderboard
+dates were not substituted for historical snapshot dates. The original task-version
+instruction audit remains an archival classification cache; its historical
+full-leaderboard counts are not retained source-submission counts. Use the
+new source-identity metadata sidecar for current corpus counts and date ranges.
+
+Standalone diagnostic audits, temporary correction backups/comparisons and their
+one-off generators have been removed. The retained report files are
+`reports/manuscript_repository_consistency_20261019.md` and
+`reports/statistical_analysis_audit.md`. Paper figures and their analysis scripts
+remain. `10_build_statistical_audit.py` is retained because it computes the
+paper inference tables and regenerates the retained statistical report.
+Task-version instruction and label-validation caches remain analysis inputs.
+The retained manuscript consistency report is historical and may reference
+removed diagnostic artifacts.

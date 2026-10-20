@@ -28,7 +28,7 @@ if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
 from scripts.analysis.plot_style import COLORBLIND_PALETTE, OTHER_COLOR, colorblind_cycle
-from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
+from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -107,7 +107,7 @@ def parse_args() -> argparse.Namespace:
         help="Use a transparent rule-based TB2 category mapping when LLM labels are unavailable.",
     )
     parser.add_argument("--out-dir", type=Path, default=OUT_DIR_DEFAULT)
-    parser.add_argument("--submission-unit", choices=["effective", "leaderboard-url"], default="effective")
+    parser.add_argument("--submission-unit", choices=["source", "leaderboard-url"], default="source")
     parser.add_argument("--include-sensitivities", action="store_true",
                         help="Also write URL-grouped adjacent task changes, without additional figures.")
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR_DEFAULT)
@@ -276,12 +276,12 @@ def attach_unified_categories(
     return tasks
 
 
-def build_observed_task_duration(df: pd.DataFrame, *, submission_unit: str = "effective") -> pd.DataFrame:
-    if submission_unit == "effective":
-        df = ensure_effective_submission_id(df)
-        identity = EFFECTIVE_SUBMISSION_ID
+def build_observed_task_duration(df: pd.DataFrame, *, submission_unit: str = "source") -> pd.DataFrame:
+    if submission_unit == "source":
+        df = ensure_source_submission_id(df)
+        identity = SOURCE_SUBMISSION_ID
     elif submission_unit == "leaderboard-url":
-        identity = "submission_id"
+        identity = "source_submission_url"
     else:
         raise ValueError(f"Unknown submission unit: {submission_unit}")
     duration_df = df[

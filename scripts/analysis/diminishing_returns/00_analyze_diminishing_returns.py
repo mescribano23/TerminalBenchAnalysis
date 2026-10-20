@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Final RQ1 effort-success statistics.
 
-Task-balanced pass/fail contrasts use effective submission-task aggregation
+Task-balanced pass/fail contrasts use source submission-task aggregation
 before task-level medians, while pooled trajectory medians and
 task-conditioned logistic models remain trajectory-level analyses.
 
@@ -26,7 +26,7 @@ from scipy.stats import norm
 
 from scripts.analysis.statistical_helpers import paired_cohens_dz, two_sided_signed_rank
 from scripts.analysis.support_thresholds import MINIMUM_SUPPORT_PER_COMPARISON_CELL
-from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
+from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -62,7 +62,7 @@ DISPLAY_NAMES = {
     "duration_seconds": "Duration seconds",
     "cost_usd_positive": "Positive reported cost USD",
 }
-CLUSTER_COLUMNS = ["scaffold", "model_dir", "agent_version", "leaderboard_model"]
+CLUSTER_COLUMNS = [SOURCE_SUBMISSION_ID]
 DIMINISHING_RETURNS_CURVE_SUPPORT = {"step_count", "duration_seconds"}
 
 
@@ -96,7 +96,7 @@ def load_data(path: Path) -> pd.DataFrame:
     for column in CLUSTER_COLUMNS:
         if column in df.columns:
             df[column] = df[column].fillna("unknown").astype(str)
-    return ensure_effective_submission_id(df)
+    return ensure_source_submission_id(df)
 
 
 def direction(pass_median: float, fail_median: float) -> str:
@@ -118,9 +118,9 @@ def task_medians(df: pd.DataFrame, metric: str) -> tuple[pd.DataFrame, int, floa
     pooled_success = float(pooled.get(1, np.nan))
     pooled_failure = float(pooled.get(0, np.nan))
 
-    balanced_work = df[[EFFECTIVE_SUBMISSION_ID, "task_name", "passed", metric]].dropna().copy()
+    balanced_work = df[[SOURCE_SUBMISSION_ID, "task_name", "passed", metric]].dropna().copy()
     submission_task_outcome = (
-        balanced_work.groupby([EFFECTIVE_SUBMISSION_ID, "task_name", "passed"], as_index=False)
+        balanced_work.groupby([SOURCE_SUBMISSION_ID, "task_name", "passed"], as_index=False)
         .agg(
             trajectory_count=(metric, "size"),
             submission_task_outcome_median=(metric, "median"),
@@ -129,7 +129,7 @@ def task_medians(df: pd.DataFrame, metric: str) -> tuple[pd.DataFrame, int, floa
     grouped = (
         submission_task_outcome.groupby(["task_name", "passed"])
         .agg(
-            submission_count=(EFFECTIVE_SUBMISSION_ID, "nunique"),
+            submission_count=(SOURCE_SUBMISSION_ID, "nunique"),
             trajectory_count=("trajectory_count", "sum"),
             median=("submission_task_outcome_median", "median"),
         )
@@ -167,13 +167,13 @@ def task_medians(df: pd.DataFrame, metric: str) -> tuple[pd.DataFrame, int, floa
 def eligibility_threshold_rows(df: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for metric in WITHIN_TASK_METRICS:
-        work = df[[EFFECTIVE_SUBMISSION_ID, "task_name", "passed", metric]].dropna().copy()
+        work = df[[SOURCE_SUBMISSION_ID, "task_name", "passed", metric]].dropna().copy()
         submission_task_outcome = (
-            work.groupby([EFFECTIVE_SUBMISSION_ID, "task_name", "passed"], as_index=False)[metric]
+            work.groupby([SOURCE_SUBMISSION_ID, "task_name", "passed"], as_index=False)[metric]
             .median()
         )
         counts = (
-            submission_task_outcome.groupby(["task_name", "passed"])[EFFECTIVE_SUBMISSION_ID]
+            submission_task_outcome.groupby(["task_name", "passed"])[SOURCE_SUBMISSION_ID]
             .nunique()
             .reset_index(name="submission_count")
             .pivot(index="task_name", columns="passed", values="submission_count")

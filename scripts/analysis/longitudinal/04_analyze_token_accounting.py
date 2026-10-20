@@ -69,7 +69,7 @@ REQUIRED_COLUMNS = {
     "observation_chars",
     "prompt_tokens",
     "completion_tokens",
-    "submission_timestamp",
+    "historical_leaderboard_timestamp",
     "total_tokens",
 }
 
@@ -127,6 +127,7 @@ COMPARISONS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--monthly-only", action="store_true", help="Refresh historical-date monthly summaries without reparsing unaffected raw token metrics")
     parser.add_argument("--trajectory-csv", type=Path, default=TRAJECTORY_CSV)
     parser.add_argument("--trajectory-root", type=Path, default=TRAJECTORY_ROOT)
     parser.add_argument("--out-dir", type=Path, default=OUT_DIR)
@@ -254,7 +255,7 @@ def read_trajectories(path: Path) -> pd.DataFrame:
         "total_tokens",
     ]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
-    df["submission_datetime"] = pd.to_datetime(df["submission_timestamp"], errors="coerce", utc=True)
+    df["submission_datetime"] = pd.to_datetime(df["historical_leaderboard_timestamp"], errors="coerce", utc=True)
     df["submission_month"] = df["submission_datetime"].dt.tz_convert(None).dt.to_period("M").dt.to_timestamp()
     df["logged_chars"] = df["message_chars"] + df["reasoning_chars"] + df["observation_chars"]
     return df
@@ -269,7 +270,7 @@ def build_monthly_token_text_summary(df: pd.DataFrame) -> tuple[pd.DataFrame, pd
     metrics = ["prompt_tokens", "completion_tokens", "total_tokens", "logged_chars"]
     dated = df.dropna(subset=["submission_month"]).copy()
     if dated.empty:
-        raise ValueError("No trajectories with valid submission timestamps were available.")
+        raise ValueError("No trajectories with recorded historical leaderboard date (event semantics unverified)s were available.")
 
     rows: list[dict[str, Any]] = []
     for month, group in dated.groupby("submission_month", sort=True):
@@ -382,10 +383,10 @@ def plot_token_text_over_time(monthly: pd.DataFrame, out: Path) -> None:
             color="#555555",
         )
 
-    ax_tokens.set_xlabel("Submission month")
+    ax_tokens.set_xlabel("Historical leaderboard month (semantics unverified)")
     ax_tokens.set_ylabel("Monthly median tokens (thousands)")
     ax_chars.set_ylabel("Monthly median logged characters (thousands)")
-    ax_tokens.set_title("Reported tokens and logged text across leaderboard submission time")
+    ax_tokens.set_title("Reported tokens and logged text by historical leaderboard date")
     ax_tokens.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
     ax_tokens.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     ax_tokens.yaxis.set_major_formatter(lambda value, _: f"{value:.0f}")
@@ -438,7 +439,7 @@ def print_monthly_token_text_summary(monthly: pd.DataFrame, baseline: pd.Series,
         later = float(last[f"median_{metric}"])
         print(f"{label}: {format_value(earlier)} -> {format_value(later)} ({pct_change(earlier, later):+.1f}%).")
 
-    print("Monthly medians use all trajectories with a valid submission timestamp and non-missing metric value.")
+    print("Monthly medians use all trajectories with a recorded historical leaderboard date (event semantics unverified) and non-missing metric value.")
     print(f"Wrote monthly CSV to {out_csv}")
     print(f"Wrote monthly figure to {out_fig}")
 
@@ -936,9 +937,14 @@ def main() -> None:
     monthly_token_text, monthly_baseline = build_monthly_token_text_summary(trajectories)
     monthly_csv_path = args.out_dir / MONTHLY_TOKEN_TEXT_CSV.name
     monthly_fig_path = args.figures_dir / TOKEN_TEXT_OVER_TIME_FIG.name
+    monthly_token_text["date_variable"] = "historical_leaderboard_timestamp"
+    monthly_token_text["date_semantics"] = "historical snapshot metadata.date; submission/publication meaning unverified"
     monthly_token_text.to_csv(monthly_csv_path, index=False, na_rep="NA")
     plot_token_text_over_time(monthly_token_text, monthly_fig_path)
     print_monthly_token_text_summary(monthly_token_text, monthly_baseline, monthly_csv_path, monthly_fig_path)
+
+    if args.monthly_only:
+        return
 
     selected = select_rows_for_analysis(trajectories)
     print(f"Selected {selected.shape[0]:,} trajectories from {len(COMPARISONS)} clean model progressions.")

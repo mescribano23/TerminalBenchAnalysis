@@ -115,7 +115,7 @@ def load_audit(path: Path) -> pd.DataFrame:
 
 
 def load_trajectories(path: Path) -> pd.DataFrame:
-    usecols = ["benchmark_version", "submission_id", "task_name", "passed", "difficulty", "category"]
+    usecols = ["benchmark_version", "source_submission_id", "task_name", "passed", "difficulty", "category"]
     df = pd.read_csv(path, usecols=usecols, low_memory=False)
     df = df.copy()
     df["benchmark_version"] = df["benchmark_version"].astype(str)
@@ -123,7 +123,7 @@ def load_trajectories(path: Path) -> pd.DataFrame:
     df["difficulty"] = df["difficulty"].fillna("unknown").astype(str)
     df["category"] = df["category"].fillna("unknown").astype(str)
     df["passed"] = pd.to_numeric(df["passed"], errors="coerce")
-    if df["submission_id"].isna().any():
+    if df["source_submission_id"].isna().any():
         raise ValueError("Instruction-change robustness requires non-missing submission_id values.")
     return df[df["benchmark_version"].isin(VERSION_ORDER)].dropna(subset=["passed"])
 
@@ -160,7 +160,7 @@ def build_task_changes(df: pd.DataFrame, audit: pd.DataFrame) -> pd.DataFrame:
         .agg(difficulty=("difficulty", modal_value), category=("category", modal_value))
     )
     submission_task = (
-        df.groupby(["submission_id", "task_name", "benchmark_version"], as_index=False)
+        df.groupby(["source_submission_id", "task_name", "benchmark_version"], as_index=False)
         .agg(n_trajectories=("passed", "size"), submission_task_pass_rate=("passed", "mean"))
     )
     rates = (

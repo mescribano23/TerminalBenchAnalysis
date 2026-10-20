@@ -23,6 +23,7 @@ from typing import Any
 
 from scripts.benchmark_paths import SUPPORTED_BENCHMARKS, paths_for_benchmark
 from scripts.analysis.submission_task_balancing import build_effective_submission_id
+from scripts.analysis.source_submission_identity import SourceResolver, IDENTITY_FIELDS
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -574,6 +575,11 @@ def main() -> None:
 
     out.mkdir(parents=True, exist_ok=True)
 
+    resolver = SourceResolver(benchmark_name, leaderboard_path, leaderboard_trials_path)
+    prior = {}
+    if (out / "trajectory_summary.csv").exists():
+        with (out / "trajectory_summary.csv").open(encoding="utf-8", newline="") as handle:
+            prior = {r["file_run_id"]: r for r in csv.DictReader(handle)}
     paths = sorted(root.rglob("*.json"))
     index_by_rel = load_trajectory_index(trajectory_index, root)
     leaderboard_row_by_trial_id = load_leaderboard_trial_rows(leaderboard_trials_path)
@@ -672,28 +678,12 @@ def main() -> None:
         steps = data.get("steps") if isinstance(data.get("steps"), list) else []
         task_id = textish(scalar_value(data, {"task_id", "task_name", "taskName", "instance_id"}, max_depth=5) or file_task_id)
         task_name = leaderboard_task_names.get(file_task_id, "")
-        leaderboard_matches = [
-            m for m in leaderboard_by_checksum.get(file_task_id, [])
-            if str(m.get("scaffold", "")).lower() == scaffold.lower()
-        ]
-        if model_dir:
-            model_low = model_dir.lower().replace("_", "-")
-            exactish = [
-                m for m in leaderboard_matches
-                if str(m.get("leaderboard_model", "")).lower().replace("_", "-") in model_low
-                or model_low in str(m.get("leaderboard_model", "")).lower().replace("_", "-")
-            ]
-            if exactish:
-                leaderboard_matches = exactish
-        exact_row_id = (
-            leaderboard_row_by_trial_id.get(file_run_id)
-            or leaderboard_row_by_trial_id.get(str(index_meta.get("trialId") or ""))
-        )
-        leaderboard_meta = (
-            leaderboard_by_row_id.get(exact_row_id, {})
-            if exact_row_id
-            else {}
-        ) or (leaderboard_matches[0] if leaderboard_matches else {})
+        identity, source_entry = resolver.resolve({"file_run_id": file_run_id, "scaffold": scaffold, "agent_version": version}, index_meta)
+        leaderboard_meta = {
+            **identity, "submission_url": identity["source_submission_url"],
+            "scaffold_version": identity["source_scaffold_version"],
+            "provider": identity["leaderboard_provider"],
+        }
         reward = index_meta.get("reward", "")
         outcome_from_reward = reward_outcome(reward)
         outcome = outcome_from_reward or outcome_label(data)
@@ -794,6 +784,17 @@ def main() -> None:
             "duration_seconds": duration_seconds if duration_seconds is not None else "",
             "has_final_marker": has_final_marker,
         }
+        row.update(identity)
+        old = prior.get(file_run_id, {})
+        row["legacy_effective_submission_id"] = old.get("legacy_effective_submission_id", old.get("effective_submission_id", ""))
+        row["legacy_source_submission_url"] = old.get("legacy_source_submission_url", old.get("source_submission_url", ""))
+        row["legacy_leaderboard_date"] = old.get("legacy_leaderboard_date", old.get("leaderboard_date", ""))
+        for key, value in old.items():
+            if key.startswith("legacy_"):
+                row[key] = value
+        row.setdefault("legacy_submission_id", benchmark_name + ":" + row["legacy_source_submission_url"])
+        row["config_id"] = scaffold + "|" + model_dir
+        row["configuration_version_id"] = "|".join([benchmark_name, scaffold, model_dir, version])
         row["effective_submission_id"] = build_effective_submission_id(row)
         final_metrics = data.get("final_metrics") if isinstance(data.get("final_metrics"), dict) else {}
         if final_metrics:
@@ -811,7 +812,10 @@ def main() -> None:
     csv_fields = [
         "benchmark",
         "rel_path", "scaffold", "model_dir", "agent_version", "model_name", "original_format",
-        "effective_submission_id", "source_scaffold_version", "source_submission_url",
+        "effective_submission_id", "legacy_effective_submission_id", "legacy_source_submission_url", "legacy_leaderboard_date",
+        *IDENTITY_FIELDS, "legacy_submission_id", "config_id", "configuration_version_id",
+        "legacy_source_scaffold_version", "legacy_leaderboard_model", "legacy_leaderboard_provider",
+        "legacy_leaderboard_accuracy", "legacy_leaderboard_model_organization",
         "task_id", "file_task_id", "task_name", "file_run_id", "reward", "reward_outcome",
         "leaderboard_model", "leaderboard_accuracy", "leaderboard_provider", "leaderboard_date",
         "leaderboard_model_organization",
@@ -820,6 +824,7 @@ def main() -> None:
         "metric_step_count", "prompt_tokens", "completion_tokens", "total_tokens", "cost_usd",
         "duration_seconds", "has_final_marker",
     ]
+    csv_fields = list(dict.fromkeys(csv_fields))
     with (out / "trajectory_summary.csv").open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=csv_fields, extrasaction="ignore")
         writer.writeheader()

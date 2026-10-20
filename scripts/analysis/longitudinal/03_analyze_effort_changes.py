@@ -26,8 +26,8 @@ if str(REPO_ROOT_GUESS) not in sys.path:
 from scripts.analysis.plot_style import COLORBLIND_PALETTE, NEUTRAL_COLOR
 from scripts.analysis.submission_task_balancing import (
     EFFECTIVE_SUBMISSION_COMPONENTS,
-    EFFECTIVE_SUBMISSION_ID,
-    ensure_effective_submission_id,
+    SOURCE_SUBMISSION_ID,
+    ensure_source_submission_id,
 )
 from scripts.analysis.statistical_helpers import paired_cohens_dz, two_sided_signed_rank
 from scripts.benchmark_paths import find_repo_root
@@ -126,19 +126,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out", type=Path, default=BASELINE_FIGURE_PATH)
     parser.add_argument(
-        "--submission-unit", choices=["effective", "leaderboard-url"], default="effective",
+        "--submission-unit", choices=["source", "leaderboard-url"], default="source",
         help="Effective submission IDs are primary; leaderboard URLs are an explicit sensitivity analysis.",
     )
     parser.add_argument("--tb3-tb4-out", type=Path, default=TB3_TB4_FIGURE_PATH)
     parser.add_argument("--combined-out", type=Path, default=None,
                         help="Optionally also write the preserved combined TB2/TB3 comparison figure.")
     parser.add_argument("--include-sensitivities", action="store_true",
-                        help="Also export URL-grouped and trial-weighted tables and paired URL/effective tests.")
+                        help="Also export URL-grouped and trial-weighted tables and paired URL/source tests.")
     parser.add_argument("--output-root", type=Path,
                         help="Mirror default output paths under this directory for reproduction checks.")
     args = parser.parse_args()
-    if args.include_sensitivities and (args.task_weighting != "submission-balanced" or args.submission_unit != "effective"):
-        parser.error("--include-sensitivities requires the primary submission-balanced/effective settings.")
+    if args.include_sensitivities and (args.task_weighting != "submission-balanced" or args.submission_unit != "source"):
+        parser.error("--include-sensitivities requires the primary submission-balanced/source settings.")
     if args.output_root is not None:
         args.output_root = args.output_root.resolve()
         if args.output_root.is_relative_to(REPO_ROOT / "data" / "trajectories"):
@@ -176,10 +176,10 @@ def require_columns(df: pd.DataFrame, required: set[str], label: str) -> None:
 
 
 def load_trajectories(
-    path: Path, *, task_weighting: str = "submission-balanced", submission_unit: str = "effective"
+    path: Path, *, task_weighting: str = "submission-balanced", submission_unit: str = "source"
 ) -> pd.DataFrame:
     df = pd.read_csv(path, low_memory=False)
-    retained_columns = REQUIRED_COLUMNS | set(EFFECTIVE_SUBMISSION_COMPONENTS) | {EFFECTIVE_SUBMISSION_ID}
+    retained_columns = REQUIRED_COLUMNS | set(EFFECTIVE_SUBMISSION_COMPONENTS) | {SOURCE_SUBMISSION_ID}
     df = df[[column for column in sorted(retained_columns) if column in df.columns]].copy()
     required = REQUIRED_COLUMNS if task_weighting == "submission-balanced" else REQUIRED_COLUMNS - {"submission_id"}
     require_columns(df, required, str(path))
@@ -189,8 +189,8 @@ def load_trajectories(
         df[column] = pd.to_numeric(df[column], errors="coerce")
     for column in TOKEN_COLUMNS:
         df.loc[df[column] <= 0, column] = np.nan
-    if task_weighting == "submission-balanced" and submission_unit == "effective":
-        df = ensure_effective_submission_id(df)
+    if task_weighting == "submission-balanced" and submission_unit == "source":
+        df = ensure_source_submission_id(df)
     df["logged_chars"] = df["message_chars"] + df["reasoning_chars"] + df["observation_chars"]
     return df.dropna(subset=["benchmark_version"])
 
@@ -311,7 +311,7 @@ def build_task_balanced_outputs(
     comparison_version: str,
     *,
     task_weighting: str = "submission-balanced",
-    submission_unit: str = "effective",
+    submission_unit: str = "source",
 ) -> pd.DataFrame:
     summary_rows: list[dict[str, object]] = []
     for metric in METRICS:
@@ -359,7 +359,7 @@ def build_task_balanced_outputs(
 
 
 def task_metric_pairs(
-    df: pd.DataFrame, column: str, *, task_weighting: str = "submission-balanced", submission_unit: str = "effective"
+    df: pd.DataFrame, column: str, *, task_weighting: str = "submission-balanced", submission_unit: str = "source"
 ) -> pd.DataFrame:
     """Return explicitly weighted task medians, with versions as columns.
 
@@ -377,12 +377,12 @@ def task_metric_pairs(
         )
     if task_weighting != "submission-balanced":
         raise ValueError(f"Unknown task weighting: {task_weighting}")
-    if submission_unit == "effective":
-        if EFFECTIVE_SUBMISSION_ID not in df:
-            df = ensure_effective_submission_id(df)
-        identity = EFFECTIVE_SUBMISSION_ID
+    if submission_unit == "source":
+        if SOURCE_SUBMISSION_ID not in df:
+            df = ensure_source_submission_id(df)
+        identity = SOURCE_SUBMISSION_ID
     elif submission_unit == "leaderboard-url":
-        identity = "submission_id"
+        identity = "source_submission_url"
     else:
         raise ValueError(f"Unknown submission unit: {submission_unit}")
     work = df[[identity, "task_name", "benchmark_version", column]].dropna().copy()
@@ -410,7 +410,7 @@ def format_raw(key: str, value: float) -> str:
 
 def summarize_task_balanced_periods(
     df: pd.DataFrame, baseline_version: str, comparison_version: str,
-    *, submission_unit: str = "effective",
+    *, submission_unit: str = "source",
 ) -> pd.DataFrame:
     """Describe matched tasks after submission-task and across-submission medians.
 
@@ -589,7 +589,7 @@ def write_balanced_exports(
                 return path.relative_to(base).as_posix()
         return path.as_posix()
 
-    units = ["effective", "leaderboard-url"] if include_sensitivities else ["effective"]
+    units = ["source", "leaderboard-url"] if include_sensitivities else ["source"]
     for unit in units:
         if unit == "leaderboard-url":
             build_task_balanced_outputs(
@@ -597,6 +597,8 @@ def write_balanced_exports(
             ).to_csv(table_dir / "task_balanced_effort_summary_url_sensitivity.csv", index=False)
         figures = summarize_task_balanced_periods(trajectories, old, new, submission_unit=unit)
         figures.to_csv(table_dir / f"effort_figure_data_submission_balanced_{unit}.csv", index=False)
+        if unit == "source":
+            figures.to_csv(table_dir / "effort_figure_data_submission_balanced_effective.csv", index=False)  # legacy filename alias; unit column is source
         detail = []
         for metric in METRICS:
             pairs = task_metric_pairs(trajectories, metric["column"], submission_unit=unit).dropna(subset=[old, new])
@@ -619,11 +621,13 @@ def write_balanced_exports(
                     "p_value": p_value, "nonzero_task_pairs": nonzero,
                 })
         pd.DataFrame(detail).to_csv(table_dir / f"paired_effort_tasks_{unit}.csv", index=False)
-        if unit == "effective":
+        if unit == "source":
+            pd.DataFrame(detail).to_csv(table_dir / "paired_effort_tasks_effective.csv", index=False)  # legacy filename alias
+        if unit == "source":
             path = figure_dir / f"effort_change_submission_balanced_{stem}.png"
             plot(add_formatted_columns(figures), path, "TB" + old, "TB" + new, "TB" + old, "TB" + new,
-                 aggregation_label="Effective submissions, shared tasks")
-            captions.append({"path": caption_path(path), "caption": f"TB{old} to TB{new}: medians within effective submission-task pairs, then medians across submissions within tasks, then medians across matched tasks. Bars show the ratio of cross-task medians; paired absolute changes determine inference. Metric-specific missing pairs are excluded. Eight descriptive metrics are plotted; five pre-existing primary metrics are tested."})
+                 aggregation_label="Source submissions, shared tasks")
+            captions.append({"path": caption_path(path), "caption": f"TB{old} to TB{new}: medians within source submission-task pairs, then medians across submissions within tasks, then medians across matched tasks. Bars show the ratio of cross-task medians; paired absolute changes determine inference. Metric-specific missing pairs are excluded. Eight descriptive metrics are plotted; five pre-existing primary metrics are tested."})
     if include_sensitivities:
         build_task_balanced_outputs(
             trajectories, unchanged_tasks, old, new, task_weighting="trial-weighted",
@@ -694,7 +698,7 @@ def main() -> None:
                 ],
                 args.combined_out,
             )
-    if args.task_weighting == "submission-balanced" and args.submission_unit == "effective":
+    if args.task_weighting == "submission-balanced" and args.submission_unit == "source":
         inference, captions = [], []
         for export in exports:
             rows, descriptions = write_balanced_exports(

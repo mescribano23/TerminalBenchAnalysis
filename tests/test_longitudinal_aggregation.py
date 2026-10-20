@@ -24,6 +24,7 @@ def fixture():
                     'model_dir':f'model{index}', 'agent_version':'v1',
                     'leaderboard_model':f'model{index}', 'leaderboard_provider':'provider',
                     'leaderboard_date':'2026-01-01', 'source_submission_url':'shared' if index<2 else 'separate',
+                    'source_submission_id':f'{version}:source{index}',
                     'submission_id':'shared' if index<2 else 'separate',
                     'duration_seconds':value, 'step_count':value, 'passed':passed})
     return ensure_effective_submission_id(pd.DataFrame(rows))
@@ -48,7 +49,7 @@ class AggregationTests(unittest.TestCase):
     def test_primary_cli_defaults(self):
         for module in (effort,composition,difficulty):
             with patch('sys.argv',['analysis']):
-                self.assertEqual(module.parse_args().submission_unit,'effective')
+                self.assertEqual(module.parse_args().submission_unit,'source')
 
     def test_count_labels_preserve_fractional_task_medians(self):
         self.assertEqual(effort.format_raw('steps',76.25),'76.25')
@@ -97,7 +98,7 @@ class AggregationTests(unittest.TestCase):
                 effort.main()
             for name in ['tasks2.csv','tasks3.csv']:
                 table=pd.read_csv(root/name)
-                self.assertTrue(table.submission_unit.eq('effective').all())
+                self.assertTrue(table.submission_unit.eq('source').all())
                 self.assertTrue(table.task_weighting.eq('submission-balanced').all())
                 self.assertTrue(table.n_tasks_with_both_versions.eq(1).all())
 

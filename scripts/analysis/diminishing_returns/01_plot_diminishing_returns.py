@@ -4,7 +4,7 @@
 This script regenerates the full reports/diminishing_returns figure tree from
 trajectory-level data. The pooled estimates remain trajectory-level. The
 task-balanced estimates bin trajectories first, then average within
-effective-submission/task/bin cells before averaging over tasks. It
+source-submission/task/bin cells before averaging over tasks. It
 intentionally contains no statistical modeling.
 """
 
@@ -27,7 +27,7 @@ from scripts.analysis.plot_style import (
     colorblind_cmap,
     heatmap_text_color,
 )
-from scripts.analysis.submission_task_balancing import EFFECTIVE_SUBMISSION_ID, ensure_effective_submission_id
+from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
 
 
 REPO_ROOT = find_repo_root(Path(__file__).resolve().parent)
@@ -160,7 +160,7 @@ def load_data(path: Path) -> pd.DataFrame:
         )
 
     df["cost_usd_positive"] = df["cost_usd"].where(df["cost_usd"] > 0)
-    return ensure_effective_submission_id(df)
+    return ensure_source_submission_id(df)
 
 
 def bin_series(series: pd.Series, variable: str) -> pd.Categorical:
@@ -211,7 +211,7 @@ def build_task_balanced_effort_success(df: pd.DataFrame, pooled_bins: pd.DataFra
     pooled_lookup = pooled_bins.set_index(["metric", "bin_order"])
 
     for variable in TASK_BALANCED_VARIABLES:
-        work = df[[EFFECTIVE_SUBMISSION_ID, "task_name", variable, "passed"]].dropna().copy()
+        work = df[[SOURCE_SUBMISSION_ID, "task_name", variable, "passed"]].dropna().copy()
         if work.empty:
             continue
         work["effort_bin"] = bin_series(work[variable], variable)
@@ -225,7 +225,7 @@ def build_task_balanced_effort_success(df: pd.DataFrame, pooled_bins: pd.DataFra
                 task_rates = np.array([], dtype=float)
             else:
                 submission_task_rates = (
-                    bin_group.groupby([EFFECTIVE_SUBMISSION_ID, "task_name"], as_index=False)
+                    bin_group.groupby([SOURCE_SUBMISSION_ID, "task_name"], as_index=False)
                     .agg(
                         submission_task_bin_trajectory_count=("passed", "size"),
                         submission_task_bin_pass_rate=("passed", "mean"),

@@ -41,8 +41,8 @@ DIFFICULTY_MARKERS = {
 }
 REQUIRED_COLUMNS = {
     "benchmark_version",
-    "submission_id",
-    "submission_timestamp",
+    "source_submission_id",
+    "historical_leaderboard_timestamp",
     "task_name",
     "passed",
     "difficulty",
@@ -51,6 +51,7 @@ REQUIRED_COLUMNS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--monthly-summary-csv", type=Path, default=REPO_ROOT / "data/processed_live/longitudinal/monthly_pass_rate_historical_dates.csv")
     parser.add_argument("--trajectory-csv", type=Path, default=TRAJECTORY_CSV)
     parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
     parser.add_argument(
@@ -104,8 +105,8 @@ def load_trajectories(path: Path) -> pd.DataFrame:
     df["difficulty"] = df["difficulty"].fillna("unknown").astype(str)
     df["category"] = df["category"].fillna("unknown").astype(str)
     df["passed"] = pd.to_numeric(df["passed"], errors="coerce")
-    df["submission_timestamp"] = pd.to_datetime(
-        df["submission_timestamp"],
+    df["historical_leaderboard_timestamp"] = pd.to_datetime(
+        df["historical_leaderboard_timestamp"],
         errors="coerce",
         utc=True,
     ).dt.tz_convert(None)
@@ -134,7 +135,7 @@ def task_metadata(df: pd.DataFrame) -> pd.DataFrame:
 
 def task_level_changes(df: pd.DataFrame) -> pd.DataFrame:
     submission_task = (
-        df.groupby(["submission_id", "task_name", "benchmark_version"], as_index=False)
+        df.groupby(["source_submission_id", "task_name", "benchmark_version"], as_index=False)
         .agg(n_trajectories=("passed", "size"), submission_task_pass_rate=("passed", "mean"))
     )
     rates = (
@@ -213,9 +214,9 @@ def aggregation_check(df: pd.DataFrame, summary: pd.DataFrame, group_col: str) -
 
 
 def difficulty_submission_summary(df: pd.DataFrame) -> pd.DataFrame:
-    group_columns = ["submission_id", "submission_timestamp", "difficulty"]
+    group_columns = ["source_submission_id", "historical_leaderboard_timestamp", "difficulty"]
     per_task = (
-        df.dropna(subset=["submission_timestamp"])
+        df.dropna(subset=["historical_leaderboard_timestamp"])
         .groupby([*group_columns, "task_name"], as_index=False)
         .agg(
             task_pass_rate=("passed", "mean"),
@@ -229,9 +230,9 @@ def difficulty_submission_summary(df: pd.DataFrame) -> pd.DataFrame:
             trajectory_count=("task_trajectory_count", "sum"),
             task_weighted_pass_rate=("task_pass_rate", "mean"),
         )
-        .sort_values(["submission_timestamp", "difficulty", "submission_id"])
+        .sort_values(["historical_leaderboard_timestamp", "difficulty", "source_submission_id"])
     )
-    summary["submission_month"] = summary["submission_timestamp"].dt.to_period("M").dt.to_timestamp()
+    summary["submission_month"] = summary["historical_leaderboard_timestamp"].dt.tz_convert(None).dt.to_period("M").dt.to_timestamp()
     return summary
 
 
@@ -239,7 +240,7 @@ def monthly_difficulty_summary(difficulty_summary: pd.DataFrame) -> pd.DataFrame
     return (
         difficulty_summary.groupby(["submission_month", "difficulty"], as_index=False)
         .agg(
-            submission_count=("submission_id", "nunique"),
+            submission_count=("source_submission_id", "nunique"),
             median_pass_rate=("task_weighted_pass_rate", "median"),
         )
         .sort_values(["difficulty", "submission_month"])
@@ -266,7 +267,7 @@ def plot_difficulty(df: pd.DataFrame, path: Path) -> None:
         color = DIFFICULTY_COLORS.get(difficulty, "#666666")
         marker = DIFFICULTY_MARKERS.get(difficulty, "o")
         ax.scatter(
-            submissions["submission_timestamp"],
+            submissions["historical_leaderboard_timestamp"],
             submissions["task_weighted_pass_rate"],
             s=18,
             alpha=0.24,
@@ -334,6 +335,11 @@ def main() -> None:
     difficulty_check = aggregation_check(df, difficulty_changes, "difficulty")
     category_check = aggregation_check(df, category_changes, "category")
 
+    monthly = monthly_difficulty_summary(difficulty_submission_summary(df))
+    monthly["date_variable"] = "historical_leaderboard_timestamp"
+    monthly["date_semantics"] = "historical snapshot metadata.date; submission/publication meaning unverified"
+    args.monthly_summary_csv.parent.mkdir(parents=True, exist_ok=True)
+    monthly.to_csv(args.monthly_summary_csv, index=False)
     plot_difficulty(df, args.figures_dir / "pass_rate_change_by_difficulty.png")
     plot_category(
         category_changes,
