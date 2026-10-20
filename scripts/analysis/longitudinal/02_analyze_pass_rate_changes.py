@@ -232,7 +232,8 @@ def difficulty_submission_summary(df: pd.DataFrame) -> pd.DataFrame:
         )
         .sort_values(["historical_leaderboard_timestamp", "difficulty", "source_submission_id"])
     )
-    summary["submission_month"] = summary["historical_leaderboard_timestamp"].dt.tz_convert(None).dt.to_period("M").dt.to_timestamp()
+    # load_trajectories already normalizes these timestamps to timezone-naive UTC.
+    summary["submission_month"] = summary["historical_leaderboard_timestamp"].dt.to_period("M").dt.to_timestamp()
     return summary
 
 

@@ -359,7 +359,7 @@ Regenerate the descriptive effort-bin success-rate figures and appendix-style gr
 
 ```powershell
 python -m scripts.analysis.diminishing_returns.01_plot_diminishing_returns
-python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effects
+python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effects --include-legacy-pareto
 ```
 
 These figures are descriptive visualizations; the statistical table above is
@@ -628,16 +628,13 @@ RQ3.1 performance-over-version results remain descriptive. Because TB3.0 and TB4
 
 For the TB2.0 -> TB2.1 performance headline, use the RQ3.1 submission-balanced, task-weighted result consistently: 36.6304% -> 75.0782%, an increase of **38.45 percentage points**. Compute each submission-task pass rate, average equally across submissions within each task, and then average equally across the 89 tasks. The earlier **39.27 pp** result pools trajectories within each task before averaging across tasks (35.8213% -> 75.0943%); the fully pooled trajectory result is **39.05 pp** (36.0705% -> 75.1233%). These are different aggregations of the same 31,103 TB2.0 and 7,501 TB2.1 trajectories. Reserve 38.45 pp for the main task-weighted claim, and name the weighting whenever reporting an alternative. This describes changes in the observed submission populations, not the isolated effect of benchmark fixes on a fixed agent/model population.
 
-The preserved longitudinal token-accounting outputs report the following historical full-dataset summaries (not refreshed after the complete-text parser restoration):
+The retained TB2.0–TB2.1 pooled diagnostic tables use the following full-dataset medians:
 
-- logged characters: 31,829 -> 35,584 (+11.8%)
-- reported input tokens: 189,811 -> 264,066 (+39.1%)
-- reported output tokens: 8,788 -> 13,562 (+54.3%)
-- reported total tokens: 206,147 -> 281,590 (+36.6%)
+- logged characters: 36,828 -> 46,348 (+25.8%)
+- reported total tokens: 213,974.5 -> 282,852 (+32.2%)
 
-Historical RQ3.3 figures keep pooled trajectory medians as descriptive
-statistics. Primary longitudinal evidence comes from submission-balanced task
-tables, paired tests, and separately named figures. The task table first takes the median within
+RQ3.3 retains only submission-balanced effort figures. Pooled trajectory medians remain in diagnostic CSVs used by the statistical report and accounting checks. Primary longitudinal evidence comes from submission-balanced task
+tables, paired tests, and figures. The task table first takes the median within
 each source-submission/task pair, then the median across submissions for each shared
 task, and finally summarizes paired task changes.
 
@@ -648,14 +645,12 @@ Select this hierarchy explicitly with `--task-weighting submission-balanced`
 median across all trials within each task/version, which gives submissions
 with more repeated trials more influence. New task-balanced summaries record
 the selected method in a `task_weighting` column. This option affects paired
-task summaries; the pooled medians shown in the effort figures retain their
-trajectory-level definition.
+task summaries; pooled diagnostic CSVs retain their trajectory-level definition. Non-primary weighting modes write tables only.
 
-Existing pooled figures and medians remain descriptive historical views; separately named balanced figures provide the primary longitudinal evidence. Historical outputs remain recoverable from Git history. Active TB2 and TB3/TB4 task tables both use source-submission balancing.
+The retained `effort_change_submission_balanced_*` figures provide the primary longitudinal evidence. Pooled figures and their older filename copies have been removed. Older figures remain recoverable from Git history. Active TB2 and TB3/TB4 task tables both use source-submission balancing.
 Any comparison of methods should write to separate output paths using
 `--task-balanced-summary-csv`, `--pooled-summary-csv`, and `--out`.
-The optional `--combined-out` retains the earlier combined effort figure when
-used with `--include-tb3-tb4`.
+With `--include-tb3-tb4`, the effort script writes the two source-submission-balanced comparison figures.
 
 ```text
 data/processed_live/longitudinal/pooled_effort_summary_refreshed.csv
@@ -705,7 +700,7 @@ reports/statistical_analysis_audit.md
 ```
 
 
-To reproduce the current longitudinal tables, balanced and pooled figures, captions, and sensitivities using the retained processed inputs and fixed difficulty labels, run:
+To reproduce the current longitudinal tables, submission-balanced effort figures, and sensitivities using the retained processed inputs and fixed difficulty labels, run:
 
 ```powershell
 python -m scripts.analysis.longitudinal.07_analyze_task_composition_over_versions --include-sensitivities
@@ -716,15 +711,38 @@ python -m scripts.analysis.10_build_statistical_audit --include-sensitivities
 
 The sensitivity flag adds separately named URL-grouped tables; RQ3.3 also exports trial-weighted tables. It does not change the primary source-submission aggregation. The effort script writes matched-task vectors and figure data alongside the summary tables. Difficulty analysis reads the validated caches without invoking labelers. The statistical script retains all 40 inferential rows and its validation checks.
 
-For comparison runs, use `--output-root PATH` with the effort and statistical scripts to mirror their output layout under another directory. For task composition and difficulty analysis, use `--out-dir PATH` and `--figures-dir PATH`. Inputs continue to come from the repository. Existing historical pooled figures retain their original filenames.
+For comparison runs, use `--output-root PATH` with the effort and statistical scripts to mirror their output layout under another directory. For task composition and difficulty analysis, use `--out-dir PATH` and `--figures-dir PATH`. Inputs continue to come from the repository.
 
-RQ3.3 filenames distinguish `effort_change_submission_balanced_*` (primary source-submission/shared-task estimates) from `effort_change_pooled_refreshed_*` (descriptive full-text/positive-token trajectory medians). Original `performance_effort_change_over_time*` figures remain historical. Figure percentages compare cross-task medians; paired tests use absolute task differences. Captions and exact method definitions are saved in `reports/longitudinal/effort_figure_captions.json`.
+The two RQ3.3 effort figures are `effort_change_submission_balanced_tb2_0_to_tb2_1.png` and `effort_change_submission_balanced_tb3_0_to_tb4_0.png`. Figure percentages compare cross-task medians after source-submission balancing; paired tests use absolute task differences. Metric-specific missing pairs are excluded. Eight descriptive metrics are plotted, and five primary metrics are tested.
 
 The RQ3.1 shared-task change is +38.45 pp for TB2.0–TB2.1 and +14.34 pp for TB3.0–TB4.0. Both the headline and paired tests use the same actual source submission units. The [statistical report](reports/statistical_analysis_audit.md) provides p-values and effect sizes.
 
 Aggregation regression checks can be run with `python -m unittest discover -s tests -v`. The fixed-label provenance is retained in `reports/longitudinal/difficulty_over_versions/provenance.json`. Historical manuscript comparisons and recovery records are archived separately from the replication package and remain in Git history (results commit `0852679b`, manuscript comparison commit `990866ea`).
 
 ## Useful Maintenance Commands
+
+To regenerate all retained figure views from the current datasets, including the optional Pareto views, run the commands below. They use retained task labels and raw trajectories; no scraping or LLM labeling is required. The effort generator writes only the two submission-balanced effort figures.
+
+```powershell
+python -m scripts.prepare_processed_tables
+python -m scripts.analysis.diminishing_returns.01_plot_diminishing_returns
+python -m scripts.analysis.diminishing_returns.02_plot_rq1_3_scaffold_model_effects --include-legacy-pareto
+python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_2_0
+python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_2_1
+python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_3_0
+python -m scripts.analysis.01_analyze_leaderboard_superficial --benchmark terminal_bench_4_0
+python -m scripts.analysis.tasks.00_analyze_task_domains
+python -m scripts.analysis.tasks.01_analyze_time_estimates
+python -m scripts.analysis.tasks.tags.02_analyze_tag_effort
+python -m scripts.analysis.tasks.02_analyze_tool_availability_use
+python -m scripts.analysis.longitudinal.07_analyze_task_composition_over_versions --include-sensitivities
+python -m scripts.analysis.longitudinal.05_analyze_performance_over_versions
+python -m scripts.analysis.longitudinal.09_analyze_difficulty_over_versions --include-sensitivities
+python -m scripts.analysis.longitudinal.01_analyze_instruction_change_robustness
+python -m scripts.analysis.longitudinal.02_analyze_pass_rate_changes
+python -m scripts.analysis.longitudinal.03_analyze_effort_changes --include-tb3-tb4 --include-sensitivities
+python -m scripts.analysis.longitudinal.04_analyze_token_accounting
+```
 
 Retry missing, empty, or malformed trajectory files from saved trial metadata without refreshing the leaderboard:
 

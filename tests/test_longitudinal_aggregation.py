@@ -10,6 +10,7 @@ import pandas as pd
 effort = importlib.import_module('scripts.analysis.longitudinal.03_analyze_effort_changes')
 composition = importlib.import_module('scripts.analysis.longitudinal.07_analyze_task_composition_over_versions')
 difficulty = importlib.import_module('scripts.analysis.longitudinal.09_analyze_difficulty_over_versions')
+pass_changes = importlib.import_module('scripts.analysis.longitudinal.02_analyze_pass_rate_changes')
 audit = importlib.import_module('scripts.analysis.10_build_statistical_audit')
 from scripts.analysis.submission_task_balancing import ensure_effective_submission_id
 
@@ -31,6 +32,19 @@ def fixture():
 
 
 class AggregationTests(unittest.TestCase):
+    def test_monthly_pass_rates_accept_normalized_historical_dates(self):
+        rows = pd.DataFrame({
+            'source_submission_id': ['a', 'a', 'b'],
+            'historical_leaderboard_timestamp': pd.to_datetime(['2026-01-31', '2026-01-31', '2026-02-01']),
+            'difficulty': ['easy', 'easy', 'easy'],
+            'task_name': ['task1', 'task2', 'task1'],
+            'passed': [0, 1, 1],
+        })
+        summary = pass_changes.monthly_difficulty_summary(pass_changes.difficulty_submission_summary(rows))
+        self.assertEqual(summary.submission_month.tolist(), [pd.Timestamp('2026-01-01'), pd.Timestamp('2026-02-01')])
+        self.assertEqual(summary.median_pass_rate.tolist(), [0.5, 1.0])
+        self.assertEqual(summary.submission_count.tolist(), [1, 1])
+
     def test_effective_url_and_trial_units_differ(self):
         data=fixture()
         effective=effort.task_metric_pairs(data,'step_count').loc['task']
@@ -86,16 +100,20 @@ class AggregationTests(unittest.TestCase):
         second['benchmark_version']=second.benchmark_version.replace({'2.0':'3.0','2.1':'4.0'})
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
-            argv=['03','--include-tb3-tb4','--out',str(root/'pool2.png'),
-                '--tb3-tb4-out',str(root/'pool3.png'),'--pooled-summary-csv',str(root/'pool2.csv'),
+            argv=['03','--include-tb3-tb4','--out',str(root/'balanced2.png'),
+                '--tb3-tb4-out',str(root/'balanced3.png'),'--pooled-summary-csv',str(root/'pool2.csv'),
                 '--task-balanced-summary-csv',str(root/'tasks2.csv'),
                 '--tb3-tb4-pooled-summary-csv',str(root/'pool3.csv'),
                 '--tb3-tb4-task-balanced-summary-csv',str(root/'tasks3.csv')]
             with patch('sys.argv',argv),patch.object(effort,'load_trajectories',side_effect=[first,second]),\
                 patch.object(effort,'load_instruction_unchanged_tasks',return_value=set()),\
                 patch.object(effort,'load_adjacent_instruction_unchanged_tasks',return_value=set()),\
-                patch.object(effort,'plot'),patch.object(effort,'print_summary'),patch('builtins.print'):
+                patch.object(effort,'plot') as render,patch('builtins.print'):
                 effort.main()
+            rendered = {call.args[1].name for call in render.call_args_list}
+            self.assertEqual(rendered, {'balanced2.png', 'balanced3.png'})
+            self.assertTrue(all(call.kwargs['aggregation_label'] == 'Source submissions, shared tasks'
+                                for call in render.call_args_list))
             for name in ['tasks2.csv','tasks3.csv']:
                 table=pd.read_csv(root/name)
                 self.assertTrue(table.submission_unit.eq('source').all())
