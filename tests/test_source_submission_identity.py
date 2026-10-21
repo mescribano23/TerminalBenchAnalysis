@@ -12,8 +12,8 @@ import pandas as pd
 from scripts.analysis.source_submission_identity import SourceResolver, ensure_source_submission_id, source_id
 
 ROOT = Path(__file__).resolve().parents[1]
-effort = importlib.import_module('scripts.analysis.longitudinal.03_analyze_effort_changes')
-performance = importlib.import_module('scripts.analysis.longitudinal.05_analyze_performance_over_versions')
+effort = importlib.import_module('scripts.analysis.longitudinal.08_analyze_effort_changes')
+performance = importlib.import_module('scripts.analysis.longitudinal.04_analyze_performance')
 builder = importlib.import_module('scripts.analysis.longitudinal.00_build_dataset')
 
 
@@ -132,6 +132,13 @@ class SourceIdentityTests(unittest.TestCase):
             self.assertEqual(len(result.columns),len(set(result.columns)))
             self.assertIn('openai%2Fgpt-oss-20b',result.source_submission_url.iloc[0])
             self.assertEqual(result.source_identity_status.iloc[0],'reconstructed')
+            for column in ['step_count', 'message_chars', 'reasoning_chars', 'observation_chars',
+                           'tool_call_count', 'shell_invocation_count', 'prompt_tokens',
+                           'completion_tokens', 'total_tokens']:
+                if pd.isna(row[column]):
+                    self.assertTrue(pd.isna(result[column].iloc[0]), column)
+                else:
+                    self.assertEqual(result[column].iloc[0], row[column], column)
 
 
 if __name__ == '__main__':

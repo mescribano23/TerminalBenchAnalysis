@@ -101,25 +101,6 @@ def load_trajectory_index(path: Path, root: Path) -> dict[str, dict[str, Any]]:
     return by_rel
 
 
-def load_leaderboard_trial_rows(path: Path) -> dict[str, str]:
-    """Return Harbor trial id -> leaderboard row id mappings when available."""
-    if not path.exists():
-        return {}
-    entries = load_json(path)
-    if not isinstance(entries, list):
-        return {}
-
-    by_trial_id: dict[str, str] = {}
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        trial_id = str(entry.get("id") or "").strip()
-        row_id = str(entry.get("harbor_leaderboard_row_id") or "").strip()
-        if trial_id and row_id:
-            by_trial_id[trial_id] = row_id
-    return by_trial_id
-
-
 def harbor_row_id_from_url(url: Any) -> str:
     text = str(url or "").strip().rstrip("/")
     marker = "/rows/"
@@ -431,7 +412,6 @@ def main() -> None:
             prior = {r["file_run_id"]: r for r in csv.DictReader(handle)}
     paths = sorted(root.rglob("*.json"))
     index_by_rel = load_trajectory_index(trajectory_index, root)
-    leaderboard_row_by_trial_id = load_leaderboard_trial_rows(leaderboard_trials_path)
     leaderboard_by_checksum: dict[str, list[dict[str, Any]]] = defaultdict(list)
     leaderboard_by_row_id: dict[str, dict[str, Any]] = {}
     leaderboard_task_names: dict[str, str] = {}
@@ -527,7 +507,7 @@ def main() -> None:
         steps = data.get("steps") if isinstance(data.get("steps"), list) else []
         task_id = textish(scalar_value(data, {"task_id", "task_name", "taskName", "instance_id"}, max_depth=5) or file_task_id)
         task_name = leaderboard_task_names.get(file_task_id, "")
-        identity, source_entry = resolver.resolve({"file_run_id": file_run_id, "scaffold": scaffold, "agent_version": version}, index_meta)
+        identity, _ = resolver.resolve({"file_run_id": file_run_id, "scaffold": scaffold, "agent_version": version}, index_meta)
         leaderboard_meta = {
             **identity, "submission_url": identity["source_submission_url"],
             "scaffold_version": identity["source_scaffold_version"],
@@ -551,7 +531,7 @@ def main() -> None:
         source_counts = Counter()
         has_final_marker = False
 
-        for idx, raw_step in enumerate(steps, start=1):
+        for raw_step in steps:
             if not isinstance(raw_step, dict):
                 continue
             source_counts[textish(raw_step.get("source") or "")] += 1
@@ -578,16 +558,15 @@ def main() -> None:
 
             calls = extract_tool_calls(raw_step)
             tool_call_count += len([c for c in calls if c.get("raw")])
-            step_commands: list[tuple[str, str]] = []
+            step_commands: list[str] = []
             for call in calls:
                 cmd = call.get("command", "")
                 if cmd:
-                    step_commands.append((call.get("tool", ""), cmd))
+                    step_commands.append(cmd)
             if not step_commands and raw_step.get("source") == "agent":
-                for cmd in extract_commands_from_text(msg):
-                    step_commands.append(("fenced_bash", cmd))
+                step_commands.extend(extract_commands_from_text(msg))
 
-            for tool, cmd in step_commands:
+            for cmd in step_commands:
                 shell_invocation_count += 1
                 head = shell_head(cmd)
                 command_head_counter[head] += 1

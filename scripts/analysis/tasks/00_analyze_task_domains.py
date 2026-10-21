@@ -741,7 +741,7 @@ def plot_task_weighted_success(
             lambda row: category_count_label_multiline(row, dimension_column),
             axis=1,
         )
-        fig, ax = plt.subplots(figsize=(12.5, 6.2))
+        fig, ax = plt.subplots(figsize=(12.5, 5.85))
         ax.bar(plot_df["category_label"], plot_df["task_mean_pass_rate"], width=0.78, color=PASS_COLOR)
         format_success_rate_y_axis(ax)
         format_category_axis(ax)
@@ -751,13 +751,12 @@ def plot_task_weighted_success(
         plot_df["category_label"] = plot_df.apply(lambda row: category_count_label(row, dimension_column), axis=1)
         bar_height = 0.8
         plot_height = 2.5 if dimension_column == "difficulty" else figure_height(len(plot_df))
-        fig, ax = plt.subplots(figsize=(9.5, plot_height))
+        fig, ax = plt.subplots(figsize=(9.5, plot_height - 0.35))
         ax.barh(plot_df["category_label"], plot_df["task_mean_pass_rate"], height=bar_height, color=PASS_COLOR)
         ax.invert_yaxis()
         format_success_rate_axis(ax)
         ax.set_xlabel("Task-weighted pass rate")
         ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
-    ax.set_title(f"Task-weighted pass rate by {dimension_label}")
     note = (
         "Note: Bars show the mean pass rate across tasks after averaging repeated trials within each submission-task pair.\n"
         f"Labels show distinct tasks and trajectories; * marks {dimension_label}s with fewer than five tasks."
@@ -784,13 +783,12 @@ def plot_task_coverage(
     output_prefix: str = "task_domain",
 ) -> Path:
     plot_df = domain_table.sort_values("n_tasks", ascending=False)
-    fig, ax = plt.subplots(figsize=(9.5, figure_height(len(plot_df))))
+    fig, ax = plt.subplots(figsize=(9.5, figure_height(len(plot_df)) - 0.35))
     ax.barh(plot_df[dimension_column], plot_df["n_tasks"], color=PASS_COLOR)
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=0.25)
     ax.set_xlabel("Distinct tasks")
     ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
-    ax.set_title(f"Number of distinct tasks per {dimension_label}")
     fig.tight_layout()
     path = figures_dir / f"{output_prefix}_task_coverage.png"
     fig.savefig(path, dpi=180)
@@ -808,7 +806,7 @@ def plot_pass_fail_counts(
     plot_df = domain_table.sort_values("n_trajectories", ascending=False).copy()
     plot_df["category_label"] = plot_df.apply(lambda row: category_count_label_multiline(row, dimension_column), axis=1)
 
-    fig, ax = plt.subplots(figsize=(figure_width(len(plot_df)), pass_fail_counts_height(len(plot_df))))
+    fig, ax = plt.subplots(figsize=(figure_width(len(plot_df)), pass_fail_counts_height(len(plot_df)) - 0.35))
     ax.bar(plot_df["category_label"], plot_df["pass_count"], label="Pass", color=PASS_COLOR)
     ax.bar(
         plot_df["category_label"],
@@ -825,7 +823,6 @@ def plot_pass_fail_counts(
         format_category_axis(ax)
     ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:])
     ax.set_ylabel("Trajectory count")
-    ax.set_title(f"Pass/fail trajectories by {dimension_label}")
     ax.legend(frameon=False)
     fig.tight_layout()
 
@@ -853,13 +850,12 @@ def plot_pass_fail_pie_charts(
     labels = plot_df[dimension_column].tolist()
     colors = colorblind_cycle(len(labels))
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 8.2))
+    fig, axes = plt.subplots(1, 2, figsize=(13, 7.5))
     legend_handles = None
-    for ax, count_column, title in [
-        (axes[0], "pass_count", "Passing trajectories"),
-        (axes[1], "fail_count", "Failing trajectories"),
+    for ax, count_column in [
+        (axes[0], "pass_count"),
+        (axes[1], "fail_count"),
     ]:
-        total = int(plot_df[count_column].sum())
         wedges, _, _ = ax.pie(
             plot_df[count_column],
             labels=None,
@@ -875,9 +871,7 @@ def plot_pass_fail_pie_charts(
         for autotext in ax.texts:
             if "%" in autotext.get_text():
                 autotext.set_fontsize(11)
-        ax.set_title(f"{title}\n(n={total:,})", fontsize=14, y=0.92)
 
-    fig.suptitle(f"Distribution of passing and failing trajectories by {dimension_label}", fontsize=16)
     if legend_handles is not None:
         fig.legend(
             legend_handles,
@@ -953,7 +947,7 @@ def plot_effort_heatmap(
             wrap_heatmap_label(EFFORT_HEATMAP_LABELS.get(label, label), 11) for label in plot_values.columns
         ]
         y_labels = plot_values.index.tolist()
-        figsize = (13.2, 5.8)
+        figsize = (13.2, 5.45)
     else:
         plot_values = heatmap
         plot_normalized = normalized
@@ -962,7 +956,7 @@ def plot_effort_heatmap(
         ]
         if dimension_column == "difficulty":
             y_labels = plot_values.index.tolist()
-            figsize = (10.8, 4.4)
+            figsize = (10.8, 4.05)
         else:
             y_labels = [
                 f"{category} (tasks={int(domain_lookup.loc[category, 'n_tasks'])}, "
@@ -970,7 +964,7 @@ def plot_effort_heatmap(
                 f"{'*' if domain_lookup.loc[category, 'low_task_count'] else ''}"
                 for category in plot_values.index
             ]
-            figsize = (11.5, figure_height(len(plot_values)))
+            figsize = (11.5, figure_height(len(plot_values)) - 0.35)
 
     fig, ax = plt.subplots(figsize=figsize)
     cmap = colorblind_cmap(LOW_GOOD_CMAP)
@@ -990,8 +984,6 @@ def plot_effort_heatmap(
         dimension_label[:1].upper() + dimension_label[1:],
         fontsize=11.5 if dimension_column == "category" else None,
     )
-    order_note = "overall normalized effort" if dimension_column == "category" else "task coverage"
-    ax.set_title(f"Median trajectory effort by {dimension_label}", pad=16)
 
     ax.set_xticks(np.arange(plot_values.shape[1] + 1) - 0.5, minor=True)
     ax.set_yticks(np.arange(plot_values.shape[0] + 1) - 0.5, minor=True)
@@ -1071,7 +1063,7 @@ def plot_category_pass_rate_heatmap(
     col_count = len(heatmap.columns)
     fig_width = max(12.0, min(19.0, 4.0 + col_count * 0.8))
     fig_height = max(5.5, min(30.0, 1.8 + row_count * 0.32))
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height - 0.35))
 
     cmap = colorblind_cmap()
     matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
@@ -1083,7 +1075,6 @@ def plot_category_pass_rate_heatmap(
     ax.set_yticklabels(heatmap.index, fontsize=7 if row_count > 30 else 9)
     ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:])
     ax.set_ylabel(" / ".join(group_columns))
-    ax.set_title(title)
 
     ax.set_xticks(np.arange(-0.5, col_count, 1), minor=True)
     ax.set_yticks(np.arange(-0.5, row_count, 1), minor=True)
@@ -1140,7 +1131,7 @@ def plot_scaffold_category_composition(
         .fillna(0)
     )
 
-    fig, ax = plt.subplots(figsize=(12.5, max(5.2, 1.4 + len(shares) * 0.38)))
+    fig, ax = plt.subplots(figsize=(12.5, max(5.2, 1.4 + len(shares) * 0.38) - 0.35))
     left = np.zeros(len(shares))
     colors = colorblind_cycle(len(category_order))
     for index, category in enumerate(category_order):
@@ -1153,7 +1144,6 @@ def plot_scaffold_category_composition(
     ax.grid(axis="x", alpha=0.25)
     ax.set_xlabel("Share of scaffold trajectories")
     ax.set_ylabel("Scaffold")
-    ax.set_title(f"{dimension_label[:1].upper() + dimension_label[1:]} composition by scaffold")
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=4, frameon=False, fontsize=8)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
     fig.savefig(path, dpi=180)
@@ -1175,7 +1165,7 @@ def plot_category_difficulty_composition(
         .fillna(0)
     )
 
-    fig, ax = plt.subplots(figsize=(12.5, max(5.2, 1.4 + len(shares) * 0.38)))
+    fig, ax = plt.subplots(figsize=(12.5, max(5.2, 1.4 + len(shares) * 0.38) - 0.35))
     left = np.zeros(len(shares))
     colors = {"easy": PASS_COLOR, "medium": "#E69F00", "hard": FAIL_COLOR}
     for difficulty in difficulty_order:
@@ -1188,7 +1178,6 @@ def plot_category_difficulty_composition(
     ax.grid(axis="x", alpha=0.25)
     ax.set_xlabel("Share of category trajectories")
     ax.set_ylabel("Task category")
-    ax.set_title("Task difficulty composition by category")
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False, fontsize=9)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
     fig.savefig(path, dpi=180)
@@ -1217,7 +1206,7 @@ def plot_category_difficulty_pass_rate_heatmap(
         .astype(int)
     )
 
-    fig, ax = plt.subplots(figsize=(figure_width(len(category_order)), 5.2))
+    fig, ax = plt.subplots(figsize=(figure_width(len(category_order)), 4.85))
     cmap = colorblind_cmap()
     matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
@@ -1228,7 +1217,6 @@ def plot_category_difficulty_pass_rate_heatmap(
     ax.set_yticklabels(difficulty_order)
     ax.set_xlabel("Task category")
     ax.set_ylabel("Task difficulty")
-    ax.set_title("Pass rate by task category and difficulty")
     ax.set_xticks(np.arange(-0.5, len(category_order), 1), minor=True)
     ax.set_yticks(np.arange(-0.5, len(difficulty_order), 1), minor=True)
     ax.grid(which="minor", color="white", linewidth=1.0)

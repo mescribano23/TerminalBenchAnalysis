@@ -63,3 +63,22 @@ def heatmap_text_color(value: float, cmap, vmin: float, vmax: float, threshold: 
     red, green, blue, _alpha = cmap(norm(value))
     luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
     return "#111111" if luminance >= threshold else "white"
+
+
+def thesis_style() -> None:
+    plt.rcParams.update(
+        {
+            "font.family": "DejaVu Sans",
+            "font.size": 9,
+            "axes.titlesize": 10,
+            "axes.labelsize": 9,
+            "xtick.labelsize": 8,
+            "ytick.labelsize": 8,
+            "legend.fontsize": 8,
+            "axes.spines.top": False,
+            "axes.spines.right": False,
+            "figure.dpi": 120,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+        }
+    )

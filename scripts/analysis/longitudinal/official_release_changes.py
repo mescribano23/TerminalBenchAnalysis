@@ -5,7 +5,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3]
 LONG = ROOT / "data/processed_live/longitudinal"
-CROSSWALK = LONG / "official_release_task_crosswalk.csv"
+CROSSWALK = LONG / "inputs/official_release_task_crosswalk.csv"
 EXPECTED = {"2.0->2.1": (28, 61), "3.0->4.0": (19, 47)}
 LABELS = {"fixed": "Release-fixed", "not_listed_as_fixed": "Not listed as fixed"}
 

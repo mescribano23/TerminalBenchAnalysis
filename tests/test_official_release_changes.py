@@ -9,7 +9,7 @@ import pandas as pd
 
 from scripts.analysis.longitudinal import official_release_changes as release
 
-results = importlib.import_module("scripts.analysis.10_build_statistical_results")
+results = importlib.import_module("scripts.analysis.02_build_statistical_results")
 
 
 class OfficialReleaseTests(unittest.TestCase):

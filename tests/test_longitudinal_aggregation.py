@@ -7,11 +7,11 @@ from unittest.mock import patch
 
 import pandas as pd
 
-effort = importlib.import_module('scripts.analysis.longitudinal.03_analyze_effort_changes')
-composition = importlib.import_module('scripts.analysis.longitudinal.07_analyze_task_composition_over_versions')
-difficulty = importlib.import_module('scripts.analysis.longitudinal.09_analyze_difficulty_over_versions')
-pass_changes = importlib.import_module('scripts.analysis.longitudinal.02_analyze_pass_rate_changes')
-results = importlib.import_module('scripts.analysis.10_build_statistical_results')
+effort = importlib.import_module('scripts.analysis.longitudinal.08_analyze_effort_changes')
+composition = importlib.import_module('scripts.analysis.longitudinal.03_analyze_task_composition')
+difficulty = importlib.import_module('scripts.analysis.longitudinal.07_analyze_difficulty')
+pass_changes = importlib.import_module('scripts.analysis.longitudinal.06_analyze_pass_rate_changes')
+results = importlib.import_module('scripts.analysis.02_build_statistical_results')
 from scripts.analysis.submission_task_balancing import ensure_effective_submission_id
 
 
@@ -91,34 +91,41 @@ class AggregationTests(unittest.TestCase):
         data['total_tokens']=data.step_count
         self.assertEqual(results.task_balanced_config_median(data),9)
 
-    def test_include_tb3_tb4_writes_both_task_tables(self):
+    def test_effort_sidecars_are_optional_and_both_figures_keep_source_balancing(self):
         first=fixture()
         for metric in effort.METRICS:
             if metric['column'] not in first:
                 first[metric['column']]=first.step_count*100
         second=first.copy()
         second['benchmark_version']=second.benchmark_version.replace({'2.0':'3.0','2.1':'4.0'})
-        with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory)
-            argv=['03','--include-tb3-tb4','--out',str(root/'balanced2.png'),
-                '--tb3-tb4-out',str(root/'balanced3.png'),'--pooled-summary-csv',str(root/'pool2.csv'),
-                '--task-balanced-summary-csv',str(root/'tasks2.csv'),
-                '--tb3-tb4-pooled-summary-csv',str(root/'pool3.csv'),
-                '--tb3-tb4-task-balanced-summary-csv',str(root/'tasks3.csv')]
-            with patch('sys.argv',argv),patch.object(effort,'load_trajectories',side_effect=[first,second]),\
-                patch.object(effort,'load_instruction_unchanged_tasks',return_value=set()),\
-                patch.object(effort,'load_adjacent_instruction_unchanged_tasks',return_value=set()),\
-                patch.object(effort,'plot') as render,patch('builtins.print'):
-                effort.main()
-            rendered = {call.args[1].name for call in render.call_args_list}
-            self.assertEqual(rendered, {'balanced2.png', 'balanced3.png'})
-            self.assertTrue(all(call.kwargs['aggregation_label'] == 'Source submissions, shared tasks'
-                                for call in render.call_args_list))
-            for name in ['tasks2.csv','tasks3.csv']:
-                table=pd.read_csv(root/name)
-                self.assertTrue(table.submission_unit.eq('source').all())
-                self.assertTrue(table.task_weighting.eq('submission-balanced').all())
-                self.assertTrue(table.n_tasks_with_both_versions.eq(1).all())
+        for diagnostics in [False, True]:
+            with self.subTest(diagnostics=diagnostics), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory)
+                argv=['08','--include-tb3-tb4','--out',str(root/'balanced2.png'),
+                    '--tb3-tb4-out',str(root/'balanced3.png'),'--pooled-summary-csv',str(root/'pool2.csv'),
+                    '--task-balanced-summary-csv',str(root/'tasks2.csv'),
+                    '--tb3-tb4-pooled-summary-csv',str(root/'pool3.csv'),
+                    '--tb3-tb4-task-balanced-summary-csv',str(root/'tasks3.csv')]
+                if diagnostics:
+                    argv.append('--include-diagnostics')
+                with patch('sys.argv',argv),patch.object(effort,'load_trajectories',side_effect=[first,second]), \
+                    patch.object(effort,'load_instruction_unchanged_tasks',return_value=set()), \
+                    patch.object(effort,'load_adjacent_instruction_unchanged_tasks',return_value=set()), \
+                    patch.object(effort,'plot') as render,patch('builtins.print'):
+                    effort.main()
+                expected = {'pool2.csv', 'tasks2.csv', 'pool3.csv', 'tasks3.csv',
+                            'effort_figure_data_submission_balanced_source.csv'} if diagnostics else set()
+                self.assertEqual({p.name for p in root.glob('*.csv')}, expected)
+                self.assertEqual({call.args[1].name for call in render.call_args_list},
+                                 {'balanced2.png', 'balanced3.png'})
+                self.assertTrue(all(call.kwargs['aggregation_label'] == 'Source submissions, shared tasks'
+                                    for call in render.call_args_list))
+                if diagnostics:
+                    for name in ['tasks2.csv','tasks3.csv']:
+                        table=pd.read_csv(root/name)
+                        self.assertTrue(table.submission_unit.eq('source').all())
+                        self.assertTrue(table.task_weighting.eq('submission-balanced').all())
+                        self.assertTrue(table.n_tasks_with_both_versions.eq(1).all())
 
 
 if __name__=='__main__':

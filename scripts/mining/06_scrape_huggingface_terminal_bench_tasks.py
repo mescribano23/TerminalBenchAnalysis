@@ -4,7 +4,7 @@
 Outputs:
 - data/raw/{benchmark}/hf_task_metadata.json
 - data/processed_live/task_mining/{benchmark}_hf_task_metadata.csv
-- data/processed_live/longitudinal/tb3_tb4_task_version_audit.csv
+- data/processed_live/longitudinal/inputs/tb3_tb4_task_version_audit.csv
 """
 
 from __future__ import annotations
@@ -502,7 +502,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--audit-csv",
         type=Path,
-        default=LONGITUDINAL_DIR / "tb3_tb4_task_version_audit.csv",
+        default=LONGITUDINAL_DIR / "inputs/tb3_tb4_task_version_audit.csv",
     )
     return parser.parse_args()
 

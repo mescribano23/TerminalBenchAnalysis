@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.stats import mannwhitneyu, wilcoxon
+from scipy.stats import mannwhitneyu, rankdata, wilcoxon
 
 
 def numeric_values(values: pd.Series | np.ndarray | list[float]) -> np.ndarray:
@@ -13,18 +13,23 @@ def numeric_values(values: pd.Series | np.ndarray | list[float]) -> np.ndarray:
     return series[np.isfinite(series)].to_numpy(dtype=float)
 
 
-def paired_cohens_dz(differences: pd.Series | np.ndarray | list[float]) -> float:
-    """Cohen's dz = mean(D) / sample SD(D) for paired differences."""
+def paired_rank_biserial(differences: pd.Series | np.ndarray | list[float]) -> float:
+    """Matched-pairs rank-biserial correlation for the supplied signed D.
+
+    Use the same finite numeric values as ``two_sided_signed_rank``. Exclude
+    exact zeros (``zero_method='wilcox'``), average ranks of tied absolute
+    nonzero differences, and return (R+ - R-) / (R+ + R-). The sign follows
+    the original subtraction direction; no reorientation or rounding is used.
+    Empty and all-zero contrasts have no signed ranks and return NaN.
+    """
     values = numeric_values(differences)
-    if values.size < 2:
+    values = values[values != 0]
+    if values.size == 0:
         return np.nan
-    sample_sd = float(np.std(values, ddof=1))
-    mean_difference = float(np.mean(values))
-    if np.isclose(sample_sd, 0.0):
-        if np.isclose(mean_difference, 0.0):
-            return 0.0
-        return float(np.copysign(np.inf, mean_difference))
-    return mean_difference / sample_sd
+    ranks = rankdata(np.abs(values), method="average")
+    positive = float(ranks[values > 0].sum())
+    negative = float(ranks[values < 0].sum())
+    return (positive - negative) / (positive + negative)
 
 
 def two_sided_signed_rank(

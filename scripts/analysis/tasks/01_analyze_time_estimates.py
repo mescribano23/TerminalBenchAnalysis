@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Compare trajectory durations with task.toml human time estimates.
+"""Describe trajectory durations alongside task.toml human time estimates.
+
+Observed agent durations and estimated human completion times measure different
+constructs; these comparisons are descriptive only.
 
 Outputs:
 - data/processed_live/task_mining/time_estimates/trajectory_time_estimate_comparison.csv
 - data/processed_live/task_mining/time_estimates/task_average_duration_comparison.csv
 - data/processed_live/task_mining/time_estimates/task_time_estimate_distribution_summary.csv
-- data/processed_live/task_mining/time_estimates/rq2_2_human_time_inference.csv
-- data/processed_live/task_mining/time_estimates/rq2_2_human_time_inference.csv
+- data/processed_live/task_mining/time_estimates/task_duration_estimate_headline_summary.csv
+- data/processed_live/task_mining/time_estimates/rq2_2_human_time_description.csv
 - reports/tasks/time_estimates/distribution_task_time_estimates.png
 """
 
@@ -18,8 +21,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scripts.analysis.plot_style import COLORBLIND_PALETTE, NEUTRAL_COLOR
-from scripts.analysis.statistical_helpers import paired_cohens_dz, two_sided_signed_rank
+from scripts.analysis.plot_style import COLORBLIND_PALETTE
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -90,7 +92,6 @@ SUCCESSFUL_MEDIAN_DURATION_LABEL = "Successful-only median duration"
 OBSERVED_MEAN_DURATION_LABEL = "Observed mean duration (sensitivity)"
 OBSERVED_MEDIAN_DURATION_COLOR = COLORBLIND_PALETTE[4]
 SUCCESSFUL_MEDIAN_DURATION_COLOR = COLORBLIND_PALETTE[3]
-OBSERVED_MEAN_DURATION_COLOR = NEUTRAL_COLOR
 PERCENTILES = {
     "p10_min": 0.10,
     "p25_min": 0.25,
@@ -166,16 +167,6 @@ def load_estimates(path: Path) -> pd.DataFrame:
     return estimates
 
 
-def solve_time_band(row: pd.Series) -> str:
-    if not bool(row["passed"]):
-        return "failed"
-    if bool(row["within_expert_time"]):
-        return "expert_or_faster"
-    if bool(row["within_junior_time"]):
-        return "between_expert_and_junior"
-    return "slower_than_junior"
-
-
 def build_trajectory_comparison(trajectories: pd.DataFrame, estimates: pd.DataFrame) -> pd.DataFrame:
     df = trajectories.merge(estimates, on="task_name", how="left", validate="many_to_one")
     df["has_time_estimate"] = df["expert_time_estimate_min"].notna() & df["junior_time_estimate_min"].notna()
@@ -189,15 +180,6 @@ def build_trajectory_comparison(trajectories: pd.DataFrame, estimates: pd.DataFr
     )
 
     df["duration_min"] = df["duration_seconds"] / 60
-    df["duration_vs_expert_estimate"] = df["duration_min"] / df["expert_time_estimate_min"]
-    df["duration_vs_junior_estimate"] = df["duration_min"] / df["junior_time_estimate_min"]
-    denominator = df["junior_time_estimate_min"] - df["expert_time_estimate_min"]
-    df["human_time_position"] = (df["duration_min"] - df["expert_time_estimate_min"]) / denominator.replace(0, np.nan)
-    df["within_expert_time"] = df["duration_min"] <= df["expert_time_estimate_min"]
-    df["within_junior_time"] = df["duration_min"] <= df["junior_time_estimate_min"]
-    df["solved_within_expert_estimate"] = df["passed"].eq(1) & df["within_expert_time"]
-    df["solved_within_junior_estimate"] = df["passed"].eq(1) & df["within_junior_time"]
-    df["solve_time_band"] = df.apply(solve_time_band, axis=1)
 
     return df
 
@@ -346,7 +328,8 @@ def build_duration_headline_summary(task_duration_comparison: pd.DataFrame) -> p
     return pd.DataFrame(rows)
 
 
-def build_rq2_2_time_significance(task_duration_comparison: pd.DataFrame) -> pd.DataFrame:
+def build_rq2_2_time_description(task_duration_comparison: pd.DataFrame) -> pd.DataFrame:
+    """Summarize observed durations relative to estimates without inference."""
     rows = []
     comparisons = [
         ("expert", "expert_time_estimate_min"),
@@ -355,7 +338,6 @@ def build_rq2_2_time_significance(task_duration_comparison: pd.DataFrame) -> pd.
     for comparison, estimate_column in comparisons:
         paired = task_duration_comparison[["median_duration_min", estimate_column]].dropna().copy()
         differences = paired["median_duration_min"] - paired[estimate_column]
-        statistic, p_value, nonzero_pairs = two_sided_signed_rank(differences)
         success_only = task_duration_comparison[
             ["median_successful_duration_min", estimate_column]
         ].dropna().copy()
@@ -370,10 +352,6 @@ def build_rq2_2_time_significance(task_duration_comparison: pd.DataFrame) -> pd.
                 ),
                 "median_human_estimate_min": float(paired[estimate_column].median()) if not paired.empty else np.nan,
                 "median_difference_min": float(differences.median()) if not differences.empty else np.nan,
-                "cohens_dz": paired_cohens_dz(differences),
-                "wilcoxon_statistic": statistic,
-                "p_value": p_value,
-                "nonzero_task_pairs": nonzero_pairs,
                 "success_only_eligible_tasks": int(success_only.shape[0]),
                 "success_only_median_agent_duration_min": (
                     float(success_only["median_successful_duration_min"].median())
@@ -490,7 +468,7 @@ def plot_task_time_estimate_distribution(
     if shared_bins[-1] < axis_max:
         shared_bins = np.append(shared_bins, axis_max)
 
-    fig, ax = plt.subplots(figsize=(10.8, 5.9))
+    fig, ax = plt.subplots(figsize=(10.8, 5.55))
     median_annotations: list[tuple[float, str, str, str]] = []
 
     for label, series, color, alpha in distribution_series:
@@ -541,7 +519,6 @@ def plot_task_time_estimate_distribution(
     ax.set_xlim(0, axis_max)
     ax.set_xlabel("Time per task (minutes, symlog scale)")
     ax.set_ylabel("Share of tasks per bin")
-    ax.set_title("Task-level distributions of estimates and observed median durations")
     ax.grid(axis="y", alpha=0.25)
     ax.legend(frameon=False, loc="upper right")
     annotation_positions = {
@@ -589,14 +566,14 @@ def main() -> None:
     task_duration_comparison_path = args.out / "task_average_duration_comparison.csv"
     task_duration_headline_path = args.out / "task_duration_estimate_headline_summary.csv"
     estimate_distribution_summary_path = args.out / "task_time_estimate_distribution_summary.csv"
-    human_time_inference_path = args.out / "rq2_2_human_time_inference.csv"
+    human_time_description_path = args.out / "rq2_2_human_time_description.csv"
 
     comparison.loc[:, COMPARISON_OUTPUT_COLUMNS].to_csv(comparison_path, index=False)
     task_duration_comparison = build_task_average_duration_comparison(comparison)
     task_duration_comparison.to_csv(task_duration_comparison_path, index=False)
     build_duration_headline_summary(task_duration_comparison).to_csv(task_duration_headline_path, index=False)
-    time_significance = build_rq2_2_time_significance(task_duration_comparison)
-    time_significance.to_csv(human_time_inference_path, index=False)
+    time_description = build_rq2_2_time_description(task_duration_comparison)
+    time_description.to_csv(human_time_description_path, index=False)
     summarize_task_time_distributions(estimates, task_duration_comparison).to_csv(
         estimate_distribution_summary_path,
         index=False,
@@ -616,7 +593,7 @@ def main() -> None:
     print(f"Wrote {comparison_path}")
     print(f"Wrote {task_duration_comparison_path}")
     print(f"Wrote {task_duration_headline_path}")
-    print(f"Wrote {human_time_inference_path}")
+    print(f"Wrote {human_time_description_path}")
     print(f"Wrote {estimate_distribution_summary_path}")
     for figure_path in [distribution_path]:
         if figure_path is not None:
