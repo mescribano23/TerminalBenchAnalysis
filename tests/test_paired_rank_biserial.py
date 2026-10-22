@@ -145,6 +145,10 @@ class SavedAnalysisTests(unittest.TestCase):
     def test_primary_effort_matches_original_pairs(self):
         actual = results.build_effort_inference()
         saved = saved_inference(results.LONG_DIR / "rq3_3_effort_inference.csv")
+        # The historical pooled headline fields are no longer exported. The
+        # shared-task medians and every inferential quantity must stay intact.
+        saved = saved.drop(columns=["old_headline_median", "new_headline_median",
+                                    "reported_percentage_change", "headline_aggregation"])
         pd.testing.assert_frame_equal(actual, saved, rtol=1e-13, atol=1e-12)
 
     def test_effort_sensitivity_writer_preserves_newer_minus_older(self):

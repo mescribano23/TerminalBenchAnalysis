@@ -261,6 +261,7 @@ def build_monthly_token_text_summary(df: pd.DataFrame) -> tuple[pd.DataFrame, pd
     for month, group in dated.groupby("submission_month", sort=True):
         row: dict[str, Any] = {
             "month": month,
+            "aggregation": "hierarchical_source_submission_task",
             "trajectory_n": int(group.shape[0]),
             "benchmark_version_composition": benchmark_version_composition(group),
             "tb20_trajectory_n": int(group["benchmark_version"].eq("2.0").sum()),
@@ -269,7 +270,7 @@ def build_monthly_token_text_summary(df: pd.DataFrame) -> tuple[pd.DataFrame, pd
         for metric in metrics:
             valid = group[metric].dropna()
             row[f"{metric}_n"] = int(valid.shape[0])
-            row[f"median_{metric}"] = float(valid.median()) if not valid.empty else math.nan
+            row[f"median_{metric}"] = task_balanced_median(group, metric)
         rows.append(row)
 
     monthly = pd.DataFrame(rows).sort_values("month").reset_index(drop=True)
@@ -369,8 +370,8 @@ def plot_token_text_over_time(monthly: pd.DataFrame, out: Path) -> None:
         )
 
     ax_tokens.set_xlabel("Historical leaderboard month (semantics unverified)")
-    ax_tokens.set_ylabel("Monthly median tokens (thousands)")
-    ax_chars.set_ylabel("Monthly median logged characters (thousands)")
+    ax_tokens.set_ylabel("Tokens (thousands)\nMonthly hierarchical median")
+    ax_chars.set_ylabel("Logged characters (thousands)\nMonthly hierarchical median")
     ax_tokens.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
     ax_tokens.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     ax_tokens.yaxis.set_major_formatter(lambda value, _: f"{value:.0f}")
@@ -423,7 +424,7 @@ def print_monthly_token_text_summary(monthly: pd.DataFrame, baseline: pd.Series,
         later = float(last[f"median_{metric}"])
         print(f"{label}: {format_value(earlier)} -> {format_value(later)} ({pct_change(earlier, later):+.1f}%).")
 
-    print("Monthly medians use all trajectories with a recorded historical leaderboard date (event semantics unverified) and non-missing metric value.")
+    print("Monthly medians balance trials within source-submission/task, submissions within task, then tasks in each dated monthly cohort; monthly task support and configuration composition may change.")
     print(f"Wrote monthly CSV to {out_csv}")
     print(f"Wrote monthly figure to {out_fig}")
 
@@ -528,17 +529,20 @@ def parse_raw_metrics(df: pd.DataFrame, root: Path, workers: int) -> pd.DataFram
     return pd.DataFrame(parsed).sort_values(["benchmark", "rel_path"]).reset_index(drop=True)
 
 
-def task_balanced_median(df: pd.DataFrame, metric: str) -> float:
+def task_balanced_values(df: pd.DataFrame, metric: str) -> pd.Series:
+    """One median per task after balancing source submissions and their trials."""
     if metric not in df.columns or df.empty:
-        return math.nan
+        return pd.Series(dtype=float)
     # Keep the source level even for a single configuration: it may have
     # multiple submissions with unequal numbers of repeated trials.
     df = ensure_source_submission_id(df)
     submission_task = df.groupby([SOURCE_SUBMISSION_ID, "task_name"])[metric].median()
-    task_medians = submission_task.groupby("task_name").median().dropna()
-    if task_medians.empty:
-        return math.nan
-    return float(task_medians.median())
+    return submission_task.groupby("task_name").median().dropna()
+
+
+def task_balanced_median(df: pd.DataFrame, metric: str) -> float:
+    values = task_balanced_values(df, metric)
+    return float(values.median()) if not values.empty else math.nan
 
 
 def summarize_side(df: pd.DataFrame, spec: ComparisonSpec, side: str, shared_tasks: set[str]) -> dict[str, Any]:
@@ -674,10 +678,14 @@ def context_accumulation_trajectory_metrics(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def context_summary_row(group_type: str, group_name: str, group: pd.DataFrame) -> dict[str, Any]:
-    ratios = group["final_to_first_prompt_ratio"].dropna()
+    ratios = task_balanced_values(group, "final_to_first_prompt_ratio")
     return {
         "group_type": group_type,
         "group": group_name,
+        "ratio_aggregation": "hierarchical_source_submission_task",
+        "frequency_aggregation": "record_counts",
+        "ratio_tasks": len(ratios),
+        "source_submissions": group[SOURCE_SUBMISSION_ID].nunique(),
         "eligible_trajectories": int(group.shape[0]),
         "exact_sum_count": int(group["sum_matches_trajectory_prompt"].sum()),
         "exact_sum_pct": float(group["sum_matches_trajectory_prompt"].mean() * 100.0),
@@ -726,6 +734,10 @@ def summarize_context_accumulation(eligible: pd.DataFrame) -> pd.DataFrame:
     order = [
         "group_type",
         "group",
+        "ratio_aggregation",
+        "frequency_aggregation",
+        "ratio_tasks",
+        "source_submissions",
         "eligible_trajectories",
         "exact_sum_count",
         "exact_sum_pct",
@@ -863,14 +875,11 @@ def plot_input_context_distribution(eligible: pd.DataFrame, out: Path) -> None:
     distribution = []
     labels = []
     for scaffold in scaffold_order:
-        values = eligible.loc[
-            eligible["scaffold"].eq(scaffold),
-            "final_to_first_prompt_ratio",
-        ].dropna()
+        values = task_balanced_values(eligible[eligible["scaffold"].eq(scaffold)], "final_to_first_prompt_ratio")
         if values.empty:
             continue
         distribution.append(values.to_numpy())
-        labels.append(f"{scaffold_label(scaffold)} (n={len(values):,})")
+        labels.append(f"{scaffold_label(scaffold)} ({len(values):,} tasks)")
     ax_dist.boxplot(
         distribution,
         vert=False,
@@ -883,7 +892,7 @@ def plot_input_context_distribution(eligible: pd.DataFrame, out: Path) -> None:
         capprops={"color": PASS_COLOR},
     )
     ax_dist.axvline(1.0, color="#777777", linestyle="--", linewidth=1.0)
-    ax_dist.set_xlabel("Final-call input / first-call input")
+    ax_dist.set_xlabel("Submission-balanced task median of final / first call input")
     ax_dist.grid(axis="x", color="#E5E5E5", linewidth=0.8)
     ax_dist.set_xscale("symlog", linthresh=1.0)
     ax_dist.set_xlim(left=0)
@@ -934,11 +943,12 @@ def main() -> None:
     selected = select_rows_for_analysis(trajectories)
     print(f"Selected {selected.shape[0]:,} trajectories from {len(COMPARISONS)} clean model progressions.")
 
-    parsed = parse_raw_metrics(selected, args.trajectory_root, args.workers)
-    validation = validate_metrics(parsed)
-    comparisons = build_comparisons(parsed) if args.include_comparisons else None
     print(f"Scanning {trajectories.shape[0]:,} trajectories for expanded input-context accumulation.")
     parsed_all = parse_raw_metrics(trajectories, args.trajectory_root, args.workers)
+    parsed = parsed_all.merge(selected[["benchmark", "rel_path"]], on=["benchmark", "rel_path"],
+                              how="inner", validate="one_to_one")
+    validation = validate_metrics(parsed)
+    comparisons = build_comparisons(parsed) if args.include_comparisons else None
     all_context_eligible = context_accumulation_trajectory_metrics(parsed_all)
     context_summary = summarize_context_accumulation(all_context_eligible)
     audit = context_audit(parsed_all, all_context_eligible)

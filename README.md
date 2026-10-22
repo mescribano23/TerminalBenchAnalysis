@@ -681,14 +681,18 @@ RQ3.1 performance-over-version results remain descriptive. Because TB3.0 and TB4
 
 For the TB2.0 -> TB2.1 performance headline, use the RQ3.1 submission-balanced, task-weighted result consistently: 36.6304% -> 75.0782%, an increase of **38.45 percentage points**. Compute each submission-task pass rate, average equally across submissions within each task, and then average equally across the 89 tasks. The earlier **39.27 pp** result pools trajectories within each task before averaging across tasks (35.8213% -> 75.0943%); the fully pooled trajectory result is **39.05 pp** (36.0705% -> 75.1233%). These are different aggregations of the same 31,103 TB2.0 and 7,501 TB2.1 trajectories. Reserve 38.45 pp for the main task-weighted claim, and name the weighting whenever reporting an alternative. This describes changes in the observed submission populations, not the isolated effect of benchmark fixes on a fixed agent/model population.
 
-The retained TB2.0Ã¢â‚¬â€œTB2.1 pooled diagnostic tables use the following full-dataset medians:
+RQ3.3 uses hierarchical medians for every default descriptive estimate: take the
+median across trials within each source-submission/task pair, the median across
+source submissions within each task, then the median across tasks. Calculate
+ratios per trajectory before applying this hierarchy; do not divide aggregated
+character and token medians. Version comparisons use metric-valid shared tasks
+(89 TB2 tasks and 66 TB3/TB4 tasks). Configuration summaries use their available
+eligible tasks, whose counts are exported. Counts and coverage percentages are
+record-level diagnostics, not hierarchical estimates.
 
-- logged characters: 36,828 -> 46,348 (+25.8%)
-- reported total tokens: 213,974.5 -> 282,852 (+32.2%)
-
-RQ3.3 retains submission-balanced effort figures. `rq3_3_aggregation_diagnostics.csv` contains the pooled and hierarchical descriptive medians for both transitions, and the combined master statistical CSV contains the paired tests. Separate effort and figure-summary sidecars are optional. The task table first takes the median within
-each source-submission/task pair, then the median across submissions for each shared
-task, and finally summarizes paired task changes.
+`rq3_3_aggregation_diagnostics.csv` and `rq3_3_configuration_diagnostics.csv`
+contain only hierarchical descriptive estimates. The combined master statistical
+CSV contains paired tests. Separate effort and figure-summary sidecars are optional.
 
 The primary unit is the validated or explicitly reconstructed `source_submission_id`, consistently with RQ1 and RQ3.1. Use `--submission-unit leaderboard-url` only for the explicitly named URL sensitivity.
 
@@ -697,7 +701,7 @@ Select this hierarchy explicitly with `--task-weighting submission-balanced`
 median across all trials within each task/version, which gives submissions
 with more repeated trials more influence. New task-balanced summaries record
 the selected method in a `task_weighting` column. This option affects paired
-task summaries; pooled diagnostic CSVs retain their trajectory-level definition. Non-primary weighting modes write tables only.
+task summaries. Explicitly requested pooled sensitivity exports retain their trajectory-level definition. Non-primary weighting modes write tables only.
 
 The retained `effort_change_submission_balanced_*` figures provide the primary longitudinal evidence. Pooled figures and their older filename copies have been removed. Older figures remain recoverable from Git history. Both TB2 and TB3/TB4 figures use source-submission balancing.
 Optional comparisons require `--include-diagnostics` or `--include-sensitivities` and should write to separate output paths using
@@ -713,15 +717,14 @@ python -m scripts.analysis.longitudinal.10_analyze_character_token_usage
 This writes three CSVs under `data/processed_live/longitudinal/`:
 `rq3_3_aggregation_diagnostics.csv`, `rq3_3_configuration_diagnostics.csv`, and
 `rq3_3_reasoning_coverage.csv`. It writes no figures and does not refit models.
-The exports distinguish pooled full populations, pooled shared tasks, and the
-source-submission/task hierarchy. Ratios are calculated per trajectory before
+The default exports use the source-submission/task hierarchy throughout. Ratios are calculated per trajectory before
 aggregation; missing, zero, nonnumeric, negative, and nonfinite total-token
 counts are separate exclusion reasons. Counter completeness remains record-level
 coverage. The `primary_reasoning:` rows use complete explicit per-call usage or
 final-only totals, exclude inferred zeros, and use identical eligible trajectories
-for original and adjusted ratios. Their `pooled_trajectories` aggregation is the
-median of per-trajectory values, not a task-balanced estimate. Exact token
-reconciliation is a separate QC diagnostic.
+for original and adjusted ratios. Their aggregation is labeled
+`hierarchical_source_submission_task`. Exact token reconciliation is a separate
+QC diagnostic.
 
 For primary reasoning eligibility, every relevant agent step must report finite,
 nonnegative completion and reasoning counts, with reasoning no greater than
@@ -734,12 +737,12 @@ characters must be finite and nonnegative, and total minus reasoning must remain
 positive. All three measures use the same eligible population.
 
 The TB4.0 primary population is 13 configurations / 5,530 trajectories: 4,872 with
-complete per-call reporting and 658 with final-only totals. The pooled medians are:
+complete per-call reporting and 658 with final-only totals. The hierarchical medians are:
 
-| Configuration | Eligible trajectories | Reasoning / completion | Logged / total | Logged / (total - reasoning) |
-| --- | ---: | ---: | ---: | ---: |
-| Gemini 3.8 Flash / mini-swe-agent | 330 | 64.3% | 0.01031286 | 0.01035304 |
-| Claude Sonnet 5 / claude-code | 296 | 77.6% | 0.03464063 | 0.03512653 |
+| Configuration | Eligible trajectories | Tasks | Reasoning / completion | Logged / total | Logged / (total - reasoning) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Gemini 3.8 Flash / mini-swe-agent | 330 | 66 | 64.1% | 0.01053577 | 0.01059505 |
+| Claude Sonnet 5 / claude-code | 296 | 61 | 77.6% | 0.03469670 | 0.03541703 |
 
 Historical coverage on positive-completion calls is 4,941/4,947; 4,779 also
 reconcile call/final completion totals. The all-relevant-call rule excludes 69
@@ -748,20 +751,68 @@ unmetered steps). Among 4,872 primary per-call trajectories, 4,710 reconcile fin
 completion totals; the remaining 162 stay eligible. Full explicit text-plus-reasoning
 decomposition exists in 659 eligible trajectories and reconciles in all 659.
 
-Compute `R/C`, `L/T`, and `L/(T-R)` per trajectory before taking configuration
-medians; `L = message_chars + reasoning_chars + observation_chars`. Token totals
+Compute `R/C`, `L/T`, and `L/(T-R)` per trajectory before taking hierarchical
+configuration medians; `L = message_chars + reasoning_chars + observation_chars`. Token totals
 prefer final metrics, with the existing summed-step fallback. Missing character
 components invalidate the sum. Logged characters can contain repeated text and
 serialized observation wrappers, so they are not unique readable prose.
 
-The longitudinal comparisons retain the source-submission/task hierarchy over
-89 shared TB2 tasks and 66 shared TB3/TB4 tasks. The hierarchical TB3/TB4
-logged-character/total-token ratio is 0.0508 -> 0.0558 (+9.7%); the pooled
-0.0558 -> 0.0534 values use different weighting. Muse Spark's pooled
-0.195 -> 0.480 adjustment concerns message characters / completion tokens;
-its all-logged-character / total-token adjustment is 0.0906 -> 0.0914.
-Known-elision increases of 64.3% (pooled) and 91.7% (hierarchical) within TB4
-mini-swe-agent are also different aggregations of the same records.
+The hierarchical TB3/TB4 logged-character/total-token ratio is 0.0508 -> 0.0558
+(+9.7%), versus 0.1808 -> 0.1704 (-5.8%) for TB2.0/TB2.1. The main effort
+figures, paired tests, shared-configuration token comparisons, and Astra-removal
+results already used the hierarchy and retain their validated values.
+
+Manuscript changes needed when replacing pooled descriptive estimates:
+
+- Prompt growth: replace the pooled final/first median **9.48x** with the
+  hierarchical median **10.71x** (34,463 trajectories / 82 sources / 89 tasks).
+  The observed frequency **34,139/34,463 (99.06%)** remains a record count.
+- TB2 mini-swe-agent reasoning shares: GPT-5 **77.7%** (432 trajectories / 89 tasks)
+  and GPT-5-mini **71.0%** (434 / 89), replacing 78.5% and 70.9%.
+- Muse Spark 1.1 (445 / 89): message/completion **0.1880 -> 0.4732** after
+  removing reported per-call reasoning; reasoning/completion **56.9%**. Name the
+  numerator and denominator explicitly. Logged/total is **0.0842 -> 0.0859**.
+- Known mini-swe-agent elision on the main comparison task sets: logged/total
+  **0.1704 -> 0.1734** in TB2.1, **0.0508 -> 0.0508** in TB3.0, and
+  **0.0558 -> 0.0584** in TB4.0. Within TB4 mini-swe-agent, hierarchical logged
+  characters rise from **213,768.75 to 409,845.75 (+91.7%)**, replacing +64.3%.
+- TB2.1 configuration logged/total ratios: GPT-5.5 **0.3511** with Terminus-2
+  versus **0.0831** with Codex; Gemini 3.1 Pro **0.4815** with Terminus-2 versus
+  **0.0649** with Gemini CLI.
+- Replace the TB3/TB4 ratio range 0.053--0.056 with the explicit paired comparison
+  **0.0508 -> 0.0558**. The corresponding TB2 range is **0.1704--0.1808**.
+- TB4 reasoning examples: Gemini **64.1%, 0.0105 -> 0.0106** (330 / 66);
+  Sonnet **77.6%, 0.0347 -> 0.0354** (296 / 61). These changes from the latest
+  pooled exports reflect weighting only; the eligible populations are unchanged.
+  The older 78.0%, 0.0407 -> 0.0431 Sonnet claim also used a different population.
+
+Monthly token/text summaries and prompt-growth ratio summaries use the same
+hierarchy within their descriptive cohorts. Their task support and configuration
+composition can vary over time. Prompt-growth quartiles and boxplots summarize
+submission-balanced task medians; plot sample labels count tasks. Growth and
+reconciliation frequencies are explicitly labeled `record_counts`.
+
+Manuscript-ready method wording:
+
+> We report hierarchical medians throughout: we first take the median across
+> trials within each source-submission/task pair, then across source submissions
+> within each task, and finally across tasks. Ratios are computed per trajectory
+> before aggregation. Version comparisons use metric-valid shared tasks;
+> configuration-level summaries use their available eligible tasks. Telemetry
+> coverage and accounting-quality frequencies are reported as record counts.
+
+Manuscript-ready TB4 reasoning wording:
+
+> In TB4.0, reasoning telemetry is exposed by 13 model-scaffold configurations
+> covering 5,605 trajectories. We retain 5,530 trajectories with complete explicit
+> per-call counters or valid final-only totals. The hierarchical median share of
+> reasoning tokens in completion usage is 64.1% for Gemini 3.8 Flash with
+> mini-swe-agent (330 trajectories, 66 tasks) and 77.6% for Claude Sonnet 5 with
+> claude-code (296 trajectories, 61 tasks). Excluding reported reasoning tokens
+> changes their hierarchical median logged-character/total-token ratios from
+> 0.0105 to 0.0106 and from 0.0347 to 0.0354, respectively. Original and adjusted
+> ratios use identical eligible trajectories. Completion-token reconciliation
+> is a separate quality-control diagnostic, not an inclusion requirement.
 
 The statistical builder computes effort summaries directly from the retained
 trajectory datasets. It does not require intermediate effort CSVs. Use
@@ -779,7 +830,7 @@ The longitudinal analyses use different denominators depending on which fields a
 
 The prompt-growth analysis excludes 4,141 trajectories: 3,742 lack the required per-call coverage and 399 have a zero first recorded count. These exclusions apply only to this analysis; other analyses retain their own metric-specific populations.
 
-For RQ3.3, **34,139 of 34,463 eligible trajectories (99.06%)** have a strictly larger last recorded prompt-token count than their first. The positive-first-count rule applies consistently to both growth frequencies and first-to-last ratios. Intermediate calls need not increase monotonically. Agreement between the per-call sum and trajectory prompt total is a diagnostic, not an inclusion gate; it holds for 33,155/34,463 (96.20%). The results record this single population in `token_accounting/input_context_growth_summary.csv` and its coverage in `token_accounting/input_context_audit.json`.
+For RQ3.3, **34,139 of 34,463 eligible trajectories (99.06%)** have a strictly larger last recorded prompt-token count than their first. The hierarchical median final/first ratio is **10.71x** across 89 tasks after balancing trials and source submissions (82 sources); the previous pooled median was 9.48x. The positive-first-count rule applies consistently to both growth frequencies and first-to-last ratios. Intermediate calls need not increase monotonically. Agreement between the per-call sum and trajectory prompt total is a diagnostic, not an inclusion gate; it holds for 33,155/34,463 (96.20%). The results record this single population in `token_accounting/input_context_growth_summary.csv` and its coverage in `token_accounting/input_context_audit.json`.
 
 RQ3.1 groups tasks by the official release documentation: 28 release-fixed / 61 not listed as fixed for TB2.0?TB2.1, and 19 release-fixed / 47 not listed as fixed among the 66 shared TB3.0?TB4.0 tasks. The eight officially removed tasks exactly match the local TB3.0-only tasks and are excluded from paired inference. TB4.0 calibrates resources for all retained tasks, so ?not listed as fixed? does not establish unchanged environments, verifiers, or resources.
 

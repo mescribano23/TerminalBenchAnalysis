@@ -246,8 +246,6 @@ def build_effort_inference() -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for transition, source, old_version, new_version, expected_tasks in specs:
         trajectories = effort_module.load_trajectories(source, submission_unit="source")
-        pooled, _ = effort_module.summarize_periods(trajectories, old_version, new_version)
-        pooled = pooled.set_index("key")
         for metric in effort_module.METRICS:
             key = str(metric["key"])
             if key not in primary_metrics:
@@ -260,7 +258,6 @@ def build_effort_inference() -> pd.DataFrame:
                 raise ValueError(f"{transition} {key} expected {expected_tasks} task pairs, found {len(pairs)}.")
             differences = pairs[new_version] - pairs[old_version]
             stats = paired_summary(differences)
-            headline = pooled.loc[key]
             rows.append(
                 {
                     "transition": transition,
@@ -268,10 +265,6 @@ def build_effort_inference() -> pd.DataFrame:
                     "task_weighting": "submission-balanced",
                     "submission_unit": "source",
                     "eligible_tasks": stats["n"],
-                    "old_headline_median": float(headline["early_value"]),
-                    "new_headline_median": float(headline["late_value"]),
-                    "reported_percentage_change": float(headline["relative_change_pct"]),
-                    "headline_aggregation": "pooled trajectories; descriptive only",
                     "old_task_balanced_median": float(pairs[old_version].median()),
                     "new_task_balanced_median": float(pairs[new_version].median()),
                     "task_balanced_median_change_pct": float((pairs[new_version].median() / pairs[old_version].median() - 1) * 100),
@@ -555,7 +548,7 @@ def build_report(
         "",
         "## Analysis methods",
         "",
-        "Primary RQ3.1, RQ3.2 and RQ3.3 aggregation uses resolved source_submission_id values, consistently with RQ1. RQ3.3 takes medians within source submission-task pairs, medians across submissions within tasks, then compares paired shared tasks. Leaderboard-URL grouping is retained as an explicit sensitivity analysis. RQ2.1 and RQ2.2 now use the same actual source submission unit; RQ2.3 retains trajectory use/non-use cells with at least three trajectories per cell. Configuration fingerprints are separate from source submission identity. Historical scraped dates are preserved; their submission/publication semantics remain unverified. Only source-submission-balanced RQ3.3 effort figures are retained; pooled trajectory medians remain descriptive diagnostics in CSV tables.",
+        "Primary RQ3.1, RQ3.2 and RQ3.3 aggregation uses resolved source_submission_id values, consistently with RQ1. RQ3.3 takes medians within source submission-task pairs, medians across submissions within tasks, then compares paired shared tasks. Leaderboard-URL grouping is retained as an explicit sensitivity analysis. RQ2.1 and RQ2.2 now use the same actual source submission unit; RQ2.3 retains trajectory use/non-use cells with at least three trajectories per cell. Configuration fingerprints are separate from source submission identity. Historical scraped dates are preserved; their submission/publication semantics remain unverified. All default RQ3.3 descriptive estimates use hierarchical medians: trials within source-submission/task, submissions within task, then tasks. Ratios are formed per trajectory before aggregation. Coverage and accounting-quality frequencies remain explicitly labeled record counts.",
         "",
         "RQ1.3 remains a descriptive Pareto analysis. RQ2.2 agent durations and human completion-time estimates measure different constructs and are compared descriptively, without hypothesis tests or standardized effect sizes. The media comparison is post-hoc exploratory. RQ3.2 composition analyses and exact shared-configuration token comparisons remain descriptive. Cost is not a current longitudinal headline metric and its incomplete, configuration-dependent coverage does not support adding a primary RQ3.3 test. No confidence intervals, multiplicity correction, or extra subgroup tests were added.",
         "",
@@ -617,7 +610,7 @@ def build_report(
         lines.append(f"- Official release-fix comparison, {row.transition}: release-fixed tasks improved by {row.mean_improvement_changed_pp:.2f} pp on average (median {row.median_improvement_changed_pp:.2f}) versus {row.mean_improvement_unchanged_pp:.2f} pp (median {row.median_improvement_unchanged_pp:.2f}) for tasks not listed as fixed; between-group mean difference = {row.raw_difference_in_mean_improvement_pp:.2f} pp, Cliff's delta = {num(row.cliffs_delta)}, U = {num(row.mann_whitney_u, 1)}, p = {p_text(row.p_value)} (n = {row.n_changed}/{row.n_unchanged}).")
     lines.extend(["", "### RQ3.3", ""])
     for row in effort.itertuples(index=False):
-        lines.append(f"- {row.transition}, {METRIC_LABELS.get(row.metric, row.metric)}: source-submission-balanced shared-task medians {row.old_task_balanced_median:.3g} -> {row.new_task_balanced_median:.3g} ({row.task_balanced_median_change_pct:+.1f}% ratio of cross-task medians); mean/median paired task delta = {row.mean_paired_task_difference:.3g}/{row.median_paired_task_difference:.3g}, r_rb = {num(row.rank_biserial, 9)}, W = {num(row.wilcoxon_statistic, 1)}, p = {p_text(row.p_value)} (n = {row.eligible_tasks}). Refreshed pooled trajectory medians are descriptive only: {row.old_headline_median:.3g} -> {row.new_headline_median:.3g} ({row.reported_percentage_change:+.1f}%).")
+        lines.append(f"- {row.transition}, {METRIC_LABELS.get(row.metric, row.metric)}: source-submission-balanced shared-task medians {row.old_task_balanced_median:.3g} -> {row.new_task_balanced_median:.3g} ({row.task_balanced_median_change_pct:+.1f}% ratio of cross-task medians); mean/median paired task delta = {row.mean_paired_task_difference:.3g}/{row.median_paired_task_difference:.3g}, r_rb = {num(row.rank_biserial, 9)}, W = {num(row.wilcoxon_statistic, 1)}, p = {p_text(row.p_value)} (n = {row.eligible_tasks}).")
     increases = int(configs["percentage_change"].gt(0).sum())
     lines.extend([
         "", "### Shared TB3.0/TB4.0 configurations (descriptive)", "",

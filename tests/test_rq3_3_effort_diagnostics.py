@@ -44,7 +44,8 @@ class EstimandTests(unittest.TestCase):
         g = result[result.metric.eq("step_count")].set_index("aggregation")
         self.assertEqual(g.loc["hierarchical_shared_tasks", "old_value"], 104.5)
         self.assertEqual(g.loc["hierarchical_shared_tasks", "new_value"], 102.5)
-        self.assertEqual(g.loc["pooled_shared_tasks", "old_value"], 5)
+        self.assertEqual(set(g.index), {"hierarchical_shared_tasks"})
+        self.assertEqual(diag.median(frame[frame.benchmark_version.eq("2.0")], "step_count", False), 5)
         self.assertEqual(g.loc["hierarchical_shared_tasks", "old_source_submission_task_pairs"], 6)
         self.assertEqual(g.loc["hierarchical_shared_tasks", "old_source_submissions"], 3)
         self.assertEqual(g.loc["hierarchical_shared_tasks", "old_valid_trajectories"], 10)
@@ -112,6 +113,44 @@ class EstimandTests(unittest.TestCase):
     def test_accounting_comparisons_keep_submission_level(self):
         frame = fixture().query("benchmark_version == '2.0'")
         self.assertEqual(accounting.task_balanced_median(frame, "step_count"), 104.5)
+
+    def test_configuration_exports_balance_sources_and_tasks(self):
+        frame = load_fixture(fixture()).query("benchmark_version == '2.0'")
+        rows = diag.configuration_rows(frame, "fixture", {"step_count": ("steps", "none")}, scope="fixture")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["aggregation"], "hierarchical_source_submission_task")
+        self.assertEqual(rows[0]["value"], 104.5)
+        self.assertEqual(rows[0]["valid_trajectories"], 10)
+
+    def test_monthly_metrics_balance_sources_and_tasks(self):
+        frame = load_fixture(fixture()).query("benchmark_version == '2.0'").copy()
+        frame["submission_month"] = pd.Timestamp("2026-01-01")
+        with patch.object(accounting, "MIN_RELIABLE_MONTH_TRAJECTORIES", 1):
+            monthly, baseline = accounting.build_monthly_token_text_summary(frame)
+        self.assertEqual(monthly.iloc[0].aggregation, "hierarchical_source_submission_task")
+        self.assertEqual(baseline.trajectory_n, 10)
+        for metric in ["prompt_tokens", "completion_tokens", "total_tokens", "logged_chars"]:
+            self.assertEqual(baseline[f"median_{metric}"], 104.5)
+            self.assertEqual(baseline[f"indexed_{metric}"], 100)
+
+    def test_context_ratio_quantiles_balance_tasks_and_keep_record_counts(self):
+        frame = load_fixture(fixture()).query("benchmark_version == '2.0'").copy()
+        frame["final_to_first_prompt_ratio"] = frame.step_count
+        for column in ["sum_matches_trajectory_prompt", "last_gt_first", "mostly_increasing"]:
+            frame[column] = True
+            frame.loc[frame.index[0], column] = False
+        row = accounting.context_summary_row("overall", "overall", frame)
+        self.assertEqual(row["median_final_first_ratio"], 104.5)
+        self.assertEqual(row["q1_final_first_ratio"], 56.75)
+        self.assertEqual(row["q3_final_first_ratio"], 152.25)
+        self.assertEqual(row["ratio_tasks"], 2)
+        self.assertEqual(row["source_submissions"], 3)
+        self.assertEqual(row["last_gt_first_pct"], 90)
+        self.assertEqual(row["frequency_aggregation"], "record_counts")
+        repeated = pd.concat([frame, frame[frame[diag.SID].str.endswith("source0")]])
+        again = accounting.context_summary_row("overall", "overall", repeated)
+        self.assertEqual(again["median_final_first_ratio"], row["median_final_first_ratio"])
+        self.assertEqual(again["q1_final_first_ratio"], row["q1_final_first_ratio"])
 
 
 class RawCoverageTests(unittest.TestCase):
@@ -241,7 +280,7 @@ class ReasoningEligibilityTests(unittest.TestCase):
         self.assertEqual(coverage.iloc[0].calls_failing_text_plus_reasoning_reconciliation, 1)
         self.assertEqual(coverage.iloc[0].eligible_full_text_accounting_reconciles, 1)
         out = pd.DataFrame(rows)
-        primary = out[out.diagnostic.str.startswith("primary_reasoning:") & out.aggregation.eq("pooled_trajectories")]
+        primary = out[out.diagnostic.str.startswith("primary_reasoning:") & out.aggregation.eq("hierarchical_source_submission_task")]
         self.assertEqual(set(primary.valid_trajectories), {2})
         self.assertAlmostEqual(primary.set_index("metric").loc["reasoning_share_of_completion", "value"], (0.5 + 5/12)/2)
 
@@ -295,13 +334,13 @@ class ReasoningEligibilityTests(unittest.TestCase):
                 expected = total == 100
                 self.assertEqual(bool(merged.reasoning_eligible.iloc[0]), expected)
                 primary = [r for r in rows if r["diagnostic"].startswith("primary_reasoning:")]
-                self.assertEqual(len(primary), 6 if expected else 0)
+                self.assertEqual(len(primary), 3 if expected else 0)
                 if expected:
-                    pooled = {r["metric"]: r for r in primary if r["aggregation"] == "pooled_trajectories"}
-                    self.assertEqual({r["valid_trajectories"] for r in pooled.values()}, {1})
-                    self.assertAlmostEqual(pooled["logged_chars_per_total_token"]["value"], .2)
-                    self.assertAlmostEqual(pooled["logged_chars_per_nonreason_total_token"]["value"], 20/90)
-                    self.assertEqual(pooled["reasoning_share_of_completion"]["value"], 1)
+                    balanced = {r["metric"]: r for r in primary if r["aggregation"] == "hierarchical_source_submission_task"}
+                    self.assertEqual({r["valid_trajectories"] for r in balanced.values()}, {1})
+                    self.assertAlmostEqual(balanced["logged_chars_per_total_token"]["value"], .2)
+                    self.assertAlmostEqual(balanced["logged_chars_per_nonreason_total_token"]["value"], 20/90)
+                    self.assertEqual(balanced["reasoning_share_of_completion"]["value"], 1)
 
 
 class CanonicalExportTests(unittest.TestCase):
@@ -378,21 +417,34 @@ class CanonicalExportTests(unittest.TestCase):
         self.assertEqual(tb4.explicit_complete_but_primary_ineligible.sum(), 69)
         self.assertEqual(tb4.eligible_per_call_and_completion_totals_reconcile.sum(), 4710)
         exported = pd.read_csv(diag.LONG / "rq3_3_configuration_diagnostics.csv")
+        self.assertEqual(set(exported.aggregation), {"hierarchical_source_submission_task"})
         primary = exported[exported.diagnostic.str.startswith("primary_reasoning:") &
-                           exported.aggregation.eq("pooled_trajectories")]
+                           exported.aggregation.eq("hierarchical_source_submission_task")]
         self.assertEqual(len(primary), 39)
         self.assertTrue(primary.groupby("diagnostic").valid_trajectories.nunique().eq(1).all())
         metrics = ["reasoning_share_of_completion", "logged_chars_per_total_token",
                    "logged_chars_per_nonreason_total_token"]
         for config, n, expected in [
             ("mini-swe-agent/gemini-3.8-flash", 330,
-             [.6433466809601105, .010312857749416687, .010353040264788047]),
+             [.6413889352866167, .010535774651214693, .010595054887756913]),
             ("claude-code/claude-sonnet-5", 296,
-             [.7761525458335765, .03464063490482088, .035126525726855415]),
+             [.7756188273720473, .034696700464658, .0354170331059935]),
         ]:
             rows = primary[primary.diagnostic.eq("primary_reasoning:" + config)].set_index("metric")
             self.assertTrue(rows.valid_trajectories.eq(n).all())
             np.testing.assert_allclose(rows.loc[metrics, "value"], expected, rtol=1e-13)
+
+    def test_context_export_has_hierarchical_ratios_and_separate_frequencies(self):
+        summary = pd.read_csv(diag.LONG / "token_accounting/input_context_growth_summary.csv")
+        row = summary[summary.group_type.eq("overall")].iloc[0]
+        self.assertEqual(row.ratio_aggregation, "hierarchical_source_submission_task")
+        self.assertEqual(row.frequency_aggregation, "record_counts")
+        self.assertEqual(row.eligible_trajectories, 34463)
+        self.assertEqual(row.ratio_tasks, 89)
+        self.assertEqual(row.source_submissions, 82)
+        self.assertEqual(row.last_gt_first_count, 34139)
+        self.assertEqual(row.exact_sum_count, 33155)
+        self.assertAlmostEqual(row.median_final_first_ratio, 10.705941750978)
 
 
 if __name__ == "__main__":

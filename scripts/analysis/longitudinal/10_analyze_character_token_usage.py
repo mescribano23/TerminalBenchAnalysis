@@ -29,7 +29,6 @@ METRICS.update({
     "logged_chars_positive_total": "Logged characters among finite positive total-token records",
     "logged_chars_per_total_token": "Per-trajectory logged characters / finite positive total tokens",
 })
-METHODS = ("pooled_all_retained", "pooled_shared_tasks", "hierarchical_shared_tasks")
 
 
 def token_status(values: pd.Series) -> pd.Series:
@@ -100,18 +99,17 @@ def version_comparisons(df: pd.DataFrame, old: str, new: str) -> pd.DataFrame:
     for metric, definition in METRICS.items():
         pairs = effort.task_metric_pairs(df, metric).dropna(subset=[old, new])
         matched = shared & set(pairs.index)
-        for method in METHODS:
-            pop = df if method == "pooled_all_retained" else df[df.task_name.isin(matched)]
-            earlier, later = [pop[pop.benchmark_version.eq(v)] for v in [old, new]]
-            a, b = [median(g, metric, method == "hierarchical_shared_tasks") for g in [earlier, later]]
-            row = {"transition": f"{old}->{new}", "metric": metric, "definition": definition,
-                   "aggregation": method, "submission_unit": SID if method.startswith("hierarchical") else "trajectory",
-                   "old_version": old, "new_version": new, "old_value": a, "new_value": b,
-                   "percentage_change": percentage(a, b), "expected_shared_tasks": len(shared),
-                   "metric_paired_tasks": len(matched), "dropped_shared_tasks": ";".join(sorted(shared - matched))}
-            for prefix, g in [("old", earlier), ("new", later)]:
-                row.update({f"{prefix}_{k}": v for k, v in counts(g, metric).items()})
-            rows.append(row)
+        pop = df[df.task_name.isin(matched)]
+        earlier, later = [pop[pop.benchmark_version.eq(v)] for v in [old, new]]
+        a, b = [median(g, metric, True) for g in [earlier, later]]
+        row = {"transition": f"{old}->{new}", "metric": metric, "definition": definition,
+               "aggregation": "hierarchical_shared_tasks", "submission_unit": SID,
+               "old_version": old, "new_version": new, "old_value": a, "new_value": b,
+               "percentage_change": percentage(a, b), "expected_shared_tasks": len(shared),
+               "metric_paired_tasks": len(matched), "dropped_shared_tasks": ";".join(sorted(shared - matched))}
+        for prefix, g in [("old", earlier), ("new", later)]:
+            row.update({f"{prefix}_{k}": v for k, v in counts(g, metric).items()})
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -122,14 +120,13 @@ def configuration_rows(df: pd.DataFrame, diagnostic: str, metrics: dict[str, tup
         return []
     rows = []
     for metric, (numerator, denominator) in metrics.items():
-        for hierarchical in [False, True]:
-            row = {"diagnostic": diagnostic, "benchmark_version": df.benchmark_version.iloc[0],
-                   "scope": scope, "metric": metric, "numerator": numerator, "denominator": denominator,
-                   "aggregation": "hierarchical_source_submission_task" if hierarchical else "pooled_trajectories",
-                   "value": median(df, metric, hierarchical), **counts(df, metric)}
-            row["population_trajectories"] = population_n if population_n is not None else len(df)
-            row["valid_trajectory_share_pct"] = row["valid_trajectories"] / row["population_trajectories"] * 100
-            rows.append(row)
+        row = {"diagnostic": diagnostic, "benchmark_version": df.benchmark_version.iloc[0],
+               "scope": scope, "metric": metric, "numerator": numerator, "denominator": denominator,
+               "aggregation": "hierarchical_source_submission_task",
+               "value": median(df, metric, True), **counts(df, metric)}
+        row["population_trajectories"] = population_n if population_n is not None else len(df)
+        row["valid_trajectory_share_pct"] = row["valid_trajectories"] / row["population_trajectories"] * 100
+        rows.append(row)
     return rows
 
 
