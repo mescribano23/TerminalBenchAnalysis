@@ -37,9 +37,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def thesis_style() -> None:
-    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9,
-        "axes.titlesize": 10, "axes.labelsize": 9, "xtick.labelsize": 8,
-        "ytick.labelsize": 8, "legend.fontsize": 8, "axes.spines.top": False,
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 15,
+        "axes.titlesize": 15, "axes.labelsize": 15, "xtick.labelsize": 14,
+        "ytick.labelsize": 14, "legend.fontsize": 14, "axes.spines.top": False,
         "axes.spines.right": False, "figure.facecolor": "white", "axes.facecolor": "white"})
 
 
@@ -54,7 +54,7 @@ def annotate_bar(ax: plt.Axes, bar: plt.Rectangle, value: float) -> None:
         f"{one_decimal(value)}%",
         ha="center",
         va="bottom",
-        fontsize=8,
+        fontsize=14,
         color="#333333",
     )
 
@@ -70,14 +70,14 @@ def plot_pair_panel(
 ) -> None:
     plot_df = summary.copy()
     plot_df["plot_label"] = [
-        f"All\n(n={int(row.n_tasks)})"
+        "All shared tasks"
         if row.task_set == "all_tasks"
-        else f"{row.label}\n(n={int(row.n_tasks)})"
+        else row.label
         for row in plot_df.itertuples(index=False)
     ]
-    bar_width = 0.18
-    gap = 0.0
-    group_spacing = 3.2 * bar_width
+    bar_width = 0.30
+    gap = 0.04
+    group_spacing = 1.15
     x = np.arange(plot_df.shape[0]) * group_spacing
     old_values = plot_df["old_pass_rate"].astype(float).to_numpy()
     new_values = plot_df["new_pass_rate"].astype(float).to_numpy()
@@ -104,13 +104,15 @@ def plot_pair_panel(
         annotate_bar(ax, bar, value)
     ax.set_xticks(x)
     ax.set_xticklabels(plot_df["plot_label"])
-    ax.set_xlim(x[0] - 2 * bar_width, x[-1] + 2 * bar_width)
+    ax.set_xlim(x[0] - 0.65, x[-1] + 0.65)
+    ax.set_ylabel("Task-weighted pass rate")
+    ax.tick_params(axis="x", length=0, pad=10)
     ax.set_ylim(0, 100)
     ax.yaxis.set_major_locator(mticker.MultipleLocator(20))
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=100, decimals=0))
     ax.grid(axis="y", color="#D0D0D0", alpha=0.55, linewidth=0.7)
     ax.set_axisbelow(True)
-    ax.legend(frameon=False, ncol=2, loc="upper left", bbox_to_anchor=(0.0, 1.0), handlelength=1.2)
+    ax.legend(frameon=False, ncol=2, loc="upper right", handlelength=1.2)
 
 
 def plot_four_version_robustness(
@@ -119,7 +121,10 @@ def plot_four_version_robustness(
     out: Path,
 ) -> None:
     thesis_style()
-    fig, axes = plt.subplots(1, 2, figsize=(10.2, 3.1), sharey=True)
+    # Stack panels so labels remain legible at manuscript page width.
+    fig, axes = plt.subplots(2, 1, figsize=(8.4, 6.4), sharey=True,
+                             layout="constrained")
+    fig.get_layout_engine().set(h_pad=0.12, hspace=0.06)
 
     tb2_panel = tb2_summary.rename(
         columns={"tb2_0_pass_rate": "old_pass_rate", "tb2_1_pass_rate": "new_pass_rate"}
@@ -142,9 +147,7 @@ def plot_four_version_robustness(
         TB3_0_COLOR,
         TB4_0_COLOR,
     )
-    axes[0].set_ylabel("Task-weighted pass rate (%)")
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout(w_pad=0.8)
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
