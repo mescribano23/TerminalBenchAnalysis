@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 import pandas as pd
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SUBMISSION_ID = "source_submission_id"
 DATE_SEMANTICS = "historical_leaderboard_metadata.date; submission/publication semantics unverified"
 IDENTITY_FIELDS = [
@@ -36,7 +37,11 @@ def source_id(benchmark: str, url: str) -> str:
 class SourceResolver:
     def __init__(self, benchmark: str, leaderboard_path: Path, trials_path: Path):
         self.benchmark = benchmark
-        self.source_file = leaderboard_path.as_posix()
+        # Public provenance must not expose the local user's directory names.
+        try:
+            self.source_file = leaderboard_path.resolve().relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            self.source_file = leaderboard_path.name
         self.entries = json.loads(leaderboard_path.read_text(encoding="utf-8"))
         self.public = [x for x in self.entries if x.get("has_trajectories")]
         self.by_config = {}
