@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from scripts.analysis.plot_style import HEATMAP_DPI, LOW_GOOD_CMAP, colorblind_cmap, heatmap_text_color
+from scripts.analysis.plot_style import HEATMAP_DPI, LOW_GOOD_CMAP, colorblind_cmap, heatmap_text_color, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -315,13 +315,13 @@ def plot_effort_lift_heatmap(
         )
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(14.5, figure_height(len(lift)) - 0.35))
+    fig, ax = plt.subplots(figsize=(14.5, max(5.8, figure_height(len(lift)) - 0.35)))
     cmap = colorblind_cmap(LOW_GOOD_CMAP)
     matrix = np.ma.masked_invalid(lift.to_numpy(dtype=float))
     image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0.4, vmax=2.4)
 
     ax.set_xticks(range(len(lift.columns)))
-    ax.set_xticklabels(lift.columns, rotation=35, ha="right")
+    ax.set_xticklabels([textwrap.fill(str(label), width=16) for label in lift.columns], rotation=35, ha="right")
     ax.set_yticks(range(len(row_labels)))
     ax.set_yticklabels(row_labels)
     ax.set_xlabel("Effort metric")
@@ -341,22 +341,23 @@ def plot_effort_lift_heatmap(
                 f"{lift_value:.1f}x\n{format_heatmap_value(median_value, variable)}",
                 ha="center",
                 va="center",
-                fontsize=8.5,
+                fontsize=9.5,
                 color=text_color,
             )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
-    colorbar.set_label("Median effort lift vs global median (green=lower, red=higher)")
+    colorbar.set_label("Median effort lift vs global median\n(green=lower, red=higher)")
     fig.text(
         0.5,
         0.015,
         "Cell text shows lift versus global median, then raw median value. Rows are ordered by task coverage.",
-        fontsize=9,
+        fontsize=9.5,
         ha="center",
-        va="top",
+        va="bottom",
     )
-    fig.tight_layout(rect=(0, 0.06, 1, 1))
-    fig.savefig(path, dpi=HEATMAP_DPI)
+    paper_axis_labels(fig)
+    fig.tight_layout(rect=(0, 0.10, 1, 1))
+    save_paper_figure(fig, path, dpi=HEATMAP_DPI, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -398,6 +399,7 @@ def write_outputs(
 
 
 def main() -> None:
+    thesis_style()
     args = parse_args()
     trajectories = load_trajectories(args.trajectories)
     task_tags = load_task_tags(args.task_tags)

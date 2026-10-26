@@ -15,7 +15,7 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 
-from scripts.analysis.plot_style import PASS_COLOR
+from scripts.analysis.plot_style import PASS_COLOR, paper_axis_labels, save_paper_figure
 from scripts.analysis.longitudinal.official_release_changes import (
     ROOT, LONG, EXPECTED, add_release_status, build_release_summary,
 )
@@ -148,7 +148,8 @@ def plot_four_version_robustness(
         TB4_0_COLOR,
     )
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    paper_axis_labels(fig)
+    save_paper_figure(fig, out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 

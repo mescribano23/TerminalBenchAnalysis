@@ -17,7 +17,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
-from scripts.analysis.plot_style import FAIL_COLOR, PASS_COLOR
+from scripts.analysis.plot_style import FAIL_COLOR, PASS_COLOR, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -63,25 +63,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def thesis_style() -> None:
-    plt.rcParams.update(
-        {
-            "font.size": 9,
-            "axes.titlesize": 10,
-            "axes.labelsize": 9,
-            "xtick.labelsize": 8,
-            "ytick.labelsize": 8,
-            "legend.fontsize": 8,
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "figure.dpi": 120,
-        }
-    )
-
-
 def save_png(fig: plt.Figure, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=300, bbox_inches="tight")
+    save_paper_figure(fig, path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -294,6 +278,7 @@ def plot_difficulty(df: pd.DataFrame, path: Path) -> None:
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b\n%Y"))
     ax.grid(axis="y", alpha=0.2)
     ax.legend(frameon=False, loc="best")
+    paper_axis_labels(fig)
     fig.tight_layout()
     save_png(fig, path)
 
@@ -312,6 +297,8 @@ def plot_category(summary: pd.DataFrame, path: Path, max_categories: int) -> Non
     ax.set_xlabel("TB2.1 - TB2.0 pass-rate change (percentage points)")
     ax.set_ylabel("")
     ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f pp"))
+    paper_axis_labels(fig)
+    fig.tight_layout()
     save_png(fig, path)
 
 

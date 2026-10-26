@@ -63,7 +63,7 @@ PARETO_METRICS = [
         "task_count_col": "total_tokens_task_count",
         "status_col": "token_pareto",
         "figure_name": "rq1_3_configuration_token_pareto.png",
-        "xlabel": "Task-balanced median total tokens",
+        "xlabel": "Task-weighted median total tokens",
         "title": "RQ1.3 configuration efficiency: token Pareto frontier",
         "formatter": "count",
         "label_domination": True,
@@ -75,7 +75,7 @@ PARETO_METRICS = [
         "task_count_col": "duration_seconds_task_count",
         "status_col": "duration_pareto",
         "figure_name": "rq1_3_configuration_duration_pareto.png",
-        "xlabel": "Task-balanced median duration",
+        "xlabel": "Task-weighted median duration",
         "title": "RQ1.3 configuration efficiency: duration Pareto frontier",
         "formatter": "duration",
         "label_domination": True,
@@ -87,7 +87,7 @@ PARETO_METRICS = [
         "task_count_col": "step_count_task_count",
         "status_col": "steps_pareto",
         "figure_name": "rq1_3_configuration_steps_pareto.png",
-        "xlabel": "Task-balanced median steps",
+        "xlabel": "Task-weighted median steps",
         "title": "RQ1.3 configuration efficiency: step-count Pareto frontier",
         "formatter": "count",
         "label_domination": False,
@@ -99,7 +99,7 @@ PARETO_METRICS = [
         "task_count_col": "shell_invocation_count_task_count",
         "status_col": "shell_invocations_pareto",
         "figure_name": "rq1_3_configuration_shell_invocations_pareto.png",
-        "xlabel": "Task-balanced median shell invocations",
+        "xlabel": "Task-weighted median shell invocations",
         "title": "RQ1.3 configuration efficiency: shell-invocation Pareto frontier",
         "formatter": "count",
         "label_domination": False,
@@ -111,7 +111,7 @@ PARETO_METRICS = [
         "task_count_col": "tool_call_count_task_count",
         "status_col": "tool_calls_pareto",
         "figure_name": "rq1_3_configuration_tool_calls_pareto.png",
-        "xlabel": "Task-balanced median tool calls",
+        "xlabel": "Task-weighted median tool calls",
         "title": "RQ1.3 configuration efficiency: tool-call Pareto frontier",
         "formatter": "count",
         "label_domination": False,
@@ -123,7 +123,7 @@ PARETO_METRICS = [
         "task_count_col": "cost_usd_positive_task_count",
         "status_col": "observed_cost_pareto",
         "figure_name": "rq1_3_configuration_observed_cost_pareto.png",
-        "xlabel": "Task-balanced median observed positive cost (USD)",
+        "xlabel": "Task-weighted median observed positive cost (USD)",
         "title": "RQ1.3 configuration efficiency: observed-cost Pareto frontier",
         "formatter": "currency",
         "label_domination": False,
@@ -631,6 +631,16 @@ def plot_pareto(
     include_domination_labels: bool = True,
 ) -> None:
     thesis_style()
+    # Preserve the original compact typography for the Pareto figures.
+    plt.rcParams.update({
+        "font.size": 9,
+        "axes.titlesize": 10,
+        "axes.labelsize": 9,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+        "legend.fontsize": 8,
+        "legend.title_fontsize": 8,
+    })
     fig, ax = plt.subplots(figsize=(8.0, 4.75))
     sizes = marker_sizes(configs["trajectory_count"])
     frontier = pareto_frontier(configs, effort_col, status_col)
@@ -682,7 +692,7 @@ def plot_pareto(
     ax.set_xscale("log")
     ax.xaxis.set_major_formatter(axis_formatter(formatter))
     ax.set_xlabel(xlabel)
-    ax.set_ylabel("Task-balanced pass rate (%)")
+    ax.set_ylabel("Task-weighted pass rate (%)")
     ax.grid(color="#DADADA", linewidth=0.7, alpha=0.65)
     ax.set_axisbelow(True)
     ax.margins(x=0.08)

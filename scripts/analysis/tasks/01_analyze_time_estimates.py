@@ -21,7 +21,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scripts.analysis.plot_style import COLORBLIND_PALETTE
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.benchmark_paths import find_repo_root
 
 
@@ -505,14 +505,13 @@ def plot_task_time_estimate_distribution(
         "Observed series use one median trajectory duration per task; successful-only excludes failed trajectories.\n"
         "Each distribution is normalized by its task count."
     )
-    ax.text(
+    fig.text(
         0.012,
-        0.96,
+        0.015,
         note,
-        transform=ax.transAxes,
         ha="left",
-        va="top",
-        fontsize=8.5,
+        va="bottom",
+        fontsize=9.5,
         color="#333333",
     )
     ax.set_xscale("symlog", linthresh=1)
@@ -538,22 +537,24 @@ def plot_task_time_estimate_distribution(
             rotation_mode="anchor",
             ha=horizontal_alignment,
             va="center",
-            fontsize=8.5,
+            fontsize=9.5,
             color=color,
         )
-    tick_values = [0, 1, 5, 10, 15, 30, 60, 120, 240, 480, 960, 2880, 7920, 19200]
+    tick_values = [0, 1, 5, 15, 60, 240, 960, 7920, 19200]
     tick_values = [value for value in tick_values if 0 <= value <= axis_max]
     ax.set_xticks(tick_values)
     ax.set_xticklabels([format_minutes(value) for value in tick_values])
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(path, dpi=180)
+    paper_axis_labels(fig)
+    fig.tight_layout(rect=(0, 0.09, 1, 1))
+    save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
 
 def main() -> None:
+    thesis_style()
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     args.figures_dir.mkdir(parents=True, exist_ok=True)

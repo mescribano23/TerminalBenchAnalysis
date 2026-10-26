@@ -320,10 +320,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--validation-per-difficulty",
         type=int,
-        default=10,
+        default=None,
         help=(
-            "Validation tasks to sample per native label. Defaults to 10; the "
-            "held-out easy pool only has 2 tasks after calibration exclusions."
+            "Optional cap per native label. By default validate every non-calibration "
+            "task (81 of 89 TB2 tasks). Use 10 to reproduce the original 22-task sample."
         ),
     )
     parser.add_argument("--validation-sample-seed", type=int, default=20260920)
@@ -455,15 +455,17 @@ def load_tb2_validation_metadata(path: Path) -> pd.DataFrame:
 def select_validation_sample(
     metadata: pd.DataFrame,
     *,
-    per_difficulty: int,
+    per_difficulty: int | None,
     sample_seed: int,
     excluded_tasks: set[str],
 ) -> pd.DataFrame:
+    if per_difficulty is not None and per_difficulty <= 0:
+        raise ValueError("--validation-per-difficulty must be positive when supplied.")
     held_out = metadata[~metadata["task_name"].isin(excluded_tasks)].copy()
     pieces = []
     for offset, label in enumerate(DIFFICULTY_ORDER):
         pool = held_out[held_out["difficulty"].eq(label)].copy()
-        n = min(per_difficulty, len(pool))
+        n = len(pool) if per_difficulty is None else min(per_difficulty, len(pool))
         if n:
             pieces.append(pool.sample(n=n, random_state=sample_seed + offset))
     if not pieces:
@@ -1019,6 +1021,8 @@ def load_existing_validation(path: Path) -> pd.DataFrame:
         if column not in existing.columns:
             existing[column] = ""
     existing["task_name"] = existing["task_name"].map(normalize_text)
+    if existing["task_name"].duplicated().any():
+        raise ValueError(f"{path} contains duplicate validation task names.")
     existing["llm_difficulty_label"] = normalize_text_series(existing["llm_difficulty_label"])
     source = existing["label_source"].fillna("").astype(str).str.strip().str.lower()
     rationale = existing["llm_rationale"].fillna("").astype(str)
@@ -1031,12 +1035,45 @@ def load_existing_validation(path: Path) -> pd.DataFrame:
     return existing.loc[valid, VALIDATION_OUTPUT_COLUMNS].copy()
 
 
+def classification_metrics(gold: pd.Series, predicted: pd.Series) -> dict[str, float]:
+    """Fixed easy/medium/hard PRF; undefined divisions use zero.
+
+    Weighted averages use gold-label support. Micro PRF equals accuracy for
+    this single-label, exhaustive multiclass classification problem.
+    """
+    if len(gold) == 0 or len(gold) != len(predicted):
+        raise ValueError("Metrics require nonempty, equally sized gold and prediction arrays.")
+    if not gold.isin(VALID_LABELS).all() or not predicted.isin(VALID_LABELS).all():
+        raise ValueError("Metrics require valid easy/medium/hard labels.")
+    gold = gold.reset_index(drop=True)
+    predicted = predicted.reset_index(drop=True)
+    metrics: dict[str, float] = {}
+    for label in DIFFICULTY_ORDER:
+        tp = int((gold.eq(label) & predicted.eq(label)).sum())
+        support = int(gold.eq(label).sum())
+        n_predicted = int(predicted.eq(label).sum())
+        precision = tp / n_predicted if n_predicted else 0.0
+        recall = tp / support if support else 0.0
+        metrics[f"precision_{label}"] = precision
+        metrics[f"recall_{label}"] = recall
+        metrics[f"f1_{label}"] = 2 * tp / (support + n_predicted) if support + n_predicted else 0.0
+    accuracy = float(gold.eq(predicted).mean())
+    for metric in ("precision", "recall", "f1"):
+        metrics[f"{metric}_micro"] = accuracy
+        metrics[f"{metric}_macro"] = sum(metrics[f"{metric}_{label}"] for label in DIFFICULTY_ORDER) / 3
+        metrics[f"{metric}_weighted"] = sum(
+            metrics[f"{metric}_{label}"] * int(gold.eq(label).sum())
+            for label in DIFFICULTY_ORDER
+        ) / len(gold)
+    return metrics
+
+
 def write_validation_outputs(
     out_path: Path,
     summary_path: Path,
     confusion_path: Path,
     rows: list[dict[str, Any]],
-    *, include_diagnostics: bool = False,
+    *, include_diagnostics: bool = False, expected_tasks: int | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out = pd.DataFrame(rows)
@@ -1047,15 +1084,24 @@ def write_validation_outputs(
         out = out[VALIDATION_OUTPUT_COLUMNS].sort_values(["gold_difficulty_label", "task_name"])
     else:
         out = out[VALIDATION_OUTPUT_COLUMNS]
-    out.to_csv(out_path, index=False)
-
-    scored = out.copy()
-    if not scored.empty:
-        scored["correct"] = scored["correct"].astype(str).str.lower().isin({"true", "1"})
+    if out["task_name"].duplicated().any():
+        raise ValueError("Validation results contain duplicate task names.")
+    # Failed calls and unresolved consensus rows stay in the raw output for
+    # audit/retry, but must not enter the classification metric denominator.
+    scored = out[out["llm_difficulty_label"].isin(VALID_LABELS)
+                 & out["label_source"].eq("consensus")].copy()
+    require_difficulty_protocol(scored, out_path)
+    n_expected = len(out) if expected_tasks is None else expected_tasks
+    if n_expected < len(out):
+        raise ValueError("Expected task count is smaller than the saved validation results.")
     summary_rows: list[dict[str, Any]] = []
     summary_columns = [
         "labeler",
+        "n_expected_tasks",
         "n_tasks",
+        "n_unscored_tasks",
+        "coverage",
+        "validation_complete",
         "n_correct",
         "accuracy",
         "n_unanimous",
@@ -1064,6 +1110,9 @@ def write_validation_outputs(
     ]
     for label in DIFFICULTY_ORDER:
         summary_columns.extend([f"n_{label}", f"n_{label}_correct", f"accuracy_{label}"])
+        summary_columns.extend(f"{metric}_{label}" for metric in ("precision", "recall", "f1"))
+    for average in ("micro", "macro", "weighted"):
+        summary_columns.extend(f"{metric}_{average}" for metric in ("precision", "recall", "f1"))
     if not scored.empty:
         predictions = {"consensus": scored}
         for spec in DIFFICULTY_LABELERS:
@@ -1080,9 +1129,14 @@ def write_validation_outputs(
             correct = predicted["gold_difficulty_label"].eq(predicted["llm_difficulty_label"])
             row: dict[str, Any] = {
                 "labeler": labeler,
+                "n_expected_tasks": n_expected,
                 "n_tasks": int(len(predicted)),
+                "n_unscored_tasks": n_expected - len(predicted),
+                "coverage": len(predicted) / n_expected,
+                "validation_complete": len(predicted) == n_expected,
                 "n_correct": int(correct.sum()),
                 "accuracy": float(correct.mean()),
+                **classification_metrics(predicted["gold_difficulty_label"], predicted["llm_difficulty_label"]),
                 **{
                     f"n_{status}": int(scored["consensus_status"].eq(status).sum())
                     if labeler == "consensus" else ""
@@ -1108,6 +1162,7 @@ def write_validation_outputs(
             .reset_index(name="n")
             .sort_values(["gold_difficulty_label", "llm_difficulty_label"])
         )
+    out.to_csv(out_path, index=False)
     if include_diagnostics:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary.to_csv(summary_path, index=False)
@@ -1142,6 +1197,11 @@ def run_tb2_native_difficulty_validation(args: argparse.Namespace) -> None:
     sampled_tasks = set(sample["task_name"])
     retained = retained[retained["task_name"].isin(sampled_tasks)].copy()
     require_difficulty_protocol(retained, args.out)
+    # Score against current withheld metadata rather than a possibly stale
+    # cached gold/correct column. Predictions themselves are never recomputed.
+    gold_by_task = sample.set_index("task_name")["difficulty"]
+    retained["gold_difficulty_label"] = retained["task_name"].map(gold_by_task)
+    retained["correct"] = retained["gold_difficulty_label"].eq(retained["llm_difficulty_label"])
     completed_tasks = set(retained["task_name"])
     work = sample[~sample["task_name"].isin(completed_tasks)].copy()
     if args.limit is not None:
@@ -1179,7 +1239,7 @@ def run_tb2_native_difficulty_validation(args: argparse.Namespace) -> None:
             source = "error"
         labels.append(validation_output_row(row_series, label, args, neutralization))
         write_validation_outputs(args.out, args.validation_summary_out, args.validation_confusion_out, labels,
-                                 include_diagnostics=args.include_diagnostics)
+                                 include_diagnostics=args.include_diagnostics, expected_tasks=len(sample))
         predicted = label.get("llm_difficulty_label", "")
         gold = row_series["difficulty"]
         status = "ERROR" if source == "error" else ("correct" if predicted == gold else "wrong")
@@ -1191,13 +1251,23 @@ def run_tb2_native_difficulty_validation(args: argparse.Namespace) -> None:
             time.sleep(args.sleep_sec)
 
     summary, _ = write_validation_outputs(args.out, args.validation_summary_out, args.validation_confusion_out, labels,
-                                          include_diagnostics=args.include_diagnostics)
+                                          include_diagnostics=args.include_diagnostics, expected_tasks=len(sample))
     print(f"Wrote validation labels: {args.out}")
     if args.include_diagnostics:
         print(f"Wrote validation summary: {args.validation_summary_out}")
         print(f"Wrote validation confusion matrix: {args.validation_confusion_out}")
     if not summary.empty:
         print(summary.to_string(index=False))
+    n_scored = int(summary.iloc[0]["n_tasks"]) if not summary.empty else 0
+    print(f"Validation coverage: {n_scored}/{len(sample)} selected held-out tasks.")
+    if n_scored != len(sample):
+        message = (
+            f"INCOMPLETE validation: {len(sample) - n_scored} selected tasks lack valid panel predictions. "
+            "Rerun the same command to resume; current metrics describe only scored tasks."
+        )
+        if args.limit is None:
+            raise RuntimeError(message)
+        print(message)
 
 
 def main() -> None:

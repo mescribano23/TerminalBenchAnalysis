@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from scripts.analysis.plot_style import FAIL_COLOR, PASS_COLOR
+from scripts.analysis.plot_style import FAIL_COLOR, PASS_COLOR, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.benchmark_paths import SUPPORTED_BENCHMARKS, paths_for_benchmark
 
 
@@ -263,14 +263,15 @@ def plot_violin_box(
         )
 
     ax.set_xticks(range(1, len(labels) + 1))
-    ax.set_xticklabels(labels, fontsize=8.0, rotation=45, ha="right")
+    ax.set_xticklabels(labels, fontsize=9.5, rotation=45, ha="right")
     ax.set_ylim(0, 100)
     ax.set_ylabel(ylabel)
     ax.set_xlabel("Groups ordered by best leaderboard rank")
     ax.grid(axis="y", alpha=0.25)
+    paper_axis_labels(fig)
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=180)
+    save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -357,6 +358,7 @@ def summarize_availability(rows: list[dict[str, Any]]) -> tuple[pd.DataFrame, pd
 
 
 def main() -> None:
+    thesis_style()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--benchmark",

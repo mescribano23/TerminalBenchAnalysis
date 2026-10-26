@@ -630,24 +630,64 @@ It must not use trajectory outcomes, leaderboard accuracy, pass rates, run durat
 #### Validate the difficulty prompt on held-out TB2 labels
 
 To check whether the difficulty prompt can recover known native TB2 labels, run a
-held-out validation sample. The sampled tasks exclude the fixed calibration
-examples shown in the prompt, and each sampled task's actual native difficulty
+validation on all eligible tasks. The tasks exclude the fixed calibration
+examples shown in the prompt, and each task's actual native difficulty
 is withheld from the LLM input and joined back only for scoring:
 
 ```powershell
 python -m scripts.analysis.longitudinal.02_label_task_difficulty `
-  --validate-native-tb2-difficulty
+  --validate-native-tb2-difficulty --include-diagnostics
 ```
 
-By default this samples up to ten held-out tasks per native difficulty after
-excluding calibration anchors. Because TB2 has only two non-anchor easy tasks,
-the default sample is two easy, ten medium, and ten hard tasks. It writes:
+By default this evaluates all **81 eligible tasks out of 89**: 2 easy, 52 medium,
+and 27 hard. The eight excluded prompt examples are `fix-git`,
+`cobol-modernization`, `mailman`, `sqlite-db-truncate`, `rstan-to-pystan`,
+`path-tracing-reverse`, `torch-tensor-parallelism`, and `regex-chess`.
+The original 22-task validation used a cap of ten per class (2 easy, 10 medium,
+10 hard); this was a sampling choice, not the limit of available tasks.
+`--validation-per-difficulty 10` reproduces that selection. Existing valid
+predictions are reused, so expanding the existing 22-task cache requires only
+59 new task predictions with the same neutralization and three-model panel.
+It writes:
 
 ```text
 data/processed_live/longitudinal/inputs/tb2_difficulty_prompt_validation.csv
+data/processed_live/longitudinal/tb2_difficulty_prompt_validation_summary.csv
+data/processed_live/longitudinal/tb2_difficulty_prompt_validation_confusion.csv
 ```
 
-Validation scores and confusion counts are computed from the retained per-task votes and printed without creating extra CSVs. Use `02_label_task_difficulty --include-diagnostics` to export those optional sidecars.
+With `--include-diagnostics`, the summary CSV reports accuracy and micro, macro,
+and support-weighted precision, recall, and F1 for the consensus and each voter,
+plus per-class support and metrics. Undefined precision/recall/F1 divisions are
+set to zero; macro averages include all three classes. Micro precision, recall,
+and F1 equal accuracy for this single-label classification. The confusion CSV
+contains consensus counts (gold label versus predicted label).
+
+Check `validation_complete=True`, `n_expected_tasks=81`, and `n_tasks=81` in the
+summary before reporting full-pool results. Failed calls are excluded from
+metrics and reported as unscored tasks; an incomplete unrestricted run exits
+with an error and can be resumed with the same command. `--limit 0` computes
+metrics from cached predictions without API calls and reports partial coverage
+when the cache is incomplete. Without `--include-diagnostics`, metrics are
+printed without writing the summary/confusion sidecars.
+
+Inter-LLM reliability is computed from the three individual votes, excluding
+the native label and consensus as raters. On all 81 held-out TB2 tasks,
+Fleiss' kappa is **0.5206**, nominal Krippendorff's alpha is **0.5226**, and
+ordinal alpha (easy < medium < hard) is **0.6946**. On TB3 and TB4 separately,
+kappa is 0.0852 and 0.0242. Their roughly 89% raw pairwise agreement coexists
+with low chance-corrected agreement because almost all votes are hard.
+The combined production analysis counts 87 distinct labeling units once,
+excluding 53 reused results from the denominator; its kappa/nominal alpha are
+0.0679/0.0714. See [the reliability report](reports/longitudinal/llm_label_reliability.md)
+for all coefficients, units, definitions, and a category-vote coverage audit.
+The category cache has only two valid model votes per task and does not support
+a three-LLM category reliability claim. Recompute the difficulty reliability
+without API calls using:
+
+```powershell
+python -m scripts.analysis.longitudinal.11_analyze_label_reliability
+```
 
 After labels are generated, compare difficulty distributions and difficulty-stratified pass rates across all four benchmark versions:
 
@@ -657,7 +697,7 @@ python -m scripts.analysis.longitudinal.07_analyze_difficulty
 
 This combines native TB2.0/TB2.1 task difficulty metadata with TB3.0/TB4.0 LLM labels derived from Harbor difficulty explanations. This is the only longitudinal script that consumes the LLM difficulty-label file.
 
-Treat the TB3/TB4 difficulty distributions as LLM-assigned estimates of author-intended task difficulty, not ground truth. Native difficulty is `unknown` for all 140 TB3/TB4 task-version records. The retained neutralized three-labeler consensus recovered 14 of 22 held-out native TB2 labels (63.6% agreement): 0/2 easy, 7/10 medium, and 7/10 hard. Individual agreement is 14/22 (63.6%) for GPT-4o mini, 12/22 (54.5%) for Claude Haiku 4.5, and 15/22 (68.2%) for Qwen2.5 7B. The retained validation votes support scores for all three voters and their consensus. This small, class-imbalanced TB2 validation is not a measured accuracy on TB3/TB4. The canonical label file now contains the matching neutralized-panel results: 72 hard and 2 medium tasks in TB3.0, and 65 hard and 1 medium in TB4.0.
+Treat the TB3/TB4 difficulty distributions as LLM-assigned estimates of author-intended task difficulty, not ground truth. Native difficulty is `unknown` for all 140 TB3/TB4 task-version records. The completed neutralized three-labeler validation covers all 81 non-calibration TB2 tasks and recovers 56 native labels (69.14% accuracy): 0/2 easy, 38/52 medium, and 18/27 hard. Consensus macro precision/recall/F1 are 52.48%/46.58%/49.33%; support-weighted precision/recall/F1 are 76.91%/69.14%/72.79%. Micro precision/recall/F1 all equal 69.14%. Individual accuracies are 56/81 (69.14%) for GPT-4o mini, 46/81 (56.79%) for Claude Haiku 4.5, and 65/81 (80.25%) for Qwen2.5 7B. The original 14/22 (63.6%) consensus result was a capped sample; expanding its coverage does not establish an improvement in the labeling method. The pool is class-imbalanced: always predicting medium gives 52/81 (64.20%) accuracy, and the consensus misses both easy tasks. See [the validation report](reports/longitudinal/tb2_difficulty_validation.md) for full metrics and confusion counts. TB2 validation does not measure accuracy on TB3/TB4. The canonical label file contains the matching neutralized-panel results: 72 hard and 2 medium tasks in TB3.0, and 65 hard and 1 medium in TB4.0.
 
 It writes:
 

@@ -21,6 +21,9 @@ import pandas as pd
 
 from scripts.benchmark_paths import find_repo_root
 from scripts.analysis.plot_style import (
+    paper_axis_labels,
+    save_paper_figure,
+    thesis_style,
     FAIL_COLOR,
     HEATMAP_DPI,
     PASS_COLOR,
@@ -389,11 +392,13 @@ def plot_grouped_heatmap(
     subset: pd.DataFrame,
     variable: str,
     group_label: str,
-    annotation_fontsize: float = 8.0,
+    annotation_fontsize: float = 9.5,
 ) -> plt.Figure:
     labels, group_order, heatmap, counts = heatmap_frames(subset, variable)
     row_count = max(1, len(group_order))
     figure_height = min(14.0, max(4.8, 1.6 + row_count * 0.34))
+    if variable == "total_tokens":
+        figure_height += 1.2
     fig, ax = plt.subplots(figsize=(10.5, figure_height - 0.35))
 
     cmap = colorblind_cmap()
@@ -403,7 +408,7 @@ def plot_grouped_heatmap(
     ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels, rotation=30, ha="right")
     ax.set_yticks(range(len(group_order)))
-    ax.set_yticklabels(group_order, fontsize=8 if row_count > 20 else 9)
+    ax.set_yticklabels(group_order, fontsize=9.5 if row_count > 20 else 10)
     ax.set_xlabel(DISPLAY_NAMES[variable])
     ax.set_ylabel(group_label[:1].upper() + group_label[1:])
 
@@ -463,11 +468,12 @@ def plot_effort_bins(
             ax.grid(axis="y", alpha=0.25)
         else:
             fig = plot_grouped_heatmap(subset, variable, group_label)
+        paper_axis_labels(fig)
         fig.tight_layout()
 
         heatmap_suffix = "_heatmap" if group_label is not None else ""
         path = output_dir / f"diminishing_returns_{variable}{heatmap_suffix}.png"
-        fig.savefig(path, dpi=HEATMAP_DPI if group_label is not None else 180)
+        save_paper_figure(fig, path, dpi=HEATMAP_DPI if group_label is not None else 180, bbox_inches="tight")
         plt.close(fig)
         paths.append(path)
 
@@ -495,8 +501,8 @@ def plot_pooled_vs_task_balanced(task_balanced: pd.DataFrame, figures_dir: Path)
         balanced = subset["task_balanced_pass_rate"].to_numpy(dtype=float)
         width = 0.38
 
-        ax.bar(x - width / 2, pooled, width=width, color=colors["pooled"], label="Pooled")
-        ax.bar(x + width / 2, balanced, width=width, color=colors["task_balanced"], label="Task-balanced")
+        ax.bar(x - width / 2, pooled, width=width, color=colors["pooled"], label="Aggregated")
+        ax.bar(x + width / 2, balanced, width=width, color=colors["task_balanced"], label="Task-weighted")
         ax.set_xticks(x)
         ax.set_xticklabels(subset["bin_label"].tolist(), rotation=28, ha="right")
         ax.set_xlabel(DISPLAY_NAMES[variable])
@@ -506,9 +512,10 @@ def plot_pooled_vs_task_balanced(task_balanced: pd.DataFrame, figures_dir: Path)
     axes[0].set_ylabel("Pass rate")
     axes[2].set_ylabel("Pass rate")
     axes[-1].legend(frameon=False, loc="upper right")
+    paper_axis_labels(fig)
     fig.tight_layout()
     path = output_dir / "rq1_pooled_vs_task_balanced_effort_success.png"
-    fig.savefig(path, dpi=240, bbox_inches="tight")
+    save_paper_figure(fig, path, dpi=240, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -571,7 +578,7 @@ def plot_model_provider_heatmaps(
             matrix = np.ma.masked_invalid(heatmap.to_numpy(dtype=float))
             image = ax.imshow(matrix, aspect="auto", cmap=cmap, vmin=0, vmax=1)
             ax.set_yticks(range(len(group_order)))
-            ax.set_yticklabels(group_order, fontsize=8 if row_count > 12 else 9)
+            ax.set_yticklabels(group_order, fontsize=9.5 if row_count > 12 else 10)
             ax.set_ylabel(provider)
             ax.set_xticks(np.arange(-0.5, len(labels), 1), minor=True)
             ax.set_yticks(np.arange(-0.5, row_count, 1), minor=True)
@@ -591,7 +598,8 @@ def plot_model_provider_heatmaps(
                         f"{rate:.0%}\nn={n}",
                         ha="center",
                         va="center",
-                        fontsize=7.5,
+                        fontsize=9.5,
+                        linespacing=1.05,
                         color=text_color,
                     )
 
@@ -601,14 +609,15 @@ def plot_model_provider_heatmaps(
         for ax in axes[:-1]:
             ax.tick_params(labelbottom=False)
 
-        fig.subplots_adjust(top=0.95, bottom=0.09, left=0.29, right=0.84, hspace=0.38)
+        paper_axis_labels(fig)
+        fig.subplots_adjust(top=0.95, bottom=0.12, left=0.29, right=0.84, hspace=0.18)
         if image is not None:
             colorbar_ax = fig.add_axes([0.885, 0.36, 0.018, 0.28])
             colorbar = fig.colorbar(image, cax=colorbar_ax)
             colorbar.set_label("Success rate")
 
         path = output_dir / f"diminishing_returns_{variable}_heatmap.png"
-        fig.savefig(path, dpi=HEATMAP_DPI)
+        save_paper_figure(fig, path, dpi=HEATMAP_DPI, bbox_inches="tight")
         plt.close(fig)
         paths.append(path)
 
@@ -632,9 +641,10 @@ def plot_provider_heatmaps(df: pd.DataFrame, figures_dir: Path) -> list[Path]:
             continue
 
         fig = plot_grouped_heatmap(subset, variable, "provider")
+        paper_axis_labels(fig)
         fig.tight_layout()
         path = output_dir / f"diminishing_returns_{variable}_heatmap.png"
-        fig.savefig(path, dpi=HEATMAP_DPI)
+        save_paper_figure(fig, path, dpi=HEATMAP_DPI, bbox_inches="tight")
         plt.close(fig)
         paths.append(path)
 
@@ -716,10 +726,11 @@ def plot_effort_performance_box_plots(df: pd.DataFrame, figures_dir: Path) -> li
         ax.set_ylabel(DISPLAY_NAMES[variable])
         ax.set_xlabel("Trajectory outcome")
         ax.grid(axis="y", alpha=0.25)
+        paper_axis_labels(fig)
         fig.tight_layout()
 
         path = output_dir / f"diminishing_returns_performance_box_{variable}.png"
-        fig.savefig(path, dpi=180)
+        save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
         plt.close(fig)
         paths.append(path)
 
@@ -756,10 +767,11 @@ def plot_effort_outcome_stacked_bars(bins: pd.DataFrame, figures_dir: Path) -> l
         ax.set_xlabel(DISPLAY_NAMES[variable])
         ax.grid(axis="y", alpha=0.25)
         ax.legend(frameon=False, loc="upper right", bbox_to_anchor=(1.0, 1.02))
+        paper_axis_labels(fig)
         fig.tight_layout()
 
         path = output_dir / f"diminishing_returns_outcome_stacked_{variable}.png"
-        fig.savefig(path, dpi=180)
+        save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
         plt.close(fig)
         paths.append(path)
 
@@ -767,6 +779,7 @@ def plot_effort_outcome_stacked_bars(bins: pd.DataFrame, figures_dir: Path) -> l
 
 
 def main() -> None:
+    thesis_style()
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     args.figures_dir.mkdir(parents=True, exist_ok=True)

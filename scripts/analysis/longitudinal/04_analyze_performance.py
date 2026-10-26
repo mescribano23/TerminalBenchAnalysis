@@ -26,7 +26,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
-from scripts.analysis.plot_style import COLORBLIND_PALETTE, thesis_style
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.benchmark_paths import SUPPORTED_BENCHMARKS, find_repo_root
 
 
@@ -259,7 +259,7 @@ def annotate_line(
             label,
             ha="center",
             va=va,
-            fontsize=8,
+            fontsize=9.5,
             color=color,
         )
 
@@ -277,7 +277,7 @@ def plot(version_summary: pd.DataFrame, submission_summary: pd.DataFrame, out: P
         color=POOLED_COLOR,
         marker="o",
         linewidth=2.0,
-        label="Pooled trajectory pass rate",
+        label="Aggregated trajectory pass rate",
     )
     ax.plot(
         x,
@@ -328,7 +328,7 @@ def plot(version_summary: pd.DataFrame, submission_summary: pd.DataFrame, out: P
     )
 
     xtick_labels = [
-        f"TB{row.benchmark_version}\n{int(row.task_count)} tasks, {int(row.trajectory_count):,} traj."
+        f"TB{row.benchmark_version}\n{int(row.task_count)} tasks,\n{int(row.trajectory_count):,} traj."
         for row in version_summary.itertuples(index=False)
     ]
     ax.set_xticks(x)
@@ -342,8 +342,9 @@ def plot(version_summary: pd.DataFrame, submission_summary: pd.DataFrame, out: P
     ax.legend(frameon=False, loc="best")
 
     out.parent.mkdir(parents=True, exist_ok=True)
+    paper_axis_labels(fig)
     fig.tight_layout()
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    save_paper_figure(fig, out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 

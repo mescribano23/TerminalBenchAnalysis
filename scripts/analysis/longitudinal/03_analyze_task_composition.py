@@ -27,7 +27,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
-from scripts.analysis.plot_style import COLORBLIND_PALETTE, OTHER_COLOR, colorblind_cycle, thesis_style
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, OTHER_COLOR, colorblind_cycle, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
 from scripts.benchmark_paths import find_repo_root
 
@@ -483,10 +483,15 @@ def plot_composition(task_version: pd.DataFrame, category_summary: pd.DataFrame,
     ax.set_xticks(x)
     ax.set_xticklabels([VERSION_LABELS[v] for v in VERSIONS])
     ax.set_ylim(0, 1)
-    ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=7, fontsize=8)
+    ax.legend(
+        frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.20),
+        ncol=len(category_order), fontsize=11,
+        columnspacing=0.9, handlelength=1.3, handletextpad=0.5,
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
+    paper_axis_labels(fig)
     fig.tight_layout(pad=0.75)
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    save_paper_figure(fig, out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -519,7 +524,7 @@ def boxplot_metric(ax: plt.Axes, task_version: pd.DataFrame, column: str, title:
             zorder=2,
         )
         median = float(np.median(values))
-        ax.text(position, median, format_minutes(median), ha="center", va="bottom", fontsize=8)
+        ax.text(position, median, format_minutes(median), ha="center", va="bottom", fontsize=9.5)
     ax.set_ylabel(ylabel)
     ax.grid(axis="y", color="#D0D0D0", alpha=0.5, linewidth=0.7)
     ax.set_axisbelow(True)
@@ -555,9 +560,12 @@ def plot_time_estimates(task_version: pd.DataFrame, out: Path) -> None:
     axes[0].set_yscale("symlog", linthresh=60)
     axes[1].set_yscale("symlog", linthresh=60)
     axes[2].set_yscale("symlog", linthresh=10)
+    for ax in axes:
+        ax.tick_params(axis="x", labelrotation=35)
     out.parent.mkdir(parents=True, exist_ok=True)
+    paper_axis_labels(fig)
     fig.tight_layout(pad=0.8)
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    save_paper_figure(fig, out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 

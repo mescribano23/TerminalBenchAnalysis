@@ -43,6 +43,9 @@ if str(REPO_ROOT_CANDIDATE) not in sys.path:
 from scripts.analysis.support_thresholds import MINIMUM_SUPPORT_PER_COMPARISON_CELL
 from scripts.analysis.statistical_helpers import paired_rank_biserial, two_sided_signed_rank
 from scripts.analysis.plot_style import (
+    paper_axis_labels,
+    save_paper_figure,
+    thesis_style,
     DIVERGING_CMAP,
     HEATMAP_DPI,
     colorblind_cmap,
@@ -1038,16 +1041,17 @@ def plot_difference_heatmap(
                 label,
                 ha="center",
                 va="center",
-                fontsize=annotation_fontsize if np.isfinite(value) else max(8.0, annotation_fontsize - 2.0),
+                fontsize=annotation_fontsize if np.isfinite(value) else max(9.5, annotation_fontsize - 2.0),
                 color=color,
             )
 
     cbar = fig.colorbar(image, ax=ax, fraction=0.035, pad=0.03)
     if colorbar_label:
         cbar.set_label(colorbar_label, fontsize=10.5)
+    paper_axis_labels(fig)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=HEATMAP_DPI)
+    save_paper_figure(fig, out_path, dpi=HEATMAP_DPI, bbox_inches="tight")
     plt.close(fig)
     return True
 
@@ -1503,6 +1507,7 @@ def print_level_comparison(interface_overall: pd.DataFrame, functional_overall: 
 
 
 def main() -> None:
+    thesis_style()
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     trajectories = load_trajectories(args.trajectory_summary, args.max_trajectories)
@@ -1553,7 +1558,7 @@ def main() -> None:
     category_plotted = plot_difference_heatmap(
         by_category,
         "category",
-        "Task-balanced tool-use association with success by category",
+        "Task-weighted tool-use association with success by category",
         category_figure,
         dimension_order=category_order,
         family_display_order=TOOL_FAMILY_DISPLAY_ORDER,
@@ -1577,7 +1582,7 @@ def main() -> None:
     functional_category_plotted = plot_difference_heatmap(
         functional_by_category,
         "category",
-        "Task-balanced functional association with success by category",
+        "Task-weighted functional association with success by category",
         functional_category_figure,
         dimension_order=category_order,
         family_display_column="behavior_family_display",
@@ -1607,7 +1612,7 @@ def main() -> None:
         if plot_difference_heatmap(
             by_difficulty,
             "difficulty",
-            "Task-balanced tool-use association with success by difficulty",
+            "Task-weighted tool-use association with success by difficulty",
             difficulty_figure,
             dimension_order=DIFFICULTY_ORDER,
             family_display_order=TOOL_FAMILY_DISPLAY_ORDER,
@@ -1635,7 +1640,7 @@ def main() -> None:
         if plot_difference_heatmap(
             functional_by_difficulty,
             "difficulty",
-            "Task-balanced functional association with success by difficulty",
+            "Task-weighted functional association with success by difficulty",
             functional_difficulty_figure,
             dimension_order=DIFFICULTY_ORDER,
             family_display_column="behavior_family_display",

@@ -41,6 +41,9 @@ from scipy.stats import spearmanr
 
 from scripts.benchmark_paths import find_repo_root
 from scripts.analysis.plot_style import (
+    paper_axis_labels,
+    save_paper_figure,
+    thesis_style,
     FAIL_COLOR,
     HEATMAP_DPI,
     LOW_GOOD_CMAP,
@@ -764,13 +767,14 @@ def plot_task_weighted_success(
     fig.text(
         0.01,
         0.015,
-        textwrap.fill(note, width=120),
-        fontsize=8.5,
+        textwrap.fill(note, width=95 if dimension_column == "difficulty" else 120),
+        fontsize=9.5,
         color="#333333",
     )
-    fig.tight_layout(rect=(0, 0.075, 1, 1))
+    paper_axis_labels(fig)
+    fig.tight_layout(rect=(0, 0.18 if dimension_column == "difficulty" else 0.09, 1, 1))
     path = figures_dir / f"{output_prefix}_success_task_weighted.png"
-    fig.savefig(path, dpi=180)
+    save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -789,9 +793,10 @@ def plot_task_coverage(
     ax.grid(axis="x", alpha=0.25)
     ax.set_xlabel("Distinct tasks")
     ax.set_ylabel(dimension_label[:1].upper() + dimension_label[1:])
+    paper_axis_labels(fig)
     fig.tight_layout()
     path = figures_dir / f"{output_prefix}_task_coverage.png"
-    fig.savefig(path, dpi=180)
+    save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -824,10 +829,11 @@ def plot_pass_fail_counts(
     ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:])
     ax.set_ylabel("Trajectory count")
     ax.legend(frameon=False)
+    paper_axis_labels(fig)
     fig.tight_layout()
 
     path = figures_dir / f"{output_prefix}_pass_fail_counts.png"
-    fig.savefig(path, dpi=180)
+    save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -881,11 +887,12 @@ def plot_pass_fail_pie_charts(
             frameon=False,
             fontsize=11,
         )
+    paper_axis_labels(fig)
     fig.tight_layout(rect=(0, 0.17, 1, 0.94), w_pad=0.0)
     fig.subplots_adjust(wspace=-0.15)
 
     path = figures_dir / f"pie_chart_{output_prefix}_pass_fail_distribution.png"
-    fig.savefig(path, dpi=180)
+    save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -947,7 +954,7 @@ def plot_effort_heatmap(
             wrap_heatmap_label(EFFORT_HEATMAP_LABELS.get(label, label), 11) for label in plot_values.columns
         ]
         y_labels = plot_values.index.tolist()
-        figsize = (13.2, 5.45)
+        figsize = (13.2, 4.4)
     else:
         plot_values = heatmap
         plot_normalized = normalized
@@ -1008,10 +1015,17 @@ def plot_effort_heatmap(
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
     colorbar.set_label("Column-normalized effort (green=low, red=high)", fontsize=10.25)
+    paper_axis_labels(fig)
+    if dimension_column == "category":
+        ax.xaxis.label.set_fontsize(13)
+        ax.yaxis.label.set_fontsize(13)
+        ax.tick_params(axis="both", labelsize=11)
+        colorbar.ax.yaxis.label.set_fontsize(12)
+        colorbar.ax.tick_params(labelsize=11)
     fig.tight_layout()
 
     path = effort_figures_dir / f"heatmap_{output_prefix}_effort_median.png"
-    fig.savefig(path, dpi=HEATMAP_DPI, bbox_inches="tight")
+    save_paper_figure(fig, path, dpi=HEATMAP_DPI, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -1072,7 +1086,7 @@ def plot_category_pass_rate_heatmap(
     ax.set_xticks(range(col_count))
     ax.set_xticklabels(heatmap.columns, rotation=40, ha="right")
     ax.set_yticks(range(row_count))
-    ax.set_yticklabels(heatmap.index, fontsize=7 if row_count > 30 else 9)
+    ax.set_yticklabels(heatmap.index, fontsize=9.5 if row_count > 30 else 10)
     ax.set_xlabel(dimension_label[:1].upper() + dimension_label[1:])
     ax.set_ylabel(" / ".join(group_columns))
 
@@ -1095,14 +1109,15 @@ def plot_category_pass_rate_heatmap(
                     f"{rate:.2f}",
                     ha="center",
                     va="center",
-                    fontsize=8.0 if row_count > 20 else 9.0,
+                    fontsize=9.5 if row_count > 20 else 10.0,
                     color=text_color,
                 )
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
     colorbar.set_label("Pass rate")
+    paper_axis_labels(fig)
     fig.tight_layout()
-    fig.savefig(path, dpi=HEATMAP_DPI)
+    save_paper_figure(fig, path, dpi=HEATMAP_DPI, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -1144,9 +1159,10 @@ def plot_scaffold_category_composition(
     ax.grid(axis="x", alpha=0.25)
     ax.set_xlabel("Share of scaffold trajectories")
     ax.set_ylabel("Scaffold")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=4, frameon=False, fontsize=8)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=4, frameon=False, fontsize=11)
+    paper_axis_labels(fig)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
-    fig.savefig(path, dpi=180)
+    save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -1178,9 +1194,10 @@ def plot_category_difficulty_composition(
     ax.grid(axis="x", alpha=0.25)
     ax.set_xlabel("Share of category trajectories")
     ax.set_ylabel("Task category")
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False, fontsize=9)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=3, frameon=False, fontsize=11)
+    paper_axis_labels(fig)
     fig.tight_layout(rect=(0, 0.08, 1, 1))
-    fig.savefig(path, dpi=180)
+    save_paper_figure(fig, path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -1241,8 +1258,9 @@ def plot_category_difficulty_pass_rate_heatmap(
 
     colorbar = fig.colorbar(image, ax=ax, fraction=0.025, pad=0.02)
     colorbar.set_label("Pass rate")
+    paper_axis_labels(fig)
     fig.tight_layout()
-    fig.savefig(path, dpi=HEATMAP_DPI)
+    save_paper_figure(fig, path, dpi=HEATMAP_DPI, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -1377,6 +1395,7 @@ def plot_domain_figures(
 
 
 def main() -> None:
+    thesis_style()
     args = parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 

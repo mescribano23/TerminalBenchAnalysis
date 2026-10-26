@@ -36,7 +36,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
-from scripts.analysis.plot_style import COLORBLIND_PALETTE, PASS_COLOR, thesis_style
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, PASS_COLOR, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.benchmark_paths import find_repo_root
 from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
 
@@ -360,28 +360,29 @@ def plot_token_text_over_time(monthly: pd.DataFrame, out: Path) -> None:
         y_top = ax_tokens.get_ylim()[1]
         ax_tokens.text(
             transition_month,
-            y_top,
+            y_top * 0.60,
             " first TB2.1 month",
             rotation=90,
             va="top",
             ha="left",
-            fontsize=7.5,
+            fontsize=9.5,
             color="#555555",
         )
 
     ax_tokens.set_xlabel("Historical leaderboard month (semantics unverified)")
     ax_tokens.set_ylabel("Tokens (thousands)\nMonthly hierarchical median")
     ax_chars.set_ylabel("Logged characters (thousands)\nMonthly hierarchical median")
-    ax_tokens.xaxis.set_major_locator(mdates.MonthLocator(interval=1))
+    ax_tokens.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
     ax_tokens.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     ax_tokens.yaxis.set_major_formatter(lambda value, _: f"{value:.0f}")
     ax_chars.yaxis.set_major_formatter(lambda value, _: f"{value:.0f}")
     ax_tokens.grid(axis="y", color="#E5E5E5", linewidth=0.8)
     ax_tokens.legend(handles, labels, frameon=False, ncol=2, loc="upper left")
     fig.autofmt_xdate(rotation=35, ha="right")
+    paper_axis_labels(fig)
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, bbox_inches="tight", dpi=300)
+    save_paper_figure(fig, out, bbox_inches="tight", dpi=300)
     plt.close(fig)
 
 
@@ -824,7 +825,7 @@ def choose_accumulation_examples(df: pd.DataFrame, max_examples: int = 3) -> pd.
 
 def plot_input_accumulation(examples: pd.DataFrame, out: Path) -> None:
     thesis_style()
-    fig, axes = plt.subplots(len(examples), 1, figsize=(7.4, 6.0 - (0.35 * len(examples) + 0.3)), sharex=False)
+    fig, axes = plt.subplots(len(examples), 1, figsize=(7.4, 6.2), sharex=False)
     if len(examples) == 1:
         axes = [axes]
     for ax, row in zip(axes, examples.itertuples(index=False)):
@@ -841,14 +842,15 @@ def plot_input_accumulation(examples: pd.DataFrame, out: Path) -> None:
             transform=ax.transAxes,
             ha="right",
             va="bottom",
-            fontsize=8,
+            fontsize=9.5,
             bbox={"facecolor": "white", "edgecolor": "#DDDDDD", "boxstyle": "round,pad=0.25"},
         )
         ax.set_xlim(1, len(calls))
     axes[-1].set_xlabel("Model call index")
+    paper_axis_labels(fig)
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, bbox_inches="tight", dpi=300)
+    save_paper_figure(fig, out, bbox_inches="tight", dpi=300)
     plt.close(fig)
 
 
@@ -892,14 +894,16 @@ def plot_input_context_distribution(eligible: pd.DataFrame, out: Path) -> None:
         capprops={"color": PASS_COLOR},
     )
     ax_dist.axvline(1.0, color="#777777", linestyle="--", linewidth=1.0)
-    ax_dist.set_xlabel("Submission-balanced task median of final / first call input")
+    ax_dist.set_xlabel("Submission-balanced task median of\nfinal / first call input")
     ax_dist.grid(axis="x", color="#E5E5E5", linewidth=0.8)
     ax_dist.set_xscale("symlog", linthresh=1.0)
     ax_dist.set_xlim(left=0)
 
+    paper_axis_labels(fig)
+
     fig.tight_layout()
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, bbox_inches="tight", dpi=300)
+    save_paper_figure(fig, out, bbox_inches="tight", dpi=300)
     plt.close(fig)
 
 

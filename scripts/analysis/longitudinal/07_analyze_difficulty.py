@@ -31,7 +31,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
-from scripts.analysis.plot_style import COLORBLIND_PALETTE, thesis_style
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.benchmark_paths import find_repo_root
 from scripts.analysis.longitudinal.difficulty_protocol import require_difficulty_protocol
 from scripts.analysis.submission_task_balancing import SOURCE_SUBMISSION_ID, ensure_source_submission_id
@@ -49,7 +49,7 @@ FIGURES_DIR_DEFAULT = REPO_ROOT / "reports" / "longitudinal" / "difficulty_over_
 VERSIONS = ["2.0", "2.1", "3.0", "4.0"]
 VERSION_LABELS = {"2.0": "TB2.0", "2.1": "TB2.1", "3.0": "TB3.0", "4.0": "TB4.0"}
 DIFFICULTY_VERSION_LABELS = {
-    version: f"{label}\n{'Native metadata' if version in {'2.0', '2.1'} else 'LLM estimate'}"
+    version: label + "\n" + ("Native\nmetadata" if version in {"2.0", "2.1"} else "LLM\nestimate")
     for version, label in VERSION_LABELS.items()
 }
 DIFFICULTY_ORDER = ["easy", "medium", "hard"]
@@ -279,12 +279,14 @@ def plot_distribution(distribution: pd.DataFrame, path: Path) -> None:
     ax.set_xticklabels([DIFFICULTY_VERSION_LABELS[version] for version in VERSIONS])
     ax.set_ylim(0, 1)
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1.0, decimals=0))
-    ax.legend(frameon=False, ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.12))
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, 0.01))
     ax.grid(axis="y", color="#D0D0D0", alpha=0.45, linewidth=0.7)
     ax.set_axisbelow(True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(path, dpi=300, bbox_inches="tight")
+    paper_axis_labels(fig)
+    fig.tight_layout(rect=(0, 0.14, 1, 1))
+    save_paper_figure(fig, path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -311,7 +313,7 @@ def plot_pass_rates(summary: pd.DataFrame, path: Path) -> None:
             label=difficulty.capitalize(),
         )
         for xi, yi in zip(x[present] + offsets[difficulty], values[present]):
-            ax.text(xi, yi + 0.025, f"{yi:.0%}", ha="center", va="bottom", fontsize=8)
+            ax.text(xi, yi + 0.025, f"{yi:.0%}", ha="center", va="bottom", fontsize=9.5)
     ax.set_ylabel("Pass rate")
     ax.set_xticks(x)
     ax.set_xticklabels([DIFFICULTY_VERSION_LABELS[version] for version in VERSIONS])
@@ -319,10 +321,12 @@ def plot_pass_rates(summary: pd.DataFrame, path: Path) -> None:
     ax.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1.0, decimals=0))
     ax.grid(axis="y", color="#D0D0D0", alpha=0.45, linewidth=0.7)
     ax.set_axisbelow(True)
-    ax.legend(frameon=False, ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.13))
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, ncol=3, loc="lower center", bbox_to_anchor=(0.5, 0.01))
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(path, dpi=300, bbox_inches="tight")
+    paper_axis_labels(fig)
+    fig.tight_layout(rect=(0, 0.14, 1, 1))
+    save_paper_figure(fig, path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 

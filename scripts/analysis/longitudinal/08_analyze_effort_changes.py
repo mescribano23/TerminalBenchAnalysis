@@ -22,7 +22,7 @@ REPO_ROOT_GUESS = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT_GUESS) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_GUESS))
 
-from scripts.analysis.plot_style import COLORBLIND_PALETTE, NEUTRAL_COLOR, thesis_style
+from scripts.analysis.plot_style import COLORBLIND_PALETTE, NEUTRAL_COLOR, thesis_style, paper_axis_labels, save_paper_figure
 from scripts.analysis.submission_task_balancing import (
     EFFECTIVE_SUBMISSION_COMPONENTS,
     SOURCE_SUBMISSION_ID,
@@ -424,9 +424,9 @@ def add_formatted_columns(summary: pd.DataFrame) -> pd.DataFrame:
 def annotate_bar(ax: plt.Axes, y: float, change: float, early_label: str, late_label: str) -> None:
     label = f"{change:+.1f}%  ({early_label} -> {late_label})"
     if change >= 0:
-        ax.text(change + 1.2, y, label, ha="left", va="center", fontsize=8, color="#333333")
+        ax.text(change + 1.2, y, label, ha="left", va="center", fontsize=9.5, color="#333333")
     else:
-        ax.text(1.2, y, label, ha="left", va="center", fontsize=8, color="#333333")
+        ax.text(1.2, y, label, ha="left", va="center", fontsize=9.5, color="#333333")
 
 
 def plot_summary_panel(
@@ -439,7 +439,7 @@ def plot_summary_panel(
     summary = summary.copy()
     summary["y"] = y_positions
 
-    ax.set_xlim(-max_abs - 18.0, max_abs + 38.0)
+    ax.set_xlim(-max_abs - 18.0, max_abs + 90.0)
     ax.set_ylim(-0.42, len(summary) - 0.58)
     ax.axvline(0.0, color="#666666", linewidth=0.8, linestyle=(0, (2, 2)), zorder=0)
 
@@ -452,7 +452,7 @@ def plot_summary_panel(
     ax.set_yticks(y_positions)
     ax.set_yticklabels(summary["metric"])
     ax.invert_yaxis()
-    ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
+    ax.xaxis.set_major_locator(mticker.MultipleLocator(40))
     ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=100, decimals=0))
     ax.grid(axis="x", color="#D0D0D0", alpha=0.5, linewidth=0.7)
     ax.set_axisbelow(True)
@@ -477,8 +477,9 @@ def plot(
     )
     ax.set_xlabel("Change in median (%)")
     out.parent.mkdir(parents=True, exist_ok=True)
+    paper_axis_labels(fig)
     fig.tight_layout()
-    fig.savefig(out, dpi=300, bbox_inches="tight")
+    save_paper_figure(fig, out, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
